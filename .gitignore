@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.js.map
+
+# Runtime data (DB files, uploads)
+data/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE (keep .vscode/settings & tasks, ignore personal state)
+.vscode/*.log
+.vscode/.ropeproject
+
+# Logs
+*.log
+logs/
+
+# Coverage & test
+coverage/
+.nyc_output/
+
+# Temp
+tmp/
+.tmp/

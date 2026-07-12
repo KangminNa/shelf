@@ -1,0 +1,43 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "dev",
+      "type": "shell",
+      "command": "npm run dev",
+      "group": "build",
+      "isBackground": true,
+      "problemMatcher": {
+        "pattern": { "regexp": "." },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".",
+          "endsPattern": "Shelf v"
+        }
+      }
+    },
+    {
+      "label": "build",
+      "type": "shell",
+      "command": "npm run build",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "create-module",
+      "type": "shell",
+      "command": "npx tsx core/src/cli/create-module.ts ${input:moduleName}",
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "moduleName",
+      "description": "Module name (lowercase, no spaces)",
+      "type": "promptString"
+    }
+  ]
+}
