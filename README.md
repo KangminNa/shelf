@@ -164,6 +164,7 @@ That's it. No routing setup, no error handling, no auth code, no database connec
 | Notifications | `ctx.notify.send()` — push, websocket, configurable |
 | File storage | Scoped per module, path traversal protected |
 | Scheduling | Declare cron in logic → core runs it |
+| AI | Register providers once, all modules use `ctx.ai.generate()` |
 | Logging | Structured, scoped by module, auto request logging |
 | Rate limiting | Configurable per module, sane defaults |
 | UI shell | Sidebar + topbar auto-rendered, modules fill content area |
@@ -185,7 +186,7 @@ Browser
 │                                          │
 │ Services (injected)                      │
 │ Auth │ DB │ Events │ Notify │ Storage    │
-│ External API │ Scheduler │ Config │ Log  │
+│ External API │ AI │ Scheduler │ Config   │
 │                                          │
 │ Auto-generated Layer                     │
 │ CRUD API │ Response envelope │ SSR shell │
@@ -197,6 +198,62 @@ Browser
   ▼
 [blog.db] [weather.db] [todo.db] [core.db]
 ```
+
+## AI providers
+
+Shelf has a built-in AI service at the core level. Register your API keys once, and every module can use AI capabilities instantly.
+
+### Setup (Admin → Settings → AI Providers)
+
+Register one or more providers — Anthropic, OpenAI, Ollama (local), or any OpenAI-compatible API.
+
+### Use AI in any module
+
+```typescript
+// logic.ts
+export default ({ db, ai }) => ({
+  async summarize(postId: number) {
+    const post = await db.find(posts, postId)
+    return ai.generate({
+      prompt: `Summarize in 2 sentences: ${post.content}`,
+    })
+  },
+
+  async categorize(text: string) {
+    return ai.generate({
+      prompt: `Categorize this text`,
+      schema: z.enum(['tech', 'life', 'travel', 'food']),
+    })
+  }
+})
+```
+
+No SDK setup, no key management, no token counting — just `ctx.ai.generate()`.
+
+### AI-assisted module creation
+
+Describe what you want in natural language, and Shelf generates the module for you:
+
+```
+"매일 아침 날씨를 확인해서 텔레그램으로 알려주는 모듈"
+
+→ AI generates:
+  ✓ manifest.json
+  ✓ schema.ts (cities, preferences)
+  ✓ logic.ts (fetch weather + telegram notify + cron job)
+  ✓ pages/index.tsx (city list UI)
+```
+
+One click to preview, edit, or install.
+
+### Features
+
+- Unified interface across providers (`ai.generate()`)
+- Structured output with Zod schema validation
+- Streaming support (`ai.stream()`)
+- Usage tracking and cost limits per module
+- Provider fallback (if A fails → try B)
+- Local model support (Ollama) for privacy
 
 ## Module communication
 
