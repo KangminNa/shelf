@@ -10,6 +10,7 @@ import { createShellWrap } from '../middleware/shell-wrap.js'
 import { createAdminRoutes } from '../admin/routes.js'
 import { ProxySystem } from '../system/proxy/index.js'
 import { DeploySystem } from '../system/deploy/index.js'
+import { AuthSystem } from '../system/auth/index.js'
 
 /**
  * Shelf 애플리케이션 — 전역 인스턴스 (ShelfApplication.instance).
@@ -35,6 +36,7 @@ export class ShelfApplication {
   readonly events = new EventBus()
   readonly log = new Logger('shelf')
 
+  auth!: AuthSystem
   proxy!: ProxySystem
   deploy!: DeploySystem
 
@@ -46,6 +48,7 @@ export class ShelfApplication {
   }
 
   async start(port: number): Promise<void> {
+    this.auth = new AuthSystem()
     this.proxy = new ProxySystem(this.events)
     this.deploy = new DeploySystem(this.events)
 
@@ -60,6 +63,13 @@ export class ShelfApplication {
   private registerRoutes(): void {
     this.hono.get('/health', (c) => c.json({ ok: true, uptime: process.uptime() }))
     this.hono.get('/', (c) => c.redirect('/admin'))
+
+    // 인증: 공개 라우트(/login, /setup, /api/auth) + 나머지 전부 보호
+    this.hono.route('/', this.auth.routes)
+    this.hono.use('/admin/*', this.auth.requireAuth())
+    this.hono.use('/admin', this.auth.requireAuth())
+    this.hono.use('/api/proxy/*', this.auth.requireAuth())
+    this.hono.use('/api/deploy/*', this.auth.requireAuth())
 
     // API
     this.hono.route('/api/proxy', this.proxy.api)

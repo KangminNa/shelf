@@ -106,11 +106,11 @@ export function renderShell(opts: ShellOpts): string {
       <header class="shelf-topbar">
         <h1 class="shelf-topbar-title">${title}</h1>
         <div class="shelf-topbar-actions">
-          <button class="shelf-btn shelf-btn-ghost shelf-btn-icon" title="Notifications">
-            ${icon('bell')}
-          </button>
-          <button class="shelf-btn shelf-btn-ghost shelf-btn-icon" title="Settings">
+          <a href="/admin/settings" class="shelf-btn shelf-btn-ghost shelf-btn-icon" title="Settings">
             ${icon('settings')}
+          </a>
+          <button onclick="fetch('/api/auth/logout',{method:'POST'}).then(()=>location.href='/login')" class="shelf-btn shelf-btn-ghost shelf-btn-icon" title="Sign out">
+            ${icon('power')}
           </button>
         </div>
       </header>

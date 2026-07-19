@@ -1,27 +1,27 @@
-version: '3.8'
-
 services:
   shelf:
     build: .
     container_name: shelf
     restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
-      - "81:81"
-      - "9100:9100"
+      - "80:80"     # reverse proxy (HTTP + ACME challenge)
+      - "443:443"   # reverse proxy (HTTPS)
+      - "81:81"     # admin UI
+      - "9100:9100" # CI/CD webhooks
     volumes:
+      # 호스트 Docker 데몬으로 앱 컨테이너를 빌드/실행
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 런타임 데이터: DB, SSL 인증서, 클론된 저장소
       - ./data:/app/data
-      - ./plugins:/app/plugins
-      - ssl-certs:/app/data/ssl
     environment:
       - PORT=81
       - NODE_ENV=production
       - PROXY_HTTP_PORT=80
       - PROXY_HTTPS_PORT=443
       - WEBHOOK_PORT=9100
-    env_file:
-      - .env
-
-volumes:
-  ssl-certs:
+      # 앱 컨테이너는 호스트 데몬에서 실행되므로, 컨테이너 안의 프록시가
+      # 호스트에 publish된 포트로 나가려면 host-gateway를 바라봐야 한다
+      - APP_HOST=host.docker.internal
+      # - ACME_EMAIL=you@example.com
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

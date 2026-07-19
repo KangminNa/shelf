@@ -91,9 +91,10 @@ export class DeployPipeline {
 
       // 3. 도메인이 있으면 프록시 등록
       if (project.domain && project.port) {
+        // APP_HOST: Shelf가 컨테이너로 돌 때는 host.docker.internal (compose에서 설정)
         this.events.emit('proxy:register-host', {
           domain: project.domain,
-          target_host: '127.0.0.1',
+          target_host: process.env.APP_HOST || '127.0.0.1',
           target_port: project.port,
           description: `app: ${project.name}`,
         })

@@ -239,6 +239,7 @@ export function projectDetailPage(p: Project, status: DisplayStatus, deployments
           ? `<button onclick="stopProject(${p.id})" class="shelf-btn shelf-btn-secondary shelf-btn-sm">Stop</button>`
           : `<button onclick="startProject(${p.id})" class="shelf-btn shelf-btn-secondary shelf-btn-sm">Start</button>`}
         ${p.port ? `<a href="http://localhost:${p.port}" target="_blank" class="shelf-btn shelf-btn-ghost shelf-btn-sm">Open</a>` : ''}
+        <button onclick="document.getElementById('edit-dialog').style.display='flex'" class="shelf-btn shelf-btn-secondary shelf-btn-sm">Edit</button>
         <button onclick="deleteProject(${p.id}, '${p.name}')" class="shelf-btn shelf-btn-ghost shelf-btn-sm" style="color:var(--danger);">Delete</button>
       </div>
     </div>
@@ -297,6 +298,8 @@ export function projectDetailPage(p: Project, status: DisplayStatus, deployments
       </div>
     </div>
 
+    ${editDialog(p)}
+
     <script>
       const PROJECT_ID = ${p.id};
       async function deployNow(id) {
@@ -330,6 +333,91 @@ export function projectDetailPage(p: Project, status: DisplayStatus, deployments
       setInterval(refreshLogs, 5000);
     </script>
   `
+}
+
+function editDialog(p: Project): string {
+  const esc = (s: string | null) => (s || '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;')
+  return `
+    <div id="edit-dialog" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.4); z-index:100; align-items:center; justify-content:center;">
+      <div style="background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-lg); padding:24px; width:100%; max-width:520px; max-height:85vh; overflow:auto; box-shadow:var(--shadow);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px;">
+          <h3 style="font-size:16px; font-weight:600;">Edit ${p.name}</h3>
+          <button onclick="document.getElementById('edit-dialog').style.display='none'" class="shelf-btn shelf-btn-ghost shelf-btn-icon">&times;</button>
+        </div>
+        <form id="edit-form" style="display:flex; flex-direction:column; gap:14px;">
+          ${p.source_type === 'git' ? `
+            <div>
+              <label style="${LABEL_STYLE}">Git repository URL</label>
+              <input type="text" name="repo_url" value="${esc(p.repo_url)}" required style="${INPUT_STYLE}">
+            </div>
+            <div style="width:160px;">
+              <label style="${LABEL_STYLE}">Branch</label>
+              <input type="text" name="branch" value="${esc(p.branch)}" style="${INPUT_STYLE}">
+            </div>
+          ` : `
+            <div>
+              <label style="${LABEL_STYLE}">Docker image</label>
+              <input type="text" name="image" value="${esc(p.image)}" required style="${INPUT_STYLE}">
+            </div>
+          `}
+          <div style="display:flex; gap:12px;">
+            <div style="flex:1;">
+              <label style="${LABEL_STYLE}">Host port</label>
+              <input type="number" name="port" value="${p.port ?? ''}" style="${INPUT_STYLE}">
+            </div>
+            <div style="flex:1;">
+              <label style="${LABEL_STYLE}">Container port</label>
+              <input type="number" name="container_port" value="${p.container_port ?? ''}" style="${INPUT_STYLE}">
+            </div>
+          </div>
+          <div>
+            <label style="${LABEL_STYLE}">Domain</label>
+            <input type="text" name="domain" value="${esc(p.domain)}" style="${INPUT_STYLE}">
+          </div>
+          <div>
+            <label style="${LABEL_STYLE}">Environment variables (KEY=VALUE per line)</label>
+            <textarea name="env" rows="3" style="${INPUT_STYLE} font-family:var(--font-mono); font-size:12px; resize:vertical;">${esc(p.env)}</textarea>
+          </div>
+          <div>
+            <label style="${LABEL_STYLE}">Volumes (host:container per line)</label>
+            <textarea name="volumes" rows="2" style="${INPUT_STYLE} font-family:var(--font-mono); font-size:12px; resize:vertical;">${esc(p.volumes)}</textarea>
+          </div>
+          <label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer;">
+            <input type="checkbox" name="auto_deploy" ${p.auto_deploy ? 'checked' : ''}> Auto deploy on webhook (push)
+          </label>
+          <div style="font-size:12px; color:var(--text-muted); padding:8px 12px; background:var(--bg-tertiary); border-radius:var(--radius);">
+            변경 사항은 다음 Deploy 때 컨테이너에 적용됩니다.
+          </div>
+          <div style="display:flex; gap:8px; justify-content:flex-end;">
+            <button type="button" onclick="document.getElementById('edit-dialog').style.display='none'" class="shelf-btn shelf-btn-secondary">Cancel</button>
+            <button type="submit" class="shelf-btn shelf-btn-primary">Save</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    <script>
+      document.getElementById('edit-form')?.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const fd = new FormData(e.target);
+        const obj = {
+          ${p.source_type === 'git' ? `repo_url: fd.get('repo_url'), branch: fd.get('branch') || 'main',` : `image: fd.get('image'),`}
+          port: fd.get('port') ? Number(fd.get('port')) : null,
+          container_port: fd.get('container_port') ? Number(fd.get('container_port')) : null,
+          domain: fd.get('domain') || '',
+          env: fd.get('env') || '',
+          volumes: fd.get('volumes') || '',
+          auto_deploy: fd.get('auto_deploy') === 'on',
+        };
+        const res = await fetch('/api/deploy/projects/${p.id}', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(obj),
+        });
+        const json = await res.json();
+        if (json.ok) location.reload();
+        else alert(json.error?.message || 'Failed');
+      });
+    </script>`
 }
 
 // --- All deployments ---

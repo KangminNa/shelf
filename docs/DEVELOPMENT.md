@@ -104,6 +104,20 @@ DeploySystem (조립 루트)
 - **Deployment**: 배포 이력 — 커밋, 상태, 전체 빌드 로그, 소요시간, 트리거(manual|webhook)
 - 컨테이너는 `--restart unless-stopped`로 실행 → 서버 재부팅에도 자동 복구
 
+### system/auth — 인증
+
+```
+AuthSystem (data/auth.db)
+├── UserRepository / SessionRepository
+├── routes        # 공개: /login, /setup, /api/auth/{setup,login,logout}
+└── requireAuth() # 보호 미들웨어 — /admin/*, /api/proxy/*, /api/deploy/* 적용
+```
+
+- 최초 접속 시 `/setup`에서 관리자 계정 1회 생성 (이후 재생성 차단)
+- 비밀번호는 scrypt 해시, 세션은 httpOnly 쿠키(`shelf_session`, 7일)
+- 미인증 접근: 페이지 → `/login` 리다이렉트, API → 401
+- webhook 서버(:9100)는 별도 포트라 세션 대신 HMAC 서명으로 검증
+
 ### system/proxy — 리버스 프록시
 
 ```
