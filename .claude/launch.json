@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "shelf-dev",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["tsx", "watch", "core/src/index.ts"],
+      "port": 9666
+    }
+  ]
+}

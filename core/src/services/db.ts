@@ -5,6 +5,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync } from 'fs'
 import { join } from 'path'
 import type { ModuleDB, PaginationOpts } from '../types.js'
 import { buildMeta } from '../helpers/pagination.js'
+import { Repository, type Entity } from '../db/repository.js'
 
 const DATA_DIR = join(process.cwd(), 'data')
 
@@ -25,8 +26,17 @@ export function createModuleDB(slug: string, migrationsDir?: string): ModuleDB &
     runMigrations(sqlite, slug, migrationsDir)
   }
 
+  const repoCache = new Map<string, Repository<any>>()
+
   return {
     raw: sqlite,
+
+    // 날 SQL 없이 테이블을 다루는 리포지토리 (모듈 권장 API)
+    repo<T extends Entity>(table: string): Repository<T> {
+      if (!repoCache.has(table)) repoCache.set(table, new Repository<T>(sqlite, table))
+      return repoCache.get(table) as Repository<T>
+    },
+
     async all(table, opts?: PaginationOpts) {
       const page = opts?.page || 1
       const limit = opts?.limit || 20

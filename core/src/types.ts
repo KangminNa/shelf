@@ -52,6 +52,8 @@ export interface ModuleContext {
 }
 
 export interface ModuleDB {
+  /** 날 SQL 없이 테이블을 다루는 리포지토리 (권장) */
+  repo<T extends { id: number }>(table: string): import('./db/repository.js').Repository<T>
   all<T>(table: any, opts?: PaginationOpts): Promise<{ data: T[]; meta: PaginationMeta }>
   find<T>(table: any, id: number | string): Promise<T | null>
   create<T>(table: any, data: Partial<T>): Promise<T>
@@ -171,6 +173,7 @@ export interface LoadedModule {
   context: ModuleContext
   api: Hono
   pages: Hono
+  admin: Hono
   shutdown?: () => Promise<void> | void
 }
 

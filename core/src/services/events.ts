@@ -1,42 +1,48 @@
-import type { EventBus } from '../types.js'
+/**
+ * 모듈 간 통신을 담당하는 이벤트 버스.
+ * 모듈은 서로 직접 import하지 않고 이벤트로만 통신한다.
+ * 네이밍: "{모듈}:{액션}" (예: blog:post-created)
+ */
+export class EventBus {
+  private readonly handlers = new Map<string, Set<Function>>()
+  private readonly wildcardHandlers = new Set<Function>()
 
-export function createEventBus(): EventBus {
-  const handlers = new Map<string, Set<Function>>()
-  const wildcardHandlers = new Set<Function>()
-
-  return {
-    emit(event: string, payload?: unknown) {
-      handlers.get(event)?.forEach((fn) => {
-        try {
-          fn(payload)
-        } catch (err) {
-          console.error(`[events] handler error on "${event}":`, err)
-        }
-      })
-      wildcardHandlers.forEach((fn) => {
-        try {
-          fn(event, payload)
-        } catch (err) {
-          console.error(`[events] wildcard handler error:`, err)
-        }
-      })
-    },
-
-    on(event: string, handler: (payload: any) => void) {
-      if (event === '*') {
-        wildcardHandlers.add(handler)
-        return
+  emit(event: string, payload?: unknown): void {
+    this.handlers.get(event)?.forEach((fn) => {
+      try {
+        fn(payload)
+      } catch (err) {
+        console.error(`[events] handler error on "${event}":`, err)
       }
-      if (!handlers.has(event)) handlers.set(event, new Set())
-      handlers.get(event)!.add(handler)
-    },
-
-    off(event: string, handler: Function) {
-      if (event === '*') {
-        wildcardHandlers.delete(handler)
-        return
+    })
+    this.wildcardHandlers.forEach((fn) => {
+      try {
+        fn(event, payload)
+      } catch (err) {
+        console.error(`[events] wildcard handler error:`, err)
       }
-      handlers.get(event)?.delete(handler)
-    },
+    })
   }
+
+  on(event: string, handler: (payload: any) => void): void {
+    if (event === '*') {
+      this.wildcardHandlers.add(handler)
+      return
+    }
+    if (!this.handlers.has(event)) this.handlers.set(event, new Set())
+    this.handlers.get(event)!.add(handler)
+  }
+
+  off(event: string, handler: Function): void {
+    if (event === '*') {
+      this.wildcardHandlers.delete(handler)
+      return
+    }
+    this.handlers.get(event)?.delete(handler)
+  }
+}
+
+/** @deprecated 호환용 — new EventBus()를 사용 */
+export function createEventBus(): EventBus {
+  return new EventBus()
 }
