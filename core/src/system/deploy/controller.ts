@@ -7,7 +7,13 @@ import type { ContainerManager } from './container-manager.js'
 import type { DeployPipeline } from './pipeline.js'
 import { projectsPage, projectDetailPage, deploymentsPage, type DisplayStatus } from './views.js'
 
-const PROJECT_FIELDS = ['source_type', 'repo_url', 'branch', 'image', 'port', 'container_port', 'env', 'volumes', 'domain', 'auto_deploy'] as const
+const PROJECT_FIELDS = ['source_type', 'repo_url', 'branch', 'git_token', 'image', 'port', 'container_port', 'env', 'volumes', 'domain', 'auto_deploy'] as const
+
+/** API 응답에서 시크릿 제거 */
+function sanitize(p: Project): Omit<Project, 'webhook_secret' | 'git_token'> & { has_token: boolean } {
+  const { webhook_secret: _s, git_token, ...rest } = p
+  return { ...rest, has_token: !!git_token }
+}
 
 /**
  * 앱(컨테이너) 관리 HTTP 인터페이스.
@@ -43,8 +49,7 @@ export class DeployController {
     this.api.get('/projects', async (c) => {
       const data = await Promise.all(
         this.projects.allSorted().map(async (p) => ({
-          ...p,
-          webhook_secret: undefined,
+          ...sanitize(p),
           status: await this.displayStatus(p),
         }))
       )
@@ -68,6 +73,7 @@ export class DeployController {
         source_type: sourceType,
         repo_url: body.repo_url || '',
         branch: body.branch || 'main',
+        git_token: body.git_token || '',
         image: body.image || '',
         port: body.port || null,
         container_port: body.container_port || null,
@@ -84,7 +90,7 @@ export class DeployController {
     this.api.get('/projects/:id', async (c) => {
       const project = this.projects.find(c.req.param('id'))
       if (!project) return this.notFound(c)
-      return c.json({ ok: true, data: { ...project, status: await this.displayStatus(project) } })
+      return c.json({ ok: true, data: { ...sanitize(project), status: await this.displayStatus(project) } })
     })
 
     this.api.patch('/projects/:id', async (c) => {
@@ -98,7 +104,7 @@ export class DeployController {
       if (!Object.keys(patch).length) return this.badRequest(c, 'No fields to update')
       const project = this.projects.update(c.req.param('id'), patch)
       if (!project) return this.notFound(c)
-      return c.json({ ok: true, data: project })
+      return c.json({ ok: true, data: sanitize(project) })
     })
 
     this.api.delete('/projects/:id', async (c) => {
@@ -165,6 +171,22 @@ export class DeployController {
       const deployment = this.deployments.find(c.req.param('id'))
       if (!deployment) return c.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Deployment not found' } }, 404)
       return c.json({ ok: true, data: deployment })
+    })
+
+    // 롤백: 해당 배포의 커밋으로 재빌드/재배포 (git 소스 전용)
+    this.api.post('/deployments/:id/rollback', async (c) => {
+      const deployment = this.deployments.find(c.req.param('id'))
+      if (!deployment) return c.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Deployment not found' } }, 404)
+      const project = this.projects.find(deployment.project_id)
+      if (!project) return this.notFound(c)
+      if (project.source_type !== 'git' || !deployment.commit_hash) {
+        return this.badRequest(c, 'Rollback is only available for git-sourced deployments with a recorded commit')
+      }
+      const result = await this.pipeline.deploy(project, 'rollback', deployment.commit_hash)
+      if (!result.ok) {
+        return c.json({ ok: false, error: { code: 'ROLLBACK_FAILED', message: result.error }, data: { deploymentId: result.deploymentId } }, 500)
+      }
+      return c.json({ ok: true, data: { deploymentId: result.deploymentId, commit: deployment.commit_hash } })
     })
   }
 

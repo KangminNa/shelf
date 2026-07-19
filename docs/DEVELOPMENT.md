@@ -100,8 +100,10 @@ DeploySystem (조립 루트)
 └── DeployController                           # api + pages (views.ts에 HTML)
 ```
 
-- **Project**(= 앱): `source_type`(git|image), repo_url/branch 또는 image, `port`(호스트) → `container_port`(컨테이너), env, volumes, domain, webhook_secret
-- **Deployment**: 배포 이력 — 커밋, 상태, 전체 빌드 로그, 소요시간, 트리거(manual|webhook)
+- **Project**(= 앱): `source_type`(git|image), repo_url/branch 또는 image, `port`(호스트) → `container_port`(컨테이너), env, volumes, domain, webhook_secret, git_token
+- **Deployment**: 배포 이력 — 커밋, 상태, 전체 빌드 로그, 소요시간, 트리거(manual|webhook|rollback)
+- **Private 저장소**: 앱에 access token(GitHub fine-grained PAT 권장)을 설정하면 clone/fetch 명령에만 토큰 URL을 사용 — `.git/config`에는 평문 URL만 남고, 배포 로그와 API 응답에서 토큰은 마스킹/제거됨
+- **롤백**: 배포 이력의 커밋으로 `git reset --hard {hash}` → 재빌드 → 재배포 (git 소스 전용)
 - 컨테이너는 `--restart unless-stopped`로 실행 → 서버 재부팅에도 자동 복구
 
 ### system/auth — 인증

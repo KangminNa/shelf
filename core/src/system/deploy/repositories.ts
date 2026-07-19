@@ -8,6 +8,7 @@ export interface Project {
   source_type: 'git' | 'image'
   repo_url: string
   branch: string
+  git_token: string // private 저장소용 (HTTPS 토큰, 로그/설정 파일에 노출 금지)
   image: string
   port: number | null // 호스트 포트 (프록시가 바라보는 포트)
   container_port: number | null // 컨테이너 내부 포트
@@ -30,7 +31,7 @@ export interface Deployment {
   commit_hash: string
   commit_message: string
   status: 'pending' | 'running' | 'success' | 'failed'
-  trigger_type: 'manual' | 'webhook'
+  trigger_type: 'manual' | 'webhook' | 'rollback'
   log: string
   duration_ms: number
   created_at: number

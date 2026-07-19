@@ -39,7 +39,12 @@ export class DeployPipeline {
     return this.inFlight.has(projectId)
   }
 
-  async deploy(project: Project, trigger: 'manual' | 'webhook'): Promise<DeployResult> {
+  /**
+   * 배포 실행. rollbackCommit이 있으면 최신 대신 해당 커밋을 체크아웃한다 (git 소스 전용).
+   * private 저장소: git_token이 있으면 clone/fetch 명령에만 토큰 URL을 쓰고
+   * .git/config에는 평문 URL만 남긴다. 로그에서는 토큰이 ***로 마스킹된다.
+   */
+  async deploy(project: Project, trigger: 'manual' | 'webhook' | 'rollback', rollbackCommit?: string): Promise<DeployResult> {
     if (this.inFlight.has(project.id)) {
       return { ok: false, deploymentId: 0, error: 'Deployment already in progress' }
     }
@@ -47,9 +52,10 @@ export class DeployPipeline {
 
     const start = Date.now()
     const deployment = this.deployments.create({ project_id: project.id, status: 'running', trigger_type: trigger })
+    const mask = (text: string) => (project.git_token ? text.split(project.git_token).join('***') : text)
     let fullLog = ''
     const append = (text: string) => {
-      fullLog += text
+      fullLog += mask(text)
       if (fullLog.length > DeployPipeline.MAX_LOG_CHARS) fullLog = fullLog.slice(-DeployPipeline.MAX_LOG_CHARS)
     }
 
@@ -62,14 +68,25 @@ export class DeployPipeline {
         append(`\n$ docker pull ${project.image}\n`)
         append(await this.docker.pull(project.image))
       } else {
-        // 1b. git clone/pull → 커밋 기록 → docker build
+        // 1b. git clone/fetch → (롤백이면 해당 커밋) → 커밋 기록 → docker build
         const repoDir = join(this.reposDir, project.name)
+        const fetchUrl = DeployPipeline.authenticatedUrl(project)
+
         if (!existsSync(join(repoDir, '.git'))) {
           rmSync(repoDir, { recursive: true, force: true })
-          await this.gitStep(append, `git clone --branch ${project.branch} --single-branch ${project.repo_url} ${JSON.stringify(repoDir)}`, this.reposDir)
+          await this.gitStep(append, `git clone --branch ${project.branch} --single-branch ${fetchUrl} ${JSON.stringify(repoDir)}`, this.reposDir)
+          // 토큰이 .git/config에 남지 않도록 평문 URL로 되돌린다
+          if (project.git_token) {
+            await this.runShell(`git remote set-url origin ${project.repo_url}`, repoDir)
+          }
         } else {
-          await this.gitStep(append, `git fetch origin ${project.branch}`, repoDir)
-          await this.gitStep(append, `git reset --hard origin/${project.branch}`, repoDir)
+          await this.gitStep(append, `git fetch ${fetchUrl} ${project.branch}`, repoDir)
+        }
+
+        if (rollbackCommit) {
+          await this.gitStep(append, `git reset --hard ${rollbackCommit}`, repoDir)
+        } else if (existsSync(join(repoDir, '.git', 'FETCH_HEAD'))) {
+          await this.gitStep(append, `git reset --hard FETCH_HEAD`, repoDir)
         }
 
         const commitInfo = await this.runShell('git log -1 --format=%H%n%s', repoDir)
@@ -122,6 +139,12 @@ export class DeployPipeline {
   }
 
   // --- 내부 ---
+
+  /** private 저장소면 HTTPS URL에 토큰을 주입한 fetch 전용 URL 반환 */
+  private static authenticatedUrl(project: Project): string {
+    if (!project.git_token || !/^https?:\/\//.test(project.repo_url)) return project.repo_url
+    return project.repo_url.replace(/^(https?:\/\/)/, `$1x-access-token:${project.git_token}@`)
+  }
 
   private async gitStep(append: (s: string) => void, cmd: string, cwd: string): Promise<void> {
     append(`\n$ ${cmd}\n`)

@@ -111,6 +111,11 @@ function addProjectDialog(): string {
               <label style="${LABEL_STYLE}">Branch</label>
               <input type="text" name="branch" value="main" style="${INPUT_STYLE}">
             </div>
+            <div>
+              <label style="${LABEL_STYLE}">Access token (private 저장소, 선택)</label>
+              <input type="password" name="git_token" placeholder="ghp_... / github_pat_..." autocomplete="off" style="${INPUT_STYLE}">
+              <div style="font-size:12px; color:var(--text-muted); margin-top:4px;">GitHub fine-grained PAT (Contents: read-only) 권장</div>
+            </div>
           </div>
 
           <div id="image-fields" style="display:none;">
@@ -181,6 +186,7 @@ function listScripts(): string {
           source_type: fd.get('source_type'),
           repo_url: fd.get('repo_url') || '',
           branch: fd.get('branch') || 'main',
+          git_token: fd.get('git_token') || '',
           image: fd.get('image') || '',
           port: fd.get('port') ? Number(fd.get('port')) : null,
           container_port: fd.get('container_port') ? Number(fd.get('container_port')) : null,
@@ -204,7 +210,10 @@ function listScripts(): string {
 // --- App detail ---
 
 export function projectDetailPage(p: Project, status: DisplayStatus, deployments: Deployment[], webhookPort: number): string {
-  const deployRows = deployments.map((d) => `
+  const canRollback = (d: Deployment, index: number) =>
+    p.source_type === 'git' && d.status === 'success' && !!d.commit_hash && index !== 0
+
+  const deployRows = deployments.map((d, index) => `
     <tr style="cursor:pointer;" onclick="showDeployLog(${d.id})">
       <td style="font-size:12px; color:var(--text-muted);">${new Date(d.created_at * 1000).toLocaleString()}</td>
       <td><code style="font-size:12px;">${(d.commit_hash || '').slice(0, 7)}</code></td>
@@ -212,6 +221,7 @@ export function projectDetailPage(p: Project, status: DisplayStatus, deployments
       <td><span class="shelf-badge shelf-badge-${DEPLOY_STATUS_COLORS[d.status] || 'info'}">${d.status}</span></td>
       <td><span class="shelf-badge">${d.trigger_type}</span></td>
       <td style="font-size:12px; color:var(--text-muted);">${d.duration_ms ? Math.round(d.duration_ms / 1000) + 's' : '-'}</td>
+      <td>${canRollback(d, index) ? `<button onclick="event.stopPropagation(); rollbackTo(${d.id}, '${(d.commit_hash || '').slice(0, 7)}')" class="shelf-btn shelf-btn-ghost shelf-btn-sm">Rollback</button>` : ''}</td>
     </tr>`).join('')
 
   const configRows = [
@@ -282,7 +292,7 @@ export function projectDetailPage(p: Project, status: DisplayStatus, deployments
     ${deployments.length ? `
       <div class="shelf-card" style="padding:0; overflow:hidden;">
         <table class="shelf-table">
-          <thead><tr><th>Time</th><th>Commit</th><th>Message</th><th>Status</th><th>Trigger</th><th>Duration</th></tr></thead>
+          <thead><tr><th>Time</th><th>Commit</th><th>Message</th><th>Status</th><th>Trigger</th><th>Duration</th><th></th></tr></thead>
           <tbody>${deployRows}</tbody>
         </table>
       </div>
@@ -329,6 +339,14 @@ export function projectDetailPage(p: Project, status: DisplayStatus, deployments
         document.getElementById('deploy-log').textContent = json.data.log || '(empty)';
         document.getElementById('log-dialog').style.display = 'flex';
       }
+      async function rollbackTo(id, commit) {
+        if (!confirm('Roll back to commit ' + commit + '? The app will be rebuilt from that commit.')) return;
+        const btns = document.querySelectorAll('button'); btns.forEach(b => b.disabled = true);
+        const res = await fetch('/api/deploy/deployments/' + id + '/rollback', { method: 'POST' });
+        const json = await res.json();
+        if (!json.ok) alert('Rollback failed: ' + (json.error?.message || ''));
+        location.reload();
+      }
       refreshLogs();
       setInterval(refreshLogs, 5000);
     </script>
@@ -353,6 +371,10 @@ function editDialog(p: Project): string {
             <div style="width:160px;">
               <label style="${LABEL_STYLE}">Branch</label>
               <input type="text" name="branch" value="${esc(p.branch)}" style="${INPUT_STYLE}">
+            </div>
+            <div>
+              <label style="${LABEL_STYLE}">Access token ${p.git_token ? '(설정됨 — 비우면 유지)' : '(private 저장소, 선택)'}</label>
+              <input type="password" name="git_token" placeholder="${p.git_token ? '••••••••' : 'ghp_...'}" autocomplete="off" style="${INPUT_STYLE}">
             </div>
           ` : `
             <div>
@@ -400,7 +422,7 @@ function editDialog(p: Project): string {
         e.preventDefault();
         const fd = new FormData(e.target);
         const obj = {
-          ${p.source_type === 'git' ? `repo_url: fd.get('repo_url'), branch: fd.get('branch') || 'main',` : `image: fd.get('image'),`}
+          ${p.source_type === 'git' ? `repo_url: fd.get('repo_url'), branch: fd.get('branch') || 'main', ...(fd.get('git_token') ? { git_token: fd.get('git_token') } : {}),` : `image: fd.get('image'),`}
           port: fd.get('port') ? Number(fd.get('port')) : null,
           container_port: fd.get('container_port') ? Number(fd.get('container_port')) : null,
           domain: fd.get('domain') || '',
