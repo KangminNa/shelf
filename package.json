@@ -1,7 +1,7 @@
 {
   "name": "shelf",
-  "version": "0.1.0",
-  "description": "A lightweight, modular home server framework. Define your data, write your logic, design your pages — Shelf handles everything else.",
+  "version": "0.2.0",
+  "description": "A self-hosted app platform. Deploy any Git repo or Docker image as a container — Shelf handles builds, CI/CD, domains, and SSL.",
   "keywords": [
     "home-server",
     "modular",
@@ -18,15 +18,12 @@
     "url": "https://github.com/kangmin/shelf"
   },
   "workspaces": [
-    "core",
-    "shared",
-    "plugins/*"
+    "core"
   ],
   "scripts": {
     "dev": "tsx watch core/src/index.ts",
     "build": "npm run build --workspaces",
-    "start": "node core/dist/index.js",
-    "create": "tsx core/src/cli/create-module.ts"
+    "start": "node core/dist/index.js"
   },
   "engines": {
     "node": ">=20.0.0"

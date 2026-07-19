@@ -20,25 +20,6 @@ export function statCard(opts: { label: string; value: string | number; sub?: st
     </div>`
 }
 
-export function moduleCard(mod: { name: string; displayName: string; version: string; icon: string; description?: string; menu?: any[] }) {
-  const iconBg = 'var(--accent-light)'
-  const menuCount = mod.menu?.length || 0
-  return `
-    <a href="/admin/${mod.name}" class="shelf-module-card">
-      <div class="shelf-module-header">
-        <div class="shelf-module-icon" style="background:${iconBg};">${resolveIcon(mod.icon, 20)}</div>
-        <div>
-          <div class="shelf-module-name">${mod.displayName || mod.name}</div>
-          <div class="shelf-module-version">v${mod.version}</div>
-        </div>
-      </div>
-      ${mod.description ? `<div class="shelf-module-desc">${mod.description}</div>` : ''}
-      <div class="shelf-module-meta">
-        <span class="shelf-module-meta-item">${icon('layout', 14)} ${menuCount} pages</span>
-        <span class="shelf-badge shelf-badge-success">active</span>
-      </div>
-    </a>`
-}
 
 export function badge(text: string, variant: 'success' | 'warning' | 'danger' | 'info' = 'info') {
   return `<span class="shelf-badge shelf-badge-${variant}">${text}</span>`

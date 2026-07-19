@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
 import type { Hono } from 'hono'
-import { createModuleDB } from '../../services/db.js'
+import { AppDatabase } from '../../db/database.js'
 import { Logger } from '../../services/log.js'
 import type { EventBus } from '../../services/events.js'
 import { DockerService } from '../docker.js'
@@ -35,7 +35,7 @@ export class DeploySystem {
   private readonly log = new Logger('deploy')
 
   constructor(events: EventBus) {
-    const db = createModuleDB('deploy', join(process.cwd(), 'core', 'migrations', 'deploy'))
+    const db = new AppDatabase('deploy', join(process.cwd(), 'core', 'migrations', 'deploy'))
     const reposDir = join(process.cwd(), 'data', 'deploy', 'repos')
     mkdirSync(reposDir, { recursive: true })
 

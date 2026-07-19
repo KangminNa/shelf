@@ -1,5 +1,6 @@
 export { css } from './styles.js'
 export { icon, icons } from './icons.js'
 export type { IconName } from './icons.js'
-export { statCard, moduleCard, badge, button, emptyState, sectionHeader, table } from './components.js'
+export { statCard, badge, button, emptyState, sectionHeader, table } from './components.js'
 export { renderShell } from './shell.js'
+export type { AppNavItem } from './shell.js'

@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import type { Hono } from 'hono'
-import { createModuleDB } from '../../services/db.js'
+import { AppDatabase } from '../../db/database.js'
 import { Logger } from '../../services/log.js'
 import { Scheduler } from '../../services/scheduler.js'
 import type { EventBus } from '../../services/events.js'
@@ -33,7 +33,7 @@ export class ProxySystem {
   private readonly log = new Logger('proxy')
 
   constructor(events: EventBus) {
-    const db = createModuleDB('proxy', join(process.cwd(), 'core', 'migrations', 'proxy'))
+    const db = new AppDatabase('proxy', join(process.cwd(), 'core', 'migrations', 'proxy'))
 
     this.hosts = new ProxyHostRepository(db.raw)
     this.certs = new SslCertRepository(db.raw)

@@ -42,7 +42,3 @@ export class EventBus {
   }
 }
 
-/** @deprecated 호환용 — new EventBus()를 사용 */
-export function createEventBus(): EventBus {
-  return new EventBus()
-}

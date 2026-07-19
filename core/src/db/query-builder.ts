@@ -10,7 +10,7 @@ export type OrderDir = 'asc' | 'desc'
  *
  *   qb.where('domain', 'a.com').orderBy('created_at', 'desc').limit(10).all()
  */
-export class QueryBuilder<T extends Record<string, unknown>> {
+export class QueryBuilder<T extends object> {
   private conditions: string[] = []
   private bindings: unknown[] = []
   private orderClauses: string[] = []
@@ -89,18 +89,20 @@ export class QueryBuilder<T extends Record<string, unknown>> {
   }
 
   insert(data: Partial<T>): number {
-    const keys = Object.keys(data)
+    const record = data as Record<string, unknown>
+    const keys = Object.keys(record)
     const sql = `INSERT INTO ${this.table} (${keys.join(', ')}) VALUES (${keys.map(() => '?').join(', ')})`
-    const result = this.db.prepare(sql).run(...keys.map((k) => data[k]))
+    const result = this.db.prepare(sql).run(...keys.map((k) => record[k]))
     return Number(result.lastInsertRowid)
   }
 
   /** 현재 where 조건에 해당하는 행 업데이트. 변경된 행 수 반환 */
   update(data: Partial<T>): number {
-    const keys = Object.keys(data)
+    const record = data as Record<string, unknown>
+    const keys = Object.keys(record)
     if (!keys.length) return 0
     const sql = `UPDATE ${this.table} SET ${keys.map((k) => `${k} = ?`).join(', ')}${this.whereSql()}`
-    const result = this.db.prepare(sql).run(...keys.map((k) => data[k]), ...this.bindings)
+    const result = this.db.prepare(sql).run(...keys.map((k) => record[k]), ...this.bindings)
     return result.changes
   }
 

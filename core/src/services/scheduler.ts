@@ -54,7 +54,3 @@ export class Scheduler {
   }
 }
 
-/** @deprecated 호환용 — new Scheduler(slug)를 사용 */
-export function createScheduler(slug: string): Scheduler {
-  return new Scheduler(slug)
-}

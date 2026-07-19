@@ -35,7 +35,3 @@ export class Logger {
   }
 }
 
-/** @deprecated 호환용 — new Logger(scope)를 사용 */
-export function createLogger(scope: string): Logger {
-  return new Logger(scope)
-}
