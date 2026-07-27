@@ -2,71 +2,53 @@
 
 ## Overview
 
-Shelf is a modular home server framework. Modules define data (schema), logic, and pages — the core handles everything else (routing, auth, DB, error handling, deployment).
+Shelf is a self-hosted app platform, shipped as a **single Docker image**. Apps are Docker containers deployed from Git repos (with a Dockerfile) or plain Docker images. The core orchestrates: build, CI/CD webhooks, reverse proxy (80/443), SSL, and an admin UI.
 
-## Project Structure
+**Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before writing code** — it defines the layer rules, design patterns, and where new code goes. [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) is the full dev guide (Korean).
+
+## Structure
 
 ```
-shelf/
-├── core/src/           # Framework core (~2000 LOC target)
-│   ├── index.ts        # Server entry, boots Hono + loads modules
-│   ├── loader.ts       # Plugin scanner + lifecycle manager
-│   ├── types.ts        # All shared interfaces
-│   ├── services/       # Injected services (auth, db, events, ai, etc.)
-│   ├── middleware/     # Request pipeline (error, logging, envelope)
-│   └── helpers/        # Utilities (errors, validation, pagination)
-├── plugins/            # Each subfolder = one module
-│   └── {name}/
-│       ├── manifest.json
-│       ├── migrations/
-│       └── src/index.ts
-├── shared/             # Shared types + UI components (future)
-├── config/             # All server configuration constants
-├── data/               # Runtime data (SQLite files, storage) — gitignored
-└── package.json        # npm workspaces root
+core/
+├── migrations/{scope}/     # NNN_name.sql, applied once in order (never edit applied files)
+└── src/
+    ├── index.ts            # Entry: ShelfApplication.instance.start()
+    ├── config.ts           # Env-based server settings
+    ├── kernel/application.ts  # Singleton — owns systems, routes, lifecycle
+    ├── system/             # Domain features (auth, deploy, proxy, docker.ts)
+    │   └── {name}/         #   index.ts(Facade) · repositories · controller · views
+    ├── db/                 # AppDatabase → Repository<T> → QueryBuilder<T>
+    ├── services/           # EventBus · Logger · Scheduler (classes)
+    ├── middleware/          # error-boundary, request-logger, shell-wrap
+    ├── admin/              # Core admin pages (dashboard/system/guide/settings)
+    └── ui/                 # Design system: shell, components, icons, styles
 ```
 
 ## Commands
 
 ```bash
-npm run dev          # Start dev server with watch (tsx watch core/src/index.ts)
-npm run build        # Build all workspaces
-npm start            # Production start (node core/dist/index.js)
-npm run create       # Scaffold a new module
+npm run dev                        # tsx watch, http://localhost:9666/admin
+npx tsc --noEmit --project core    # typecheck (run before committing)
+docker compose up -d               # production (docker.sock mount required)
+
+# dev with non-default ports:
+PORT=9667 PROXY_HTTP_PORT=8087 PROXY_HTTPS_PORT=8447 WEBHOOK_PORT=9100 npx tsx core/src/index.ts
 ```
 
-## Tech Stack
+## Hard Rules
 
-- Runtime: Node.js + TypeScript (ES2022, ESM)
-- HTTP: Hono
-- DB: SQLite via better-sqlite3 + Drizzle ORM
-- Validation: Zod
-- Frontend: React SSR (MPA, future)
+- **Systems never import each other** — communicate via `EventBus` (`{system}:{action}` naming)
+- **No raw SQL outside `db/`** — add methods to the system's `repositories.ts`
+- **HTML only in `views.ts` pure functions** — data in, string out; no DB/network access
+- **Hono only in controllers and kernel**
+- **Secrets never in API responses or logs** — use `sanitize()` / masking (see deploy controller)
+- API responses: `{ ok: true, data }` / `{ ok: false, error: { code, message } }`
+- Runtime deps stay minimal: hono, @hono/node-server, better-sqlite3 (+ acme-client at root)
 
-## Architecture Principles
+## Key Facts
 
-- Module developers only write: schema.ts, logic.ts, pages/, manifest.json
-- Core auto-handles: routing, auth, error handling, DB lifecycle, response format
-- Each module gets its own SQLite file (`data/{module}.db`)
-- Modules communicate via EventBus only — no direct imports
-- All config lives in `config/` as typed constants
-
-## Module Contract
-
-A module's `setup(ctx)` receives a `ModuleContext` with: db, auth, events, notify, storage, config, api (external), ai, log, scheduler. Module registers routes on `ctx.api` (Hono sub-app for `/api/{slug}/*`) and `ctx.pages` (for `/{slug}/*`).
-
-## Key Files
-
-- `core/src/types.ts` — All interfaces. Read this first.
-- `core/src/loader.ts` — Module loading logic.
-- `core/src/index.ts` — Server bootstrap.
-- `config/server.ts` — Server constants (port, limits, paths).
-- `config/defaults.ts` — Default values for module settings.
-
-## Conventions
-
-- Use `AppError` + `Errors` factory from `helpers/errors.ts` for all errors
-- API responses always follow `{ ok, data, meta?, error? }` shape
-- Module DB access: prefer `db.raw` (better-sqlite3 instance) for queries
-- Event naming: `{module}:{action}` (e.g. `blog:post-created`)
-- Config keys: `SCREAMING_SNAKE_CASE` in config files
+- Auth: session cookie (`shelf_session`), first run → `/setup`; all `/admin` + `/api/{deploy,proxy}` protected; webhook port 9100 uses HMAC instead
+- App containers: named `shelf-{app}`, built images `shelf-app-{app}`, `--restart unless-stopped`
+- When Shelf itself runs in Docker: proxy reaches apps via `APP_HOST=host.docker.internal`
+- Runtime data lives in `data/` (gitignored) — one dir to back up
+- Tech: Node 20 + TypeScript ESM, Hono, better-sqlite3 (WAL). No React, no ORM.

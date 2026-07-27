@@ -1,0 +1,14 @@
+# 빌드 컨텍스트 최소화 — 이미지에 들어가면 안 되는 것들
+node_modules
+core/node_modules
+data
+.git
+.claude
+docs
+examples
+*.md
+.env
+.env.*
+Dockerfile
+docker-compose.yml
+.dockerignore

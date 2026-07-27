@@ -19,4 +19,8 @@ EXPOSE 81 80 443 9100
 
 ENV NODE_ENV=production PORT=81
 
+# 관리 UI의 /health로 생존 확인 (compose가 unhealthy 시 재시작 판단에 사용)
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:81/health || exit 1
+
 CMD ["npx", "tsx", "core/src/index.ts"]

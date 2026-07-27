@@ -25,3 +25,9 @@ services:
       # - ACME_EMAIL=you@example.com
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:81/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
