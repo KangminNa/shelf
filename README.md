@@ -70,6 +70,12 @@ core/src/
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full development guide (Korean).
 
+## Security notes
+
+- Shelf mounts `/var/run/docker.sock`, which grants it **full control of the host's Docker daemon** (effectively root-equivalent on the host). Only run Shelf on machines you own, and only give admin credentials to people you'd trust with the server itself.
+- The admin UI is session-protected (first run creates the admin account at `/setup`), but there is no rate limiting yet — don't expose port 81 directly to the internet; put it behind the built-in proxy with SSL, a VPN, or a firewall.
+- Deploying an app means running arbitrary code in a container on your machine. Only deploy repositories you trust.
+
 ## License
 
 MIT
