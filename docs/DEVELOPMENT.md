@@ -125,10 +125,14 @@ AuthSystem (data/auth.db)
 ```
 ProxySystem (조립 루트)
 ├── ProxyHostRepository / SslCertRepository / AccessLogRepository  # data/proxy.db
-├── ProxyServer      # 80/443 리스너, SNI 인증서, WebSocket, ACME 챌린지 응답
-├── SslManager       # Let's Encrypt 발급/자동갱신(만료 30일 전), 수동 PEM 업로드
-└── ProxyController  # api + pages
+├── ProxyServer      # 80/443 리스너, SNI(와일드카드 매칭), WebSocket, HSTS 헤더, ACME 챌린지 응답
+├── SslManager       # Let's Encrypt HTTP-01/DNS-01(Cloudflare·와일드카드), SAN 인증서,
+│                    #   자체서명(로컬용), 수동 PEM 업로드, 만료 30일 전 자동갱신
+└── ProxyController  # api + pages (호스트별 SSL/HSTS 편집 다이얼로그)
 ```
+
+SSL 옵션 (호스트별, NPM 수준): SSL enabled(인증서 연결) · Force SSL(HTTP→HTTPS 301) · HSTS(+서브도메인).
+인증서는 여러 도메인(SAN)과 `*.도메인` 와일드카드(DNS-01 필요)를 지원하며, Cloudflare 토큰은 갱신용으로 저장되고 API 응답에서는 제거된다.
 
 ### db — 데이터 계층 (날 SQL 금지)
 

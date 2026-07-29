@@ -4,10 +4,16 @@ import type { Logger } from '../../services/log.js'
 import type { EventBus } from '../../services/events.js'
 import type { ProxyServer } from './proxy-server.js'
 import { SslError, type SslManager } from './ssl-manager.js'
-import type { ProxyHostRepository, SslCertRepository, AccessLogRepository, ProxyHost } from './repositories.js'
+import { certDomains, type ProxyHostRepository, type SslCertRepository, type AccessLogRepository, type ProxyHost, type SslCert } from './repositories.js'
 import { hostsPage, sslPage, logsPage } from './views.js'
 
-const HOST_FIELDS = ['domain', 'target_scheme', 'target_host', 'target_port', 'ssl_enabled', 'force_ssl', 'enabled', 'description'] as const
+const HOST_FIELDS = ['domain', 'target_scheme', 'target_host', 'target_port', 'ssl_enabled', 'force_ssl', 'hsts_enabled', 'hsts_subdomains', 'enabled', 'description'] as const
+
+/** API 응답에서 DNS 자격증명 제거 */
+function sanitizeCert(cert: SslCert): Omit<SslCert, 'dns_token'> & { has_dns_token: boolean } {
+  const { dns_token, ...rest } = cert
+  return { ...rest, has_dns_token: !!dns_token }
+}
 
 /**
  * Proxy 관리 HTTP 인터페이스.
@@ -98,16 +104,36 @@ export class ProxyController {
   // --- /api/proxy/certs ---
 
   private registerSslApi(): void {
-    this.api.get('/certs', (c) => c.json({ ok: true, data: this.certs.allSorted() }))
+    this.api.get('/certs', (c) => c.json({ ok: true, data: this.certs.allSorted().map(sanitizeCert) }))
 
     this.api.post('/certs/issue', async (c) => {
-      const { domain, email } = await c.req.json()
+      const body = await c.req.json()
+      // domains 배열 또는 domain 단일(하위호환) 지원
+      const domains: string[] = Array.isArray(body.domains)
+        ? body.domains
+        : String(body.domains || body.domain || '').split(/[\n,]/).map((d: string) => d.trim()).filter(Boolean)
+      if (!domains.length) return this.badRequest(c, 'domain(s) required')
+      try {
+        const cert = await this.ssl.issue({
+          domains,
+          email: body.email,
+          challenge: body.challenge === 'dns' ? 'dns' : body.challenge === 'http' ? 'http' : undefined,
+          dnsToken: body.dns_token || undefined,
+        })
+        return c.json({ ok: true, data: { domains: certDomains(cert), expiresAt: cert.expires_at, provider: cert.provider } })
+      } catch (err: any) {
+        return this.sslFailure(c, err, `certificate issuance failed for ${domains.join(',')}`)
+      }
+    })
+
+    this.api.post('/certs/selfsigned', async (c) => {
+      const { domain } = await c.req.json()
       if (!domain) return this.badRequest(c, 'domain is required')
       try {
-        const cert = await this.ssl.issue(domain, email)
-        return c.json({ ok: true, data: { domain, expiresAt: cert.expires_at, provider: cert.provider } })
+        const cert = await this.ssl.selfSigned(domain)
+        return c.json({ ok: true, data: { domains: certDomains(cert), provider: cert.provider } })
       } catch (err: any) {
-        return this.sslFailure(c, err, `certificate issuance failed for ${domain}`)
+        return this.sslFailure(c, err, `self-signed generation failed for ${domain}`)
       }
     })
 
@@ -157,11 +183,26 @@ export class ProxyController {
 
   // --- /admin/proxy pages ---
 
+  /** 인증서(SAN·와일드카드 포함)가 커버하는 호스트 도메인 집합 */
+  private coveredDomains(): (domain: string) => boolean {
+    const covered = new Set<string>()
+    for (const cert of this.certs.all()) {
+      for (const d of certDomains(cert)) covered.add(d.toLowerCase())
+    }
+    return (domain: string) => {
+      const name = domain.toLowerCase()
+      if (covered.has(name)) return true
+      const dot = name.indexOf('.')
+      return dot !== -1 && covered.has(`*${name.slice(dot)}`)
+    }
+  }
+
   private registerPages(): void {
     this.pages.get('/', (c) => {
       const hosts = this.hosts.allSorted()
-      const certDomains = new Set(this.certs.query().pluck<string>('domain'))
-      return c.html(hostsPage(hosts, certDomains, {
+      const isCovered = this.coveredDomains()
+      const coveredSet = new Set(hosts.filter((h) => isCovered(h.domain)).map((h) => h.domain))
+      return c.html(hostsPage(hosts, coveredSet, {
         httpPort: this.server.httpPort,
         httpsPort: this.server.httpsPort,
         httpsActive: this.server.httpsActive,
@@ -171,9 +212,9 @@ export class ProxyController {
 
     this.pages.get('/ssl', (c) => {
       const certs = this.certs.allSorted()
-      const certDomains = new Set(certs.map((cert) => cert.domain))
-      const domainsWithoutCert = this.hosts.query().pluck<string>('domain').filter((d) => !certDomains.has(d))
-      return c.html(sslPage(certs, domainsWithoutCert, this.ssl.defaultEmail))
+      const isCovered = this.coveredDomains()
+      const domainsWithoutCert = this.hosts.query().pluck<string>('domain').filter((d) => !isCovered(d))
+      return c.html(sslPage(certs.map(sanitizeCert), domainsWithoutCert, this.ssl.defaultEmail))
     })
 
     this.pages.get('/logs', (c) => {

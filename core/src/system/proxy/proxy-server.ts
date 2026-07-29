@@ -4,7 +4,7 @@ import * as tls from 'node:tls'
 import * as net from 'node:net'
 import { readFileSync, existsSync } from 'node:fs'
 import type { Logger } from '../../services/log.js'
-import type { ProxyHostRepository, SslCertRepository, AccessLogRepository, ProxyHost } from './repositories.js'
+import { certDomains, type ProxyHostRepository, type SslCertRepository, type AccessLogRepository, type ProxyHost } from './repositories.js'
 
 /**
  * 리버스 프록시 서버.
@@ -104,7 +104,7 @@ export class ProxyServer {
         {
           cert: readFileSync(anyCert.cert_path),
           key: readFileSync(anyCert.key_path),
-          SNICallback: (servername, cb) => cb(null, this.secureContexts.get(servername) || undefined),
+          SNICallback: (servername, cb) => cb(null, this.contextFor(servername)),
         },
         (req, res) => this.handleRequest(req, res)
       )
@@ -120,15 +120,27 @@ export class ProxyServer {
     for (const cert of this.certRepo.all()) {
       if (!cert.cert_path || !existsSync(cert.cert_path) || !cert.key_path || !existsSync(cert.key_path)) continue
       try {
-        contexts.set(cert.domain, tls.createSecureContext({
+        const ctx = tls.createSecureContext({
           cert: readFileSync(cert.cert_path),
           key: readFileSync(cert.key_path),
-        }))
+        })
+        // SAN 인증서: 커버하는 모든 도메인(와일드카드 포함)을 같은 컨텍스트로 등록
+        for (const domain of certDomains(cert)) contexts.set(domain.toLowerCase(), ctx)
       } catch (err: any) {
         this.log.warn(`failed to load cert for ${cert.domain}: ${err.message}`)
       }
     }
     return contexts
+  }
+
+  /** SNI 매칭: 정확히 일치 → 와일드카드(*.example.com) 순 */
+  private contextFor(servername: string): tls.SecureContext | undefined {
+    const name = servername.toLowerCase()
+    const exact = this.secureContexts.get(name)
+    if (exact) return exact
+    const dot = name.indexOf('.')
+    if (dot === -1) return undefined
+    return this.secureContexts.get(`*${name.slice(dot)}`)
   }
 
   private findHost(hostname: string): ProxyHost | undefined {
@@ -183,7 +195,12 @@ export class ProxyServer {
         },
       },
       (proxyRes) => {
-        res.writeHead(proxyRes.statusCode || 502, proxyRes.headers)
+        const headers = { ...proxyRes.headers }
+        // HSTS: HTTPS로 서비스 중이고 호스트에 켜져 있으면 헤더 주입
+        if (encrypted && host.hsts_enabled) {
+          headers['strict-transport-security'] = `max-age=63072000${host.hsts_subdomains ? '; includeSubDomains' : ''}`
+        }
+        res.writeHead(proxyRes.statusCode || 502, headers)
         proxyRes.pipe(res)
         this.recordAccess(host, req, proxyRes.statusCode || 502, Date.now() - start)
       }

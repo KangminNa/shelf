@@ -2,8 +2,8 @@
 # 컨테이너 안에서 호스트의 Docker 데몬을 사용한다 (docker.sock 마운트 필요)
 FROM node:20-alpine
 
-# docker CLI(빌드/실행) + git(저장소 클론)
-RUN apk add --no-cache docker-cli git
+# docker CLI(빌드/실행) + git(저장소 클론) + openssl(자체서명 인증서)
+RUN apk add --no-cache docker-cli git openssl
 
 WORKDIR /app
 

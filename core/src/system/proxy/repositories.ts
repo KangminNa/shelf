@@ -9,6 +9,8 @@ export interface ProxyHost {
   target_port: number
   ssl_enabled: number
   force_ssl: number
+  hsts_enabled: number
+  hsts_subdomains: number
   enabled: number
   description: string
   created_at: number
@@ -18,12 +20,21 @@ export interface ProxyHost {
 export interface SslCert {
   id: number
   domain: string
+  domains: string // SAN 목록 (줄 단위, 비면 domain 단일)
   cert_path: string
   key_path: string
-  provider: string
+  provider: string // letsencrypt | manual | selfsigned
+  dns_provider: string // '' | cloudflare (DNS-01 갱신용)
+  dns_token: string // API 응답에 노출 금지
   expires_at: number
   auto_renew: number
   created_at: number
+}
+
+/** 인증서가 커버하는 전체 도메인 목록 (SAN 포함) */
+export function certDomains(cert: SslCert): string[] {
+  const list = (cert.domains || '').split('\n').map((d) => d.trim()).filter(Boolean)
+  return list.length ? list : [cert.domain]
 }
 
 export interface AccessLog {
