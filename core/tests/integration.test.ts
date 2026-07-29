@@ -113,12 +113,24 @@ test('app CRUD: create, secrets hidden, patch, validation', async () => {
 
   const dup = await api('/api/deploy/projects', {
     method: 'POST',
-    body: JSON.stringify({ name: 'itest', source_type: 'git', repo_url: 'x' }),
+    body: JSON.stringify({ name: 'itest', source_type: 'git', repo_url: 'https://example.com/r.git' }),
   })
   assert.equal(dup.status, 409)
 
   const noRepo = await api('/api/deploy/projects', { method: 'POST', body: JSON.stringify({ name: 'x2', source_type: 'git' }) })
   assert.equal(noRepo.status, 400)
+
+  // 셸 메타문자가 든 저장소 URL/브랜치는 거부 (명령 주입 방어)
+  const evilUrl = await api('/api/deploy/projects', {
+    method: 'POST',
+    body: JSON.stringify({ name: 'x3', source_type: 'git', repo_url: 'https://example.com/r.git; rm -rf /' }),
+  })
+  assert.equal(evilUrl.status, 400)
+  const evilBranch = await api('/api/deploy/projects', {
+    method: 'POST',
+    body: JSON.stringify({ name: 'x4', source_type: 'git', repo_url: 'https://example.com/r.git', branch: 'main`whoami`' }),
+  })
+  assert.equal(evilBranch.status, 400)
 
   const del = await api(`/api/deploy/projects/${id}`, { method: 'DELETE' })
   assert.equal(del.status, 200)
@@ -155,6 +167,16 @@ test('webhook server rejects bad signatures, accepts valid HMAC', async () => {
   assert.match((await valid.json() as any).message, /Auto-deploy disabled/)
 
   await api(`/api/deploy/projects/${id}`, { method: 'DELETE' })
+})
+
+// 주의: 이 테스트는 IP 잠금을 걸므로 반드시 마지막에 둔다
+test('login rate limit locks after repeated failures', async () => {
+  for (let i = 0; i < 5; i++) {
+    const res = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ username: 'admin', password: 'wrong-' + i }) }, false)
+    assert.equal(res.status, 401)
+  }
+  const locked = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ username: 'admin', password: 'integration-pw-1' }) }, false)
+  assert.equal(locked.status, 429)
 })
 
 test('proxy host CRUD and rollback guard', async () => {

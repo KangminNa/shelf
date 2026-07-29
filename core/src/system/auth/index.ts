@@ -58,6 +58,9 @@ class SessionRepository extends Repository<Session> {
 export class AuthSystem {
   static readonly COOKIE = 'shelf_session'
   static readonly SESSION_TTL_SECONDS = 7 * 24 * 3600
+  /** 로그인 브루트포스 방어: IP당 연속 실패 5회 → 15분 잠금 */
+  static readonly MAX_LOGIN_FAILURES = 5
+  static readonly LOCKOUT_MS = 15 * 60_000
 
   /** 공개 라우트: /login, /setup, /api/auth/* */
   readonly routes = new Hono()
@@ -65,6 +68,7 @@ export class AuthSystem {
   private readonly users: UserRepository
   private readonly sessions: SessionRepository
   private readonly log = new Logger('auth')
+  private readonly loginFailures = new Map<string, { count: number; lockedUntil: number }>()
 
   constructor() {
     const db = new AppDatabase('auth', join(process.cwd(), 'core', 'migrations', 'auth'))
@@ -124,12 +128,22 @@ export class AuthSystem {
     })
 
     this.routes.post('/api/auth/login', async (c) => {
+      const ip = AuthSystem.clientIp(c)
+      const lock = this.loginFailures.get(ip)
+      if (lock && lock.lockedUntil > Date.now()) {
+        const waitMin = Math.ceil((lock.lockedUntil - Date.now()) / 60_000)
+        return c.json({ ok: false, error: { code: 'RATE_LIMITED', message: `Too many failed attempts. Try again in ${waitMin}m.` } }, 429)
+      }
+
       const { username, password } = await c.req.json()
       const user = username ? this.users.findByUsername(username) : undefined
       if (!user || !AuthSystem.verifyPassword(password || '', user.password_hash)) {
-        this.log.warn(`failed login attempt for "${username}"`)
+        this.recordFailure(ip)
+        this.log.warn(`failed login attempt for "${username}" from ${ip}`)
         return c.json({ ok: false, error: { code: 'UNAUTHORIZED', message: 'Invalid username or password' } }, 401)
       }
+
+      this.loginFailures.delete(ip)
       this.issueSession(c, user)
       return c.json({ ok: true, data: { username: user.username } })
     })
@@ -152,12 +166,36 @@ export class AuthSystem {
       user_id: user.id,
       expires_at: Math.floor(Date.now() / 1000) + AuthSystem.SESSION_TTL_SECONDS,
     })
+    // HTTPS(프록시 경유 포함)로 로그인했으면 Secure 쿠키 — 평문 HTTP로 세션 유출 방지
+    const isHttps = c.req.header('x-forwarded-proto') === 'https' || new URL(c.req.url).protocol === 'https:'
     setCookie(c, AuthSystem.COOKIE, token, {
       path: '/',
       httpOnly: true,
       sameSite: 'Lax',
+      secure: isHttps,
       maxAge: AuthSystem.SESSION_TTL_SECONDS,
     })
+  }
+
+  private recordFailure(ip: string): void {
+    const entry = this.loginFailures.get(ip) || { count: 0, lockedUntil: 0 }
+    entry.count += 1
+    if (entry.count >= AuthSystem.MAX_LOGIN_FAILURES) {
+      entry.lockedUntil = Date.now() + AuthSystem.LOCKOUT_MS
+      entry.count = 0
+      this.log.warn(`login locked for ${ip} (${AuthSystem.LOCKOUT_MS / 60_000}m)`)
+    }
+    this.loginFailures.set(ip, entry)
+  }
+
+  private static clientIp(c: any): string {
+    // 프록시 경유 시 x-real-ip(우리 프록시가 설정), 직접 접속은 소켓 주소
+    return (
+      c.req.header('x-real-ip') ||
+      c.req.header('x-forwarded-for')?.split(',')[0].trim() ||
+      c.env?.incoming?.socket?.remoteAddress ||
+      'unknown'
+    )
   }
 
   private validateSession(token: string): boolean {

@@ -1,6 +1,5 @@
 import { Hono } from 'hono'
 import { serve } from '@hono/node-server'
-import { cors } from 'hono/cors'
 import { EventBus } from '../services/events.js'
 import { Logger } from '../services/log.js'
 import { ensureDataDir } from '../db/database.js'
@@ -42,7 +41,7 @@ export class ShelfApplication {
 
   private constructor() {
     ensureDataDir()
-    this.hono.use('*', cors())
+    // CORS는 의도적으로 열지 않는다 — 관리 UI/API는 동일 출처 전용
     this.hono.use('*', requestLogger)
     this.hono.onError(errorBoundary)
   }

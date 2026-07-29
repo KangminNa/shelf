@@ -42,9 +42,21 @@ export class WebhookServer {
       return
     }
 
+    // 공개 포트이므로 바디 크기 제한 (메모리 DoS 방지)
+    const MAX_BODY = 1024 * 1024
+    let received = 0
     const chunks: Buffer[] = []
-    req.on('data', (c) => chunks.push(c))
+    req.on('data', (c) => {
+      received += c.length
+      if (received > MAX_BODY) {
+        this.respond(res, 413, { ok: false, error: 'Payload too large' })
+        req.destroy()
+        return
+      }
+      chunks.push(c)
+    })
     req.on('end', () => {
+      if (received > MAX_BODY) return
       const body = Buffer.concat(chunks)
       const project = this.projects.find(Number(match[1]))
 

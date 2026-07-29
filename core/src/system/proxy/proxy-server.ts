@@ -165,8 +165,10 @@ export class ProxyServer {
     const host = this.findHost(hostname)
 
     if (!host) {
+      // Host 헤더는 공격자 제어 입력 — 이스케이프 없이 HTML에 넣지 않는다
+      const safe = hostname.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`)
       res.writeHead(502, { 'content-type': 'text/html; charset=utf-8' })
-      res.end(`<h1>502 Bad Gateway</h1><p>No proxy host configured for <code>${hostname}</code></p>`)
+      res.end(`<h1>502 Bad Gateway</h1><p>No proxy host configured for <code>${safe}</code></p>`)
       return
     }
 

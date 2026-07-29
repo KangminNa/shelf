@@ -9,6 +9,24 @@ import { projectsPage, projectDetailPage, deploymentsPage, type DisplayStatus } 
 
 const PROJECT_FIELDS = ['source_type', 'repo_url', 'branch', 'git_token', 'image', 'port', 'container_port', 'env', 'volumes', 'domain', 'auto_deploy'] as const
 
+// git 명령에 들어가는 값들 — 셸 메타문자 차단 (심층 방어; 관리자는 원래 신뢰 대상)
+const BRANCH_RE = /^[\w./-]{1,120}$/
+const REPO_URL_RE = /^(https?:\/\/|git@|ssh:\/\/|\/|\.\/)[^\s;|&`$<>'"\\]+$/
+const IMAGE_RE = /^[\w][\w.\-/:@]{0,200}$/
+
+function validateSourceInputs(body: Record<string, unknown>): string | null {
+  if (body.branch !== undefined && body.branch !== '' && !BRANCH_RE.test(String(body.branch))) {
+    return 'Invalid branch name'
+  }
+  if (body.repo_url !== undefined && body.repo_url !== '' && !REPO_URL_RE.test(String(body.repo_url))) {
+    return 'Invalid repository URL'
+  }
+  if (body.image !== undefined && body.image !== '' && !IMAGE_RE.test(String(body.image))) {
+    return 'Invalid image reference'
+  }
+  return null
+}
+
 /** API 응답에서 시크릿 제거 */
 function sanitize(p: Project): Omit<Project, 'webhook_secret' | 'git_token'> & { has_token: boolean } {
   const { webhook_secret: _s, git_token, ...rest } = p
@@ -64,6 +82,8 @@ export class DeployController {
       const sourceType = body.source_type === 'image' ? 'image' : 'git'
       if (sourceType === 'git' && !body.repo_url) return this.badRequest(c, 'repo_url is required for git source')
       if (sourceType === 'image' && !body.image) return this.badRequest(c, 'image is required for image source')
+      const invalid = validateSourceInputs(body)
+      if (invalid) return this.badRequest(c, invalid)
       if (this.projects.findByName(body.name)) {
         return c.json({ ok: false, error: { code: 'CONFLICT', message: `App "${body.name}" already exists` } }, 409)
       }
@@ -95,6 +115,8 @@ export class DeployController {
 
     this.api.patch('/projects/:id', async (c) => {
       const body = await c.req.json()
+      const invalid = validateSourceInputs(body)
+      if (invalid) return this.badRequest(c, invalid)
       const patch: Partial<Project> = {}
       for (const field of PROJECT_FIELDS) {
         if (body[field] !== undefined) {
