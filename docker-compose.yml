@@ -23,6 +23,8 @@ services:
       # 호스트에 publish된 포트로 나가려면 host-gateway를 바라봐야 한다
       - APP_HOST=host.docker.internal
       # - ACME_EMAIL=you@example.com
+      # 관리 UI를 프록시(80/443) 뒤로 자동 등록 — 설정하면 :81을 외부에 열 필요 없음
+      # - ADMIN_DOMAIN=shelf.example.com
     extra_hosts:
       - "host.docker.internal:host-gateway"
     healthcheck:

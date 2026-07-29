@@ -52,12 +52,30 @@ export class ShelfApplication {
     this.proxy = new ProxySystem(this.events)
     this.deploy = new DeploySystem(this.events)
 
+    this.registerAdminDomain(port)
     this.registerRoutes()
 
     serve({ fetch: this.hono.fetch, port }, (info) => this.printBanner(info.port))
 
     process.on('SIGINT', () => this.shutdown())
     process.on('SIGTERM', () => this.shutdown())
+  }
+
+  /**
+   * ADMIN_DOMAIN이 설정되면 관리 UI(:81)를 프록시 호스트로 자동 등록한다.
+   * 프록시와 관리 UI는 같은 프로세스이므로 타깃은 항상 127.0.0.1이다.
+   */
+  private registerAdminDomain(port: number): void {
+    const domain = process.env.ADMIN_DOMAIN
+    if (!domain) return
+    this.proxy.hosts.upsert({
+      domain,
+      target_host: '127.0.0.1',
+      target_port: port,
+      description: 'Shelf admin (auto-registered via ADMIN_DOMAIN)',
+    })
+    this.proxy.server.reloadHosts()
+    this.log.info(`admin UI registered on proxy: ${domain} -> :${port}`)
   }
 
   private registerRoutes(): void {
