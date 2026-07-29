@@ -23,7 +23,8 @@
   "scripts": {
     "dev": "tsx watch core/src/index.ts",
     "build": "npm run build --workspaces",
-    "start": "node core/dist/index.js"
+    "start": "node core/dist/index.js",
+    "test": "tsx --test core/tests/*.test.ts"
   },
   "engines": {
     "node": ">=20.0.0"

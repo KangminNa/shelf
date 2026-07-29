@@ -141,7 +141,7 @@ export class DeployPipeline {
   // --- 내부 ---
 
   /** private 저장소면 HTTPS URL에 토큰을 주입한 fetch 전용 URL 반환 */
-  private static authenticatedUrl(project: Project): string {
+  static authenticatedUrl(project: Project): string {
     if (!project.git_token || !/^https?:\/\//.test(project.repo_url)) return project.repo_url
     return project.repo_url.replace(/^(https?:\/\/)/, `$1x-access-token:${project.git_token}@`)
   }

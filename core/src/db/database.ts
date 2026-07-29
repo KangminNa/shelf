@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Repository, type Entity } from './repository.js'
 
-const DATA_DIR = join(process.cwd(), 'data')
+// DATA_DIR 환경변수로 재정의 가능 (테스트가 임시 디렉토리를 쓰기 위함)
+const DATA_DIR = process.env.DATA_DIR || join(process.cwd(), 'data')
 
 export function ensureDataDir(): void {
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
