@@ -49,7 +49,6 @@ test('update patches fields and auto-bumps updated_at', async () => {
   const db = setup()
   const repo = new Repository<Post>(db, 'posts')
   const post = repo.create({ title: 'old' })
-  // updated_at이 확실히 달라지도록 과거로 밀어둔다
   db.prepare('UPDATE posts SET updated_at = 1000 WHERE id = ?').run(post.id)
 
   const updated = repo.update(post.id, { title: 'new' })

@@ -16,10 +16,6 @@ interface ShellOpts {
   previewUrl?: string
 }
 
-/**
- * 관리 화면 공통 셸 (사이드바 + 탑바).
- * previewUrl이 있으면 오른쪽에 라이브 프리뷰 패널을 붙인다.
- */
 export function renderShell(opts: ShellOpts): string {
   const { title, activePath, content, apps = [], previewUrl } = opts
 

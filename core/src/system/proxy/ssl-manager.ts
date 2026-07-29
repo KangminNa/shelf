@@ -17,21 +17,13 @@ export class SslError extends Error {
 }
 
 export interface IssueOptions {
-  domains: string[] // 첫 항목이 대표 도메인. *.example.com 포함 가능(DNS-01 필수)
+  domains: string[]
   email?: string
   challenge?: 'http' | 'dns'
   dnsProvider?: 'cloudflare'
   dnsToken?: string
 }
 
-/**
- * SSL 인증서 관리자 (Nginx Proxy Manager 수준).
- * - Let's Encrypt HTTP-01 (기본) / DNS-01 Cloudflare (와일드카드 지원)
- * - SAN(여러 도메인) 인증서
- * - 수동 PEM 업로드 / 자체서명(로컬·LAN용)
- * - 만료 30일 전 자동 갱신 (DNS-01 자격증명은 저장해 재사용)
- * 인증서 파일은 data/ssl/{대표도메인}/에 저장된다.
- */
 export class SslManager {
   static readonly RENEWAL_WINDOW_DAYS = 30
 
@@ -49,7 +41,6 @@ export class SslManager {
     mkdirSync(this.sslDir, { recursive: true })
   }
 
-  /** Let's Encrypt 발급 (HTTP-01 또는 DNS-01/와일드카드) */
   async issue(opts: IssueOptions): Promise<SslCert> {
     const domains = opts.domains.map((d) => d.trim().toLowerCase()).filter(Boolean)
     if (!domains.length) throw new SslError('VALIDATION', 'At least one domain is required')
@@ -88,7 +79,6 @@ export class SslManager {
     return cert
   }
 
-  /** 수동 PEM 업로드 */
   upload(domain: string, certPem: string, keyPem: string): SslCert {
     const { certPath, keyPath } = this.writePair(domain, certPem, keyPem)
     const cert = this.certRepo.upsert(domain, {
@@ -105,7 +95,6 @@ export class SslManager {
     return cert
   }
 
-  /** 자체서명 인증서 (도메인 없는 로컬/LAN 환경용, 10년) */
   async selfSigned(domain: string): Promise<SslCert> {
     const name = domain.trim().toLowerCase()
     if (!name) throw new SslError('VALIDATION', 'domain is required')
@@ -141,7 +130,6 @@ export class SslManager {
     return cert
   }
 
-  /** 재발급 (Let's Encrypt 전용 — 저장된 도메인/DNS 자격증명 재사용) */
   async renew(certId: number): Promise<SslCert> {
     const cert = this.certRepo.find(certId)
     if (!cert) throw new SslError('NOT_FOUND', 'Certificate not found')
@@ -165,7 +153,6 @@ export class SslManager {
     }
   }
 
-  /** 스케줄러가 매일 호출 — 만료 임박 인증서 자동 갱신 */
   async renewDueCertificates(): Promise<void> {
     for (const cert of this.certRepo.dueForRenewal(SslManager.RENEWAL_WINDOW_DAYS)) {
       this.log.info(`auto-renewing certificate for ${cert.domain}`)
@@ -179,9 +166,6 @@ export class SslManager {
     }
   }
 
-  // --- 내부 ---
-
-  /** 발급/업로드 후 반영: 커버 도메인의 호스트 SSL 활성화 + 인증서 리로드 */
   private applyCertificate(cert: SslCert): void {
     for (const domain of certDomains(cert)) {
       if (!domain.startsWith('*.')) this.hostRepo.setSslEnabled(domain, true)
@@ -255,7 +239,6 @@ export class SslManager {
   }
 }
 
-/** Cloudflare DNS API — DNS-01 챌린지용 TXT 레코드 관리 */
 class CloudflareDns {
   private static readonly API = 'https://api.cloudflare.com/client/v4'
   private readonly createdIds: Array<{ zone: string; id: string }> = []
@@ -270,7 +253,6 @@ class CloudflareDns {
     })
     this.createdIds.push({ zone, id: res.result.id })
     this.log.info(`cloudflare TXT created: ${name}`)
-    // DNS 전파 대기
     await new Promise((r) => setTimeout(r, 10_000))
   }
 
@@ -281,7 +263,6 @@ class CloudflareDns {
   }
 
   private async zoneIdFor(recordName: string): Promise<string> {
-    // _acme-challenge.a.b.example.com → example.com 순으로 zone 탐색
     const parts = recordName.split('.')
     for (let i = parts.length - 2; i >= 0; i--) {
       const candidate = parts.slice(i).join('.')

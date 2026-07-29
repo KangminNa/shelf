@@ -11,17 +11,6 @@ import { ProxyController } from './controller.js'
 
 export type { ProxyHost, SslCert, AccessLog } from './repositories.js'
 
-/**
- * 코어 내장 리버스 프록시 시스템 (Nginx Proxy Manager 역할).
- *
- *   ProxySystem
- *   ├── ProxyHostRepository / SslCertRepository / AccessLogRepository  (데이터)
- *   ├── ProxyServer   — 80/443 리스너, SNI, WebSocket, ACME 챌린지
- *   ├── SslManager    — Let's Encrypt 발급/갱신, 수동 업로드
- *   └── ProxyController — /api/proxy + /admin/proxy 라우트
- *
- * 다른 시스템/모듈은 events.emit('proxy:register-host', {...})로 호스트를 등록한다.
- */
 export class ProxySystem {
   readonly hosts: ProxyHostRepository
   readonly certs: SslCertRepository
@@ -46,7 +35,6 @@ export class ProxySystem {
     this.server.start()
     this.scheduler.register('0 3 * * *', 'ssl-renewal-check', () => this.ssl.renewDueCertificates())
 
-    // 모듈/시스템 간 연동: 이벤트로 프록시 호스트 등록 (예: deploy가 도메인 연결)
     events.on('proxy:register-host', (payload: any) => {
       if (!payload?.domain || !payload?.target_port) return
       const host = this.hosts.upsert(payload)

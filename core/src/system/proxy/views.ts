@@ -7,8 +7,6 @@ export interface ProxyServerStatus {
   certificateCount: number
 }
 
-// --- Proxy hosts ---
-
 export function hostsPage(hosts: ProxyHost[], certDomains: Set<string>, status: ProxyServerStatus): string {
   if (!hosts.length) {
     return `
@@ -281,9 +279,6 @@ function hostScripts(): string {
     </script>`
 }
 
-// --- SSL certificates ---
-
-/** dns_token이 제거된 인증서 뷰 모델 */
 export interface CertView {
   id: number
   domain: string
@@ -566,8 +561,6 @@ function sslScripts(): string {
       });
     </script>`
 }
-
-// --- Access logs ---
 
 export function logsPage(logs: AccessLog[], selectedDomain: string): string {
   const rows = logs.map((l) => {

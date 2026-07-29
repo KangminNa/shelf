@@ -5,10 +5,6 @@ interface Job {
   timer: ReturnType<typeof setInterval>
 }
 
-/**
- * 모듈/시스템별 예약 작업 스케줄러.
- * 단순화된 cron 해석: 분/시/일 단위 인터벌로 변환된다.
- */
 export class Scheduler {
   private readonly jobs = new Map<string, Job>()
 

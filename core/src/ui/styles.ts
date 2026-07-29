@@ -62,8 +62,6 @@ body {
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
-
-/* Layout */
 .shelf-layout {
   display: flex;
   min-height: 100vh;
@@ -185,8 +183,6 @@ body {
   border-radius: 50%;
   background: var(--success);
 }
-
-/* Topbar */
 .shelf-topbar {
   height: var(--topbar-h);
   background: var(--bg);
@@ -212,8 +208,6 @@ body {
   align-items: center;
   gap: 8px;
 }
-
-/* Main content */
 .shelf-main {
   margin-left: var(--sidebar-w);
   padding-top: var(--topbar-h);
@@ -225,8 +219,6 @@ body {
   padding: 24px;
   max-width: 1200px;
 }
-
-/* Cards */
 .shelf-card {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -246,8 +238,6 @@ body {
   font-size: 15px;
   font-weight: 600;
 }
-
-/* Stat cards */
 .shelf-stats {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
@@ -281,8 +271,6 @@ body {
   color: var(--text-secondary);
   margin-top: 4px;
 }
-
-/* Module cards */
 .shelf-modules-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -352,8 +340,6 @@ body {
   align-items: center;
   gap: 4px;
 }
-
-/* Buttons */
 .shelf-btn {
   display: inline-flex;
   align-items: center;
@@ -402,8 +388,6 @@ body {
 
 .shelf-btn-sm { padding: 4px 10px; font-size: 12px; }
 .shelf-btn-icon { padding: 6px; }
-
-/* Badges */
 .shelf-badge {
   display: inline-flex;
   align-items: center;
@@ -418,8 +402,6 @@ body {
 .shelf-badge-warning { background: var(--warning-light); color: var(--warning); }
 .shelf-badge-danger { background: var(--danger-light); color: var(--danger); }
 .shelf-badge-info { background: var(--accent-light); color: var(--accent-text); }
-
-/* Table */
 .shelf-table {
   width: 100%;
   border-collapse: separate;
@@ -447,8 +429,6 @@ body {
 .shelf-table tr:last-child td { border-bottom: none; }
 
 .shelf-table tr:hover td { background: var(--bg-secondary); }
-
-/* Empty state */
 .shelf-empty {
   text-align: center;
   padding: 48px 24px;
@@ -472,8 +452,6 @@ body {
   font-size: 13px;
   margin-bottom: 16px;
 }
-
-/* Breadcrumb */
 .shelf-breadcrumb {
   display: flex;
   align-items: center;
@@ -489,8 +467,6 @@ body {
 }
 
 .shelf-breadcrumb a:hover { color: var(--text); }
-
-/* Section header */
 .shelf-section-header {
   display: flex;
   align-items: center;
@@ -502,8 +478,6 @@ body {
   font-size: 18px;
   font-weight: 600;
 }
-
-/* Util */
 .shelf-flex { display: flex; }
 .shelf-items-center { align-items: center; }
 .shelf-gap-sm { gap: 8px; }

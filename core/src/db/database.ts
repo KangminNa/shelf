@@ -3,19 +3,12 @@ import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Repository, type Entity } from './repository.js'
 
-// DATA_DIR 환경변수로 재정의 가능 (테스트가 임시 디렉토리를 쓰기 위함)
 const DATA_DIR = process.env.DATA_DIR || join(process.cwd(), 'data')
 
 export function ensureDataDir(): void {
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
 }
 
-/**
- * 시스템별 SQLite 데이터베이스 (data/{scope}.db).
- * - WAL 모드, foreign keys 활성화
- * - migrationsDir의 *.sql을 파일명 순서로 1회씩 적용
- * - repo(table)로 날 SQL 없는 Repository 획득
- */
 export class AppDatabase {
   readonly raw: BetterSqlite3.Database
   private readonly repos = new Map<string, Repository<any>>()

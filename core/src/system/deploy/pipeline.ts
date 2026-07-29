@@ -5,7 +5,7 @@ import type { Logger } from '../../services/log.js'
 import type { EventBus } from '../../services/events.js'
 import type { DockerService } from '../docker.js'
 import { ContainerManager } from './container-manager.js'
-import type { ProjectRepository, DeploymentRepository, Project } from './repositories.js'
+import type { ProjectRepository, DeploymentRepository, Project, Deployment } from './repositories.js'
 
 export interface DeployResult {
   ok: boolean
@@ -13,16 +13,31 @@ export interface DeployResult {
   error?: string
 }
 
-/**
- * 배포 파이프라인.
- *  - git 소스:  clone/pull → docker build → 컨테이너 재생성
- *  - image 소스: docker pull → 컨테이너 재생성
- * 성공 시 도메인이 있으면 프록시에 자동 등록. 전 과정 로그는 deployments에 저장.
- */
-export class DeployPipeline {
-  private static readonly GIT_TIMEOUT_MS = 5 * 60 * 1000
-  private static readonly MAX_LOG_CHARS = 200_000
+export type DeployTrigger = Deployment['trigger_type']
 
+const GIT_TIMEOUT_MS = 5 * 60 * 1000
+const MAX_JOURNAL_CHARS = 200_000
+
+class DeploymentJournal {
+  private text = ''
+
+  constructor(private readonly secretToMask: string) {}
+
+  add(chunk: string): void {
+    const masked = this.secretToMask ? chunk.split(this.secretToMask).join('***') : chunk
+    this.text = (this.text + masked).slice(-MAX_JOURNAL_CHARS)
+  }
+
+  command(cmd: string): void {
+    this.add(`\n$ ${cmd}\n`)
+  }
+
+  toString(): string {
+    return this.text
+  }
+}
+
+export class DeployPipeline {
   private readonly inFlight = new Set<number>()
 
   constructor(
@@ -39,95 +54,31 @@ export class DeployPipeline {
     return this.inFlight.has(projectId)
   }
 
-  /**
-   * 배포 실행. rollbackCommit이 있으면 최신 대신 해당 커밋을 체크아웃한다 (git 소스 전용).
-   * private 저장소: git_token이 있으면 clone/fetch 명령에만 토큰 URL을 쓰고
-   * .git/config에는 평문 URL만 남긴다. 로그에서는 토큰이 ***로 마스킹된다.
-   */
-  async deploy(project: Project, trigger: 'manual' | 'webhook' | 'rollback', rollbackCommit?: string): Promise<DeployResult> {
+  async deploy(project: Project, trigger: DeployTrigger, rollbackCommit?: string): Promise<DeployResult> {
     if (this.inFlight.has(project.id)) {
       return { ok: false, deploymentId: 0, error: 'Deployment already in progress' }
     }
     this.inFlight.add(project.id)
 
-    const start = Date.now()
+    const startedAt = Date.now()
+    const journal = new DeploymentJournal(project.git_token)
     const deployment = this.deployments.create({ project_id: project.id, status: 'running', trigger_type: trigger })
-    const mask = (text: string) => (project.git_token ? text.split(project.git_token).join('***') : text)
-    let fullLog = ''
-    const append = (text: string) => {
-      fullLog += mask(text)
-      if (fullLog.length > DeployPipeline.MAX_LOG_CHARS) fullLog = fullLog.slice(-DeployPipeline.MAX_LOG_CHARS)
-    }
 
     try {
       this.events.emit('deploy:started', { projectId: project.id, name: project.name, deploymentId: deployment.id })
       this.log.info(`deploying "${project.name}" (${trigger}, ${project.source_type})...`)
 
       if (project.source_type === 'image') {
-        // 1a. 이미지 pull
-        append(`\n$ docker pull ${project.image}\n`)
-        append(await this.docker.pull(project.image))
+        await this.pullImage(project, journal)
       } else {
-        // 1b. git clone/fetch → (롤백이면 해당 커밋) → 커밋 기록 → docker build
-        const repoDir = join(this.reposDir, project.name)
-        const fetchUrl = DeployPipeline.authenticatedUrl(project)
-
-        if (!existsSync(join(repoDir, '.git'))) {
-          rmSync(repoDir, { recursive: true, force: true })
-          await this.gitStep(append, `git clone --branch ${project.branch} --single-branch ${fetchUrl} ${JSON.stringify(repoDir)}`, this.reposDir)
-          // 토큰이 .git/config에 남지 않도록 평문 URL로 되돌린다
-          if (project.git_token) {
-            await this.runShell(`git remote set-url origin ${project.repo_url}`, repoDir)
-          }
-        } else {
-          await this.gitStep(append, `git fetch ${fetchUrl} ${project.branch}`, repoDir)
-        }
-
-        if (rollbackCommit) {
-          await this.gitStep(append, `git reset --hard ${rollbackCommit}`, repoDir)
-        } else if (existsSync(join(repoDir, '.git', 'FETCH_HEAD'))) {
-          await this.gitStep(append, `git reset --hard FETCH_HEAD`, repoDir)
-        }
-
-        const commitInfo = await this.runShell('git log -1 --format=%H%n%s', repoDir)
-        const [commitHash = '', commitMessage = ''] = commitInfo.output.trim().split('\n')
-        this.deployments.update(deployment.id, { commit_hash: commitHash, commit_message: commitMessage })
-
-        if (!existsSync(join(repoDir, 'Dockerfile'))) {
-          throw new Error('Dockerfile not found in repository root. Every Shelf app needs a Dockerfile.')
-        }
-
-        const tag = ContainerManager.imageTag(project)
-        append(`\n$ docker build -t ${tag} .\n`)
-        append(await this.docker.build(tag, repoDir))
+        await this.buildFromGit(project, deployment.id, journal, rollbackCommit)
       }
+      await this.recreateContainer(project, journal)
+      this.publishDomain(project)
 
-      // 2. 컨테이너 재생성
-      append(`\n$ docker run (recreate container shelf-${project.name})\n`)
-      await this.containers.recreate(project)
-
-      // 3. 도메인이 있으면 프록시 등록
-      if (project.domain && project.port) {
-        // APP_HOST: Shelf가 컨테이너로 돌 때는 host.docker.internal (compose에서 설정)
-        this.events.emit('proxy:register-host', {
-          domain: project.domain,
-          target_host: process.env.APP_HOST || '127.0.0.1',
-          target_port: project.port,
-          description: `app: ${project.name}`,
-        })
-      }
-
-      const duration = Date.now() - start
-      this.deployments.update(deployment.id, { status: 'success', log: fullLog, duration_ms: duration })
-      this.events.emit('deploy:succeeded', { projectId: project.id, name: project.name, deploymentId: deployment.id })
-      this.log.info(`deployed "${project.name}" in ${Math.round(duration / 1000)}s`)
-      return { ok: true, deploymentId: deployment.id }
+      return this.succeed(project, deployment, journal, startedAt)
     } catch (err: any) {
-      append(`\n[error] ${err.message}`)
-      this.deployments.update(deployment.id, { status: 'failed', log: fullLog, duration_ms: Date.now() - start })
-      this.events.emit('deploy:failed', { projectId: project.id, name: project.name, deploymentId: deployment.id, error: err.message })
-      this.log.error(`deploy failed for "${project.name}": ${err.message}`)
-      return { ok: false, deploymentId: deployment.id, error: err.message }
+      return this.fail(project, deployment, journal, startedAt, err)
     } finally {
       this.inFlight.delete(project.id)
     }
@@ -138,18 +89,111 @@ export class DeployPipeline {
     if (existsSync(dir)) rmSync(dir, { recursive: true, force: true })
   }
 
-  // --- 내부 ---
-
-  /** private 저장소면 HTTPS URL에 토큰을 주입한 fetch 전용 URL 반환 */
   static authenticatedUrl(project: Project): string {
     if (!project.git_token || !/^https?:\/\//.test(project.repo_url)) return project.repo_url
     return project.repo_url.replace(/^(https?:\/\/)/, `$1x-access-token:${project.git_token}@`)
   }
 
-  private async gitStep(append: (s: string) => void, cmd: string, cwd: string): Promise<void> {
-    append(`\n$ ${cmd}\n`)
+  private async pullImage(project: Project, journal: DeploymentJournal): Promise<void> {
+    journal.command(`docker pull ${project.image}`)
+    journal.add(await this.docker.pull(project.image))
+  }
+
+  private async buildFromGit(
+    project: Project,
+    deploymentId: number,
+    journal: DeploymentJournal,
+    rollbackCommit?: string
+  ): Promise<void> {
+    const repoDir = join(this.reposDir, project.name)
+    await this.syncRepository(project, repoDir, journal, rollbackCommit)
+    await this.recordCommit(deploymentId, repoDir)
+    this.ensureDockerfile(repoDir)
+    await this.buildImage(project, repoDir, journal)
+  }
+
+  private async syncRepository(
+    project: Project,
+    repoDir: string,
+    journal: DeploymentJournal,
+    rollbackCommit?: string
+  ): Promise<void> {
+    const fetchUrl = DeployPipeline.authenticatedUrl(project)
+
+    if (!existsSync(join(repoDir, '.git'))) {
+      rmSync(repoDir, { recursive: true, force: true })
+      await this.gitStep(journal, `git clone --branch ${project.branch} --single-branch ${fetchUrl} ${JSON.stringify(repoDir)}`, this.reposDir)
+      await this.stripCredentialsFromRemote(project, repoDir)
+    } else {
+      await this.gitStep(journal, `git fetch ${fetchUrl} ${project.branch}`, repoDir)
+    }
+
+    if (rollbackCommit) {
+      await this.gitStep(journal, `git reset --hard ${rollbackCommit}`, repoDir)
+    } else if (existsSync(join(repoDir, '.git', 'FETCH_HEAD'))) {
+      await this.gitStep(journal, `git reset --hard FETCH_HEAD`, repoDir)
+    }
+  }
+
+  private async stripCredentialsFromRemote(project: Project, repoDir: string): Promise<void> {
+    if (project.git_token) {
+      await this.runShell(`git remote set-url origin ${project.repo_url}`, repoDir)
+    }
+  }
+
+  private async recordCommit(deploymentId: number, repoDir: string): Promise<void> {
+    const result = await this.runShell('git log -1 --format=%H%n%s', repoDir)
+    const [commitHash = '', commitMessage = ''] = result.output.trim().split('\n')
+    this.deployments.update(deploymentId, { commit_hash: commitHash, commit_message: commitMessage })
+  }
+
+  private ensureDockerfile(repoDir: string): void {
+    if (!existsSync(join(repoDir, 'Dockerfile'))) {
+      throw new Error('Dockerfile not found in repository root. Every Shelf app needs a Dockerfile.')
+    }
+  }
+
+  private async buildImage(project: Project, repoDir: string, journal: DeploymentJournal): Promise<void> {
+    const tag = ContainerManager.imageTag(project)
+    journal.command(`docker build -t ${tag} .`)
+    journal.add(await this.docker.build(tag, repoDir))
+  }
+
+  private async recreateContainer(project: Project, journal: DeploymentJournal): Promise<void> {
+    journal.command(`docker run (recreate container shelf-${project.name})`)
+    await this.containers.recreate(project)
+  }
+
+  private publishDomain(project: Project): void {
+    if (!project.domain || !project.port) return
+    this.events.emit('proxy:register-host', {
+      domain: project.domain,
+      target_host: process.env.APP_HOST || '127.0.0.1',
+      target_port: project.port,
+      description: `app: ${project.name}`,
+    })
+  }
+
+  private succeed(project: Project, deployment: Deployment, journal: DeploymentJournal, startedAt: number): DeployResult {
+    const duration = Date.now() - startedAt
+    this.deployments.update(deployment.id, { status: 'success', log: journal.toString(), duration_ms: duration })
+    this.events.emit('deploy:succeeded', { projectId: project.id, name: project.name, deploymentId: deployment.id })
+    this.log.info(`deployed "${project.name}" in ${Math.round(duration / 1000)}s`)
+    return { ok: true, deploymentId: deployment.id }
+  }
+
+  private fail(project: Project, deployment: Deployment, journal: DeploymentJournal, startedAt: number, err: Error): DeployResult {
+    journal.add(`\n[error] ${err.message}`)
+    this.deployments.update(deployment.id, { status: 'failed', log: journal.toString(), duration_ms: Date.now() - startedAt })
+    this.events.emit('deploy:failed', { projectId: project.id, name: project.name, deploymentId: deployment.id, error: err.message })
+    this.log.error(`deploy failed for "${project.name}": ${err.message}`)
+    return { ok: false, deploymentId: deployment.id, error: err.message }
+  }
+
+  private async gitStep(journal: DeploymentJournal, cmd: string, cwd: string): Promise<void> {
+    journal.command(cmd)
     const result = await this.runShell(cmd, cwd)
-    append(result.output)
+    journal.add(result.output)
     if (result.code !== 0) throw new Error(`git step failed with exit code ${result.code}`)
   }
 
@@ -162,8 +206,8 @@ export class DeployPipeline {
       proc.stderr?.on('data', collect)
       const timer = setTimeout(() => {
         proc.kill('SIGKILL')
-        output += `\n[timeout] command exceeded ${DeployPipeline.GIT_TIMEOUT_MS / 1000}s`
-      }, DeployPipeline.GIT_TIMEOUT_MS)
+        output += `\n[timeout] command exceeded ${GIT_TIMEOUT_MS / 1000}s`
+      }, GIT_TIMEOUT_MS)
       proc.on('close', (code) => {
         clearTimeout(timer)
         resolve({ code: code ?? 1, output })

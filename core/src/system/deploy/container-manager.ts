@@ -3,10 +3,6 @@ import type { EventBus } from '../../services/events.js'
 import type { Logger } from '../../services/log.js'
 import type { Project } from './repositories.js'
 
-/**
- * 앱 컨테이너 생명주기 관리.
- * 컨테이너 이름: shelf-{app}, git 소스 빌드 이미지: shelf-app-{app}
- */
 export class ContainerManager {
   constructor(
     private readonly docker: DockerService,
@@ -22,7 +18,6 @@ export class ContainerManager {
     return project.source_type === 'image' ? project.image : `shelf-app-${project.name}`
   }
 
-  /** 컨테이너 (재)생성 후 실행 */
   async recreate(project: Project): Promise<void> {
     await this.docker.runContainer({
       name: ContainerManager.containerName(project),
@@ -53,7 +48,6 @@ export class ContainerManager {
     await this.docker.stopContainer(ContainerManager.containerName(project))
   }
 
-  /** 컨테이너 + 빌드 이미지 제거 (앱 삭제 시) */
   async remove(project: Project): Promise<void> {
     const name = ContainerManager.containerName(project)
     await this.docker.removeContainer(name).catch(() => {})

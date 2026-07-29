@@ -3,13 +3,6 @@ import type Database from 'better-sqlite3'
 export type WhereOp = '=' | '!=' | '<' | '<=' | '>' | '>=' | 'LIKE'
 export type OrderDir = 'asc' | 'desc'
 
-/**
- * 체이닝 방식의 타입 안전 쿼리 빌더.
- * 비즈니스 로직에서 SQL 문자열을 직접 다루지 않도록 한다.
- * 컬럼/테이블 이름은 코드에서만 오고(신뢰), 값은 전부 파라미터 바인딩된다.
- *
- *   qb.where('domain', 'a.com').orderBy('created_at', 'desc').limit(10).all()
- */
 export class QueryBuilder<T extends object> {
   private conditions: string[] = []
   private bindings: unknown[] = []
@@ -22,7 +15,6 @@ export class QueryBuilder<T extends object> {
     private readonly table: string
   ) {}
 
-  /** where('col', value) 또는 where('col', '>=', value) */
   where(column: keyof T & string, opOrValue: WhereOp | unknown, value?: unknown): this {
     if (value === undefined && !isWhereOp(opOrValue)) {
       this.conditions.push(`${column} = ?`)
@@ -64,8 +56,6 @@ export class QueryBuilder<T extends object> {
     return this
   }
 
-  // --- 실행 ---
-
   all(): T[] {
     const { sql, params } = this.buildSelect('*')
     return this.db.prepare(sql).all(...params) as T[]
@@ -82,7 +72,6 @@ export class QueryBuilder<T extends object> {
     return row.c
   }
 
-  /** 단일 컬럼 값 배열 */
   pluck<V = unknown>(column: keyof T & string): V[] {
     const { sql, params } = this.buildSelect(String(column))
     return (this.db.prepare(sql).all(...params) as Record<string, V>[]).map((r) => r[column])
@@ -96,7 +85,6 @@ export class QueryBuilder<T extends object> {
     return Number(result.lastInsertRowid)
   }
 
-  /** 현재 where 조건에 해당하는 행 업데이트. 변경된 행 수 반환 */
   update(data: Partial<T>): number {
     const record = data as Record<string, unknown>
     const keys = Object.keys(record)
@@ -106,13 +94,10 @@ export class QueryBuilder<T extends object> {
     return result.changes
   }
 
-  /** 현재 where 조건에 해당하는 행 삭제. 삭제된 행 수 반환 */
   delete(): number {
     const result = this.db.prepare(`DELETE FROM ${this.table}${this.whereSql()}`).run(...this.bindings)
     return result.changes
   }
-
-  // --- 내부 ---
 
   private whereSql(): string {
     return this.conditions.length ? ` WHERE ${this.conditions.join(' AND ')}` : ''

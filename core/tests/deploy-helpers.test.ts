@@ -12,7 +12,7 @@ const base: Project = {
   install_cmd: '', build_cmd: '', start_cmd: '', created_at: 0, updated_at: 0,
 }
 
-test('authenticatedUrl injects token into https URLs only', () => {
+test('authenticatedUrl injects token into https URLs only, never local paths or ssh', () => {
   assert.equal(DeployPipeline.authenticatedUrl(base), 'https://github.com/user/repo.git')
 
   const withToken = { ...base, git_token: 'ghp_abc123' }
@@ -21,7 +21,6 @@ test('authenticatedUrl injects token into https URLs only', () => {
     'https://x-access-token:ghp_abc123@github.com/user/repo.git'
   )
 
-  // 로컬 경로/SSH URL에는 주입하지 않는다
   const localRepo = { ...base, git_token: 'ghp_abc123', repo_url: '/srv/repos/app' }
   assert.equal(DeployPipeline.authenticatedUrl(localRepo), '/srv/repos/app')
   const sshRepo = { ...base, git_token: 'ghp_abc123', repo_url: 'git@github.com:user/repo.git' }

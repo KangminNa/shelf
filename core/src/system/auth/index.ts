@@ -48,21 +48,12 @@ class SessionRepository extends Repository<Session> {
   }
 }
 
-/**
- * 코어 내장 인증 시스템.
- * - 최초 접속 시 /setup에서 관리자 계정 생성 (1회)
- * - 세션 쿠키(shelf_session, httpOnly) 기반 로그인
- * - requireAuth() 미들웨어로 /admin, /api 보호
- * 비밀번호는 scrypt(salt 16B, key 64B)로 해시한다.
- */
 export class AuthSystem {
   static readonly COOKIE = 'shelf_session'
   static readonly SESSION_TTL_SECONDS = 7 * 24 * 3600
-  /** 로그인 브루트포스 방어: IP당 연속 실패 5회 → 15분 잠금 */
   static readonly MAX_LOGIN_FAILURES = 5
   static readonly LOCKOUT_MS = 15 * 60_000
 
-  /** 공개 라우트: /login, /setup, /api/auth/* */
   readonly routes = new Hono()
 
   private readonly users: UserRepository
@@ -83,7 +74,6 @@ export class AuthSystem {
     return this.users.count() === 0
   }
 
-  /** 보호 미들웨어 — 미인증 시 페이지는 /login으로, API는 401 */
   requireAuth(): MiddlewareHandler {
     return async (c, next) => {
       const token = getCookie(c, AuthSystem.COOKIE)
@@ -96,8 +86,6 @@ export class AuthSystem {
       return c.redirect(this.needsSetup ? '/setup' : '/login')
     }
   }
-
-  // --- 내부 ---
 
   private registerRoutes(): void {
     this.routes.get('/login', (c) => {
@@ -166,7 +154,6 @@ export class AuthSystem {
       user_id: user.id,
       expires_at: Math.floor(Date.now() / 1000) + AuthSystem.SESSION_TTL_SECONDS,
     })
-    // HTTPS(프록시 경유 포함)로 로그인했으면 Secure 쿠키 — 평문 HTTP로 세션 유출 방지
     const isHttps = c.req.header('x-forwarded-proto') === 'https' || new URL(c.req.url).protocol === 'https:'
     setCookie(c, AuthSystem.COOKIE, token, {
       path: '/',
@@ -189,7 +176,6 @@ export class AuthSystem {
   }
 
   private static clientIp(c: any): string {
-    // 프록시 경유 시 x-real-ip(우리 프록시가 설정), 직접 접속은 소켓 주소
     return (
       c.req.header('x-real-ip') ||
       c.req.header('x-forwarded-for')?.split(',')[0].trim() ||
@@ -207,8 +193,6 @@ export class AuthSystem {
     }
     return true
   }
-
-  // --- 비밀번호 해시 (scrypt) ---
 
   static hashPassword(password: string): string {
     const salt = crypto.randomBytes(16).toString('hex')

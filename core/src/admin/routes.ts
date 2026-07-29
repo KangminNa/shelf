@@ -10,7 +10,6 @@ export interface AdminDeps {
   dockerAvailable(): Promise<boolean>
 }
 
-/** 코어 관리 대시보드 (/admin) — Apps/Proxy 관리 페이지는 각 시스템 컨트롤러가 담당 */
 export function createAdminRoutes(deps: AdminDeps) {
   const admin = new Hono()
 
@@ -35,7 +34,6 @@ export function createAdminRoutes(deps: AdminDeps) {
     return c.html(await render('Settings', '/admin/settings', settingsPage()))
   })
 
-  // 서버 재시작 (supervisor 필요: docker restart 정책, systemd, pm2 등)
   admin.post('/api/restart', (c) => {
     setTimeout(() => process.exit(0), 300)
     return c.json({ ok: true, data: { message: 'Restarting...' } })

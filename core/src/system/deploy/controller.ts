@@ -9,7 +9,6 @@ import { projectsPage, projectDetailPage, deploymentsPage, type DisplayStatus } 
 
 const PROJECT_FIELDS = ['source_type', 'repo_url', 'branch', 'git_token', 'image', 'port', 'container_port', 'env', 'volumes', 'domain', 'auto_deploy'] as const
 
-// git 명령에 들어가는 값들 — 셸 메타문자 차단 (심층 방어; 관리자는 원래 신뢰 대상)
 const BRANCH_RE = /^[\w./-]{1,120}$/
 const REPO_URL_RE = /^(https?:\/\/|git@|ssh:\/\/|\/|\.\/)[^\s;|&`$<>'"\\]+$/
 const IMAGE_RE = /^[\w][\w.\-/:@]{0,200}$/
@@ -27,17 +26,11 @@ function validateSourceInputs(body: Record<string, unknown>): string | null {
   return null
 }
 
-/** API 응답에서 시크릿 제거 */
 function sanitize(p: Project): Omit<Project, 'webhook_secret' | 'git_token'> & { has_token: boolean } {
   const { webhook_secret: _s, git_token, ...rest } = p
   return { ...rest, has_token: !!git_token }
 }
 
-/**
- * 앱(컨테이너) 관리 HTTP 인터페이스.
- * - api: /api/deploy/* (JSON)
- * - pages: /admin/deploy/* (셸 래핑되는 HTML 조각)
- */
 export class DeployController {
   readonly api = new Hono()
   readonly pages = new Hono()
@@ -60,8 +53,6 @@ export class DeployController {
     const status = await this.containers.status(project)
     return status === 'none' ? 'stopped' : status
   }
-
-  // --- /api/deploy/projects ---
 
   private registerProjectApi(): void {
     this.api.get('/projects', async (c) => {
@@ -181,8 +172,6 @@ export class DeployController {
     })
   }
 
-  // --- /api/deploy/deployments ---
-
   private registerDeploymentApi(): void {
     this.api.get('/deployments', (c) => {
       const limit = Number(c.req.query('limit') || 50)
@@ -195,7 +184,6 @@ export class DeployController {
       return c.json({ ok: true, data: deployment })
     })
 
-    // 롤백: 해당 배포의 커밋으로 재빌드/재배포 (git 소스 전용)
     this.api.post('/deployments/:id/rollback', async (c) => {
       const deployment = this.deployments.find(c.req.param('id'))
       if (!deployment) return c.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Deployment not found' } }, 404)
@@ -211,8 +199,6 @@ export class DeployController {
       return c.json({ ok: true, data: { deploymentId: result.deploymentId, commit: deployment.commit_hash } })
     })
   }
-
-  // --- /admin/deploy pages ---
 
   private registerPages(): void {
     this.pages.get('/', async (c) => {
@@ -238,8 +224,6 @@ export class DeployController {
       return c.html(deploymentsPage(this.withProjectNames(this.deployments.recent(100))))
     })
   }
-
-  // --- 헬퍼 ---
 
   private withProjectNames<T extends { project_id: number }>(rows: T[]): Array<T & { project_name: string | null }> {
     const names = new Map(this.projects.all().map((p) => [p.id, p.name]))

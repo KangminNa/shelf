@@ -6,11 +6,6 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import * as crypto from 'node:crypto'
 
-/**
- * 통합 테스트 — 실제 서버를 임시 DATA_DIR로 띄우고 HTTP로 검증한다.
- * Docker가 필요한 배포 실행은 다루지 않는다 (앱 CRUD/인증/webhook 검증까지).
- */
-
 const PORT = 19000 + Math.floor(Math.random() * 500)
 const WEBHOOK_PORT = PORT + 500
 const BASE = `http://127.0.0.1:${PORT}`
@@ -39,7 +34,6 @@ before(async () => {
     stdio: 'ignore',
   })
 
-  // 서버 기동 대기 (최대 15초)
   for (let i = 0; i < 75; i++) {
     try {
       const res = await fetch(`${BASE}/health`)
@@ -100,7 +94,6 @@ test('app CRUD: create, secrets hidden, patch, validation', async () => {
   assert.equal(created.status, 201)
   const id = (await created.json() as any).data.id
 
-  // 목록/단건 응답에 시크릿이 없어야 한다
   const list = await api('/api/deploy/projects')
   const text = JSON.stringify(await list.json())
   assert.ok(!text.includes('ghp_secret_xyz'), 'git_token must not leak')
@@ -120,7 +113,6 @@ test('app CRUD: create, secrets hidden, patch, validation', async () => {
   const noRepo = await api('/api/deploy/projects', { method: 'POST', body: JSON.stringify({ name: 'x2', source_type: 'git' }) })
   assert.equal(noRepo.status, 400)
 
-  // 셸 메타문자가 든 저장소 URL/브랜치는 거부 (명령 주입 방어)
   const evilUrl = await api('/api/deploy/projects', {
     method: 'POST',
     body: JSON.stringify({ name: 'x3', source_type: 'git', repo_url: 'https://example.com/r.git; rm -rf /' }),
@@ -162,15 +154,13 @@ test('webhook server rejects bad signatures, accepts valid HMAC', async () => {
     headers: { 'X-Hub-Signature-256': sig },
     body,
   })
-  // auto_deploy=false → 서명은 통과하고 배포는 건너뛴다
   assert.equal(valid.status, 200)
   assert.match((await valid.json() as any).message, /Auto-deploy disabled/)
 
   await api(`/api/deploy/projects/${id}`, { method: 'DELETE' })
 })
 
-// 주의: 이 테스트는 IP 잠금을 걸므로 반드시 마지막에 둔다
-test('login rate limit locks after repeated failures', async () => {
+test('login rate limit locks this test-runner IP after repeated failures (keep ordered after auth tests)', async () => {
   for (let i = 0; i < 5; i++) {
     const res = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ username: 'admin', password: 'wrong-' + i }) }, false)
     assert.equal(res.status, 401)

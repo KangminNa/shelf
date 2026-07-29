@@ -9,17 +9,11 @@ import { hostsPage, sslPage, logsPage } from './views.js'
 
 const HOST_FIELDS = ['domain', 'target_scheme', 'target_host', 'target_port', 'ssl_enabled', 'force_ssl', 'hsts_enabled', 'hsts_subdomains', 'enabled', 'description'] as const
 
-/** API 응답에서 DNS 자격증명 제거 */
 function sanitizeCert(cert: SslCert): Omit<SslCert, 'dns_token'> & { has_dns_token: boolean } {
   const { dns_token, ...rest } = cert
   return { ...rest, has_dns_token: !!dns_token }
 }
 
-/**
- * Proxy 관리 HTTP 인터페이스.
- * - api: /api/proxy/* (JSON)
- * - pages: /admin/proxy/* (셸 래핑되는 HTML 조각)
- */
 export class ProxyController {
   readonly api = new Hono()
   readonly pages = new Hono()
@@ -38,8 +32,6 @@ export class ProxyController {
     this.registerMiscApi()
     this.registerPages()
   }
-
-  // --- /api/proxy/hosts ---
 
   private registerHostApi(): void {
     this.api.get('/hosts', (c) => c.json({ ok: true, data: this.hosts.allSorted() }))
@@ -101,14 +93,11 @@ export class ProxyController {
     })
   }
 
-  // --- /api/proxy/certs ---
-
   private registerSslApi(): void {
     this.api.get('/certs', (c) => c.json({ ok: true, data: this.certs.allSorted().map(sanitizeCert) }))
 
     this.api.post('/certs/issue', async (c) => {
       const body = await c.req.json()
-      // domains 배열 또는 domain 단일(하위호환) 지원
       const domains: string[] = Array.isArray(body.domains)
         ? body.domains
         : String(body.domains || body.domain || '').split(/[\n,]/).map((d: string) => d.trim()).filter(Boolean)
@@ -181,9 +170,6 @@ export class ProxyController {
     })
   }
 
-  // --- /admin/proxy pages ---
-
-  /** 인증서(SAN·와일드카드 포함)가 커버하는 호스트 도메인 집합 */
   private coveredDomains(): (domain: string) => boolean {
     const covered = new Set<string>()
     for (const cert of this.certs.all()) {
@@ -222,8 +208,6 @@ export class ProxyController {
       return c.html(logsPage(this.logs.recent(100, domain || undefined), domain))
     })
   }
-
-  // --- 응답 헬퍼 ---
 
   private notFound(c: Context, message: string) {
     return c.json({ ok: false, error: { code: 'NOT_FOUND', message } }, 404)

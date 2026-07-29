@@ -4,11 +4,6 @@ import type { Logger } from '../../services/log.js'
 import type { ProjectRepository, Project } from './repositories.js'
 import type { DeployPipeline } from './pipeline.js'
 
-/**
- * CI/CD용 webhook 전용 HTTP 서버 (별도 포트, 기본 9100).
- * POST /hooks/{projectId} — GitHub(X-Hub-Signature-256 HMAC) / GitLab(X-Gitlab-Token) 검증 후
- * 해당 브랜치 push면 자동 배포를 트리거한다.
- */
 export class WebhookServer {
   readonly port: number
   private server?: http.Server
@@ -42,7 +37,6 @@ export class WebhookServer {
       return
     }
 
-    // 공개 포트이므로 바디 크기 제한 (메모리 DoS 방지)
     const MAX_BODY = 1024 * 1024
     let received = 0
     const chunks: Buffer[] = []
@@ -74,7 +68,6 @@ export class WebhookServer {
         return
       }
 
-      // 브랜치 필터 (GitHub push payload: "ref": "refs/heads/main")
       let payload: { ref?: string } = {}
       try { payload = JSON.parse(body.toString()) } catch {}
       if (payload.ref && payload.ref !== `refs/heads/${project.branch}`) {
@@ -90,7 +83,6 @@ export class WebhookServer {
   private verifySignature(project: Project, body: Buffer, req: http.IncomingMessage): boolean {
     const secret = project.webhook_secret
 
-    // GitHub: X-Hub-Signature-256: sha256=<hmac>
     const githubSig = req.headers['x-hub-signature-256'] as string | undefined
     if (githubSig) {
       const expected = 'sha256=' + crypto.createHmac('sha256', secret).update(body).digest('hex')
@@ -101,11 +93,9 @@ export class WebhookServer {
       }
     }
 
-    // GitLab: X-Gitlab-Token
     const gitlabToken = req.headers['x-gitlab-token'] as string | undefined
     if (gitlabToken) return gitlabToken === secret
 
-    // 그 외: ?secret= 쿼리 파라미터
     const url = new URL(req.url || '/', 'http://localhost')
     return url.searchParams.get('secret') === secret
   }

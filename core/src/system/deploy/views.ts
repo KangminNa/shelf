@@ -29,8 +29,6 @@ function sourceLabel(p: Project): string {
   return p.source_type === 'image' ? p.image : `${p.repo_url.replace(/^https?:\/\//, '')} · ${p.branch}`
 }
 
-// --- Apps list ---
-
 export function projectsPage(items: ProjectListItem[], webhookPort: number): string {
   const cards = items.map(({ project: p, status, lastDeploy }) => `
     <div class="shelf-card" style="display:flex; flex-direction:column; gap:12px;">
@@ -206,8 +204,6 @@ function listScripts(): string {
       });
     </script>`
 }
-
-// --- App detail ---
 
 export function projectDetailPage(p: Project, status: DisplayStatus, deployments: Deployment[], webhookPort: number): string {
   const canRollback = (d: Deployment, index: number) =>
@@ -441,8 +437,6 @@ function editDialog(p: Project): string {
       });
     </script>`
 }
-
-// --- All deployments ---
 
 export function deploymentsPage(rows: Array<Deployment & { project_name: string | null }>): string {
   const tableRows = rows.map((d) => `

@@ -1,4 +1,3 @@
-/** 로그인/최초 설정 페이지 — 셸 밖의 독립 화면 */
 
 function authLayout(title: string, body: string): string {
   return `<!DOCTYPE html>

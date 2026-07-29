@@ -13,17 +13,6 @@ import { DeployController } from './controller.js'
 
 export type { Project, Deployment } from './repositories.js'
 
-/**
- * 코어 내장 앱 배포 시스템 — 앱 = Docker 컨테이너.
- *
- *   DeploySystem
- *   ├── ProjectRepository / DeploymentRepository  (데이터)
- *   ├── DockerService     — docker CLI 래퍼
- *   ├── ContainerManager  — 컨테이너 생명주기 (shelf-{app})
- *   ├── DeployPipeline    — git pull → docker build → 컨테이너 재생성 (또는 image pull)
- *   ├── WebhookServer     — :9100, GitHub/GitLab push → 자동 배포
- *   └── DeployController  — /api/deploy + /admin/deploy 라우트
- */
 export class DeploySystem {
   readonly projects: ProjectRepository
   readonly deployments: DeploymentRepository
@@ -63,7 +52,6 @@ export class DeploySystem {
     return this.controller.pages
   }
 
-  /** 사이드바 등에서 쓰는 앱 요약 */
   async appSummaries(): Promise<Array<{ id: number; name: string; running: boolean; port: number | null }>> {
     return Promise.all(
       this.projects.allSorted().map(async (p) => ({
@@ -77,6 +65,5 @@ export class DeploySystem {
 
   shutdown(): void {
     this.webhook.stop()
-    // 컨테이너는 docker --restart 정책이 관리하므로 종료 시 건드리지 않는다
   }
 }

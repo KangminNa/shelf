@@ -6,13 +6,9 @@ import { readFileSync, existsSync } from 'node:fs'
 import type { Logger } from '../../services/log.js'
 import { certDomains, type ProxyHostRepository, type SslCertRepository, type AccessLogRepository, type ProxyHost } from './repositories.js'
 
-/**
- * 리버스 프록시 서버.
- * - HTTP(기본 80) / HTTPS(기본 443, SNI로 도메인별 인증서)
- * - WebSocket 업그레이드 프록시
- * - ACME HTTP-01 챌린지 응답 (/.well-known/acme-challenge/*)
- * - 도메인 라우팅은 proxy_hosts 테이블 기반 (메모리 캐시)
- */
+const ACME_CHALLENGE_PREFIX = '/.well-known/acme-challenge/'
+const HSTS_MAX_AGE_SECONDS = 63072000
+
 export class ProxyServer {
   readonly httpPort: number
   readonly httpsPort: number
@@ -52,13 +48,11 @@ export class ProxyServer {
     this.httpsServer?.close()
   }
 
-  /** proxy_hosts 변경 후 호출 — 라우팅 캐시 갱신 */
   reloadHosts(): void {
     this.hosts = this.hostRepo.enabled()
     this.log.info(`loaded ${this.hosts.length} proxy hosts`)
   }
 
-  /** ssl_certs 변경 후 호출 — 인증서 로드, 필요 시 HTTPS 서버 기동 */
   reloadCertificates(): void {
     this.secureContexts = this.loadSecureContexts()
     if (this.secureContexts.size === 0) {
@@ -72,8 +66,6 @@ export class ProxyServer {
     this.startHttps()
   }
 
-  // --- ACME 챌린지 (SslManager가 사용) ---
-
   setAcmeChallenge(token: string, keyAuthorization: string): void {
     this.acmeChallenges.set(token, keyAuthorization)
   }
@@ -81,8 +73,6 @@ export class ProxyServer {
   removeAcmeChallenge(token: string): void {
     this.acmeChallenges.delete(token)
   }
-
-  // --- 내부 ---
 
   private startHttp(): void {
     this.httpServer = http.createServer((req, res) => this.handleRequest(req, res))
@@ -97,13 +87,13 @@ export class ProxyServer {
   }
 
   private startHttps(): void {
-    const anyCert = this.certRepo.allSorted().find((c) => existsSync(c.cert_path) && existsSync(c.key_path))
-    if (!anyCert) return
+    const bootstrapCert = this.certRepo.allSorted().find((c) => existsSync(c.cert_path) && existsSync(c.key_path))
+    if (!bootstrapCert) return
     try {
       this.httpsServer = https.createServer(
         {
-          cert: readFileSync(anyCert.cert_path),
-          key: readFileSync(anyCert.key_path),
+          cert: readFileSync(bootstrapCert.cert_path),
+          key: readFileSync(bootstrapCert.key_path),
           SNICallback: (servername, cb) => cb(null, this.contextFor(servername)),
         },
         (req, res) => this.handleRequest(req, res)
@@ -120,12 +110,11 @@ export class ProxyServer {
     for (const cert of this.certRepo.all()) {
       if (!cert.cert_path || !existsSync(cert.cert_path) || !cert.key_path || !existsSync(cert.key_path)) continue
       try {
-        const ctx = tls.createSecureContext({
+        const context = tls.createSecureContext({
           cert: readFileSync(cert.cert_path),
           key: readFileSync(cert.key_path),
         })
-        // SAN 인증서: 커버하는 모든 도메인(와일드카드 포함)을 같은 컨텍스트로 등록
-        for (const domain of certDomains(cert)) contexts.set(domain.toLowerCase(), ctx)
+        for (const domain of certDomains(cert)) contexts.set(domain.toLowerCase(), context)
       } catch (err: any) {
         this.log.warn(`failed to load cert for ${cert.domain}: ${err.message}`)
       }
@@ -133,14 +122,14 @@ export class ProxyServer {
     return contexts
   }
 
-  /** SNI 매칭: 정확히 일치 → 와일드카드(*.example.com) 순 */
   private contextFor(servername: string): tls.SecureContext | undefined {
     const name = servername.toLowerCase()
-    const exact = this.secureContexts.get(name)
-    if (exact) return exact
+    return this.secureContexts.get(name) ?? this.secureContexts.get(ProxyServer.wildcardOf(name))
+  }
+
+  private static wildcardOf(name: string): string {
     const dot = name.indexOf('.')
-    if (dot === -1) return undefined
-    return this.secureContexts.get(`*${name.slice(dot)}`)
+    return dot === -1 ? name : `*${name.slice(dot)}`
   }
 
   private findHost(hostname: string): ProxyHost | undefined {
@@ -149,73 +138,86 @@ export class ProxyServer {
   }
 
   private handleRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
-    // ACME HTTP-01 챌린지
-    if (req.url?.startsWith('/.well-known/acme-challenge/')) {
-      const token = req.url.split('/').pop() || ''
-      const answer = this.acmeChallenges.get(token)
-      if (answer) {
-        res.writeHead(200, { 'content-type': 'text/plain' })
-        res.end(answer)
-        return
-      }
-    }
+    if (this.serveAcmeChallenge(req, res)) return
 
-    const start = Date.now()
     const hostname = req.headers.host || ''
     const host = this.findHost(hostname)
-
     if (!host) {
-      // Host 헤더는 공격자 제어 입력 — 이스케이프 없이 HTML에 넣지 않는다
-      const safe = hostname.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`)
-      res.writeHead(502, { 'content-type': 'text/html; charset=utf-8' })
-      res.end(`<h1>502 Bad Gateway</h1><p>No proxy host configured for <code>${safe}</code></p>`)
+      this.rejectUnknownHost(res, hostname)
       return
     }
 
     const encrypted = (req.socket as tls.TLSSocket).encrypted === true
-
     if (host.force_ssl && !encrypted) {
-      res.writeHead(301, { Location: `https://${host.domain}${req.url}` })
-      res.end()
+      this.redirectToHttps(req, res, host)
       return
     }
 
+    this.forward(req, res, host, encrypted)
+  }
+
+  private serveAcmeChallenge(req: http.IncomingMessage, res: http.ServerResponse): boolean {
+    if (!req.url?.startsWith(ACME_CHALLENGE_PREFIX)) return false
+    const answer = this.acmeChallenges.get(req.url.split('/').pop() || '')
+    if (!answer) return false
+    res.writeHead(200, { 'content-type': 'text/plain' })
+    res.end(answer)
+    return true
+  }
+
+  private rejectUnknownHost(res: http.ServerResponse, hostname: string): void {
+    const safe = escapeHtml(hostname)
+    res.writeHead(502, { 'content-type': 'text/html; charset=utf-8' })
+    res.end(`<h1>502 Bad Gateway</h1><p>No proxy host configured for <code>${safe}</code></p>`)
+  }
+
+  private redirectToHttps(req: http.IncomingMessage, res: http.ServerResponse, host: ProxyHost): void {
+    res.writeHead(301, { Location: `https://${host.domain}${req.url}` })
+    res.end()
+  }
+
+  private forward(req: http.IncomingMessage, res: http.ServerResponse, host: ProxyHost, encrypted: boolean): void {
+    const startedAt = Date.now()
     const targetUrl = `${host.target_scheme}://${host.target_host}:${host.target_port}${req.url}`
     const transport = host.target_scheme === 'https' ? https : http
 
-    const proxyReq = transport.request(
+    const upstream = transport.request(
       targetUrl,
-      {
-        method: req.method,
-        headers: {
-          ...req.headers,
-          host: `${host.target_host}:${host.target_port}`,
-          'x-real-ip': req.socket.remoteAddress || '',
-          'x-forwarded-for': req.socket.remoteAddress || '',
-          'x-forwarded-proto': encrypted ? 'https' : 'http',
-          'x-forwarded-host': host.domain,
-        },
-      },
-      (proxyRes) => {
-        const headers = { ...proxyRes.headers }
-        // HSTS: HTTPS로 서비스 중이고 호스트에 켜져 있으면 헤더 주입
-        if (encrypted && host.hsts_enabled) {
-          headers['strict-transport-security'] = `max-age=63072000${host.hsts_subdomains ? '; includeSubDomains' : ''}`
-        }
-        res.writeHead(proxyRes.statusCode || 502, headers)
-        proxyRes.pipe(res)
-        this.recordAccess(host, req, proxyRes.statusCode || 502, Date.now() - start)
+      { method: req.method, headers: this.forwardHeaders(req, host, encrypted) },
+      (upstreamRes) => {
+        res.writeHead(upstreamRes.statusCode || 502, this.responseHeaders(upstreamRes.headers, host, encrypted))
+        upstreamRes.pipe(res)
+        this.recordAccess(host, req, upstreamRes.statusCode || 502, Date.now() - startedAt)
       }
     )
 
-    proxyReq.on('error', (err) => {
+    upstream.on('error', (err) => {
       this.log.error(`proxy error for ${host.domain}: ${err.message}`)
       res.writeHead(502, { 'content-type': 'text/html; charset=utf-8' })
       res.end(`<h1>502 Bad Gateway</h1><p>Cannot reach <code>${host.target_host}:${host.target_port}</code></p>`)
-      this.recordAccess(host, req, 502, Date.now() - start)
+      this.recordAccess(host, req, 502, Date.now() - startedAt)
     })
 
-    req.pipe(proxyReq)
+    req.pipe(upstream)
+  }
+
+  private forwardHeaders(req: http.IncomingMessage, host: ProxyHost, encrypted: boolean): http.OutgoingHttpHeaders {
+    return {
+      ...req.headers,
+      host: `${host.target_host}:${host.target_port}`,
+      'x-real-ip': req.socket.remoteAddress || '',
+      'x-forwarded-for': req.socket.remoteAddress || '',
+      'x-forwarded-proto': encrypted ? 'https' : 'http',
+      'x-forwarded-host': host.domain,
+    }
+  }
+
+  private responseHeaders(upstream: http.IncomingHttpHeaders, host: ProxyHost, encrypted: boolean): http.IncomingHttpHeaders {
+    if (!encrypted || !host.hsts_enabled) return upstream
+    return {
+      ...upstream,
+      'strict-transport-security': `max-age=${HSTS_MAX_AGE_SECONDS}${host.hsts_subdomains ? '; includeSubDomains' : ''}`,
+    }
   }
 
   private handleUpgrade(req: http.IncomingMessage, socket: net.Socket, head: Buffer): void {
@@ -225,9 +227,9 @@ export class ProxyServer {
       return
     }
     const target = net.connect(host.target_port, host.target_host, () => {
-      const reqLine = `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n`
+      const requestLine = `${req.method} ${req.url} HTTP/${req.httpVersion}\r\n`
       const headers = Object.entries(req.headers).map(([k, v]) => `${k}: ${v}`).join('\r\n')
-      target.write(reqLine + headers + '\r\n\r\n')
+      target.write(requestLine + headers + '\r\n\r\n')
       if (head.length) target.write(head)
       target.pipe(socket)
       socket.pipe(target)
@@ -247,4 +249,8 @@ export class ProxyServer {
       user_agent: (req.headers['user-agent'] as string) || '',
     })
   }
+}
+
+function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`)
 }

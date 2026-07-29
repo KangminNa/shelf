@@ -1,23 +1,21 @@
 import type Database from 'better-sqlite3'
 import { Repository } from '../../db/repository.js'
 
-/** 앱 = Docker 컨테이너로 실행되는 배포 단위 */
 export interface Project {
   id: number
   name: string
   source_type: 'git' | 'image'
   repo_url: string
   branch: string
-  git_token: string // private 저장소용 (HTTPS 토큰, 로그/설정 파일에 노출 금지)
+  git_token: string
   image: string
-  port: number | null // 호스트 포트 (프록시가 바라보는 포트)
-  container_port: number | null // 컨테이너 내부 포트
-  env: string // KEY=VALUE 줄 단위
-  volumes: string // host:container 줄 단위
+  port: number | null
+  container_port: number | null
+  env: string
+  volumes: string
   domain: string
   webhook_secret: string
   auto_deploy: number
-  // 레거시 (process 런타임 시절) — UI에서 미사용
   install_cmd: string
   build_cmd: string
   start_cmd: string

@@ -1,7 +1,3 @@
-/**
- * 스코프가 붙는 구조화 로거.
- * scope('sub')로 하위 스코프 로거를 만들 수 있다.
- */
 export class Logger {
   constructor(private readonly scopeName: string) {}
 
@@ -23,7 +19,6 @@ export class Logger {
     }
   }
 
-  /** 하위 스코프 로거 생성 (예: proxy → proxy:ssl) */
   scope(sub: string): Logger {
     return new Logger(`${this.scopeName}:${sub}`)
   }

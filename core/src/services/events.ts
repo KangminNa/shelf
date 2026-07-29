@@ -1,8 +1,3 @@
-/**
- * 모듈 간 통신을 담당하는 이벤트 버스.
- * 모듈은 서로 직접 import하지 않고 이벤트로만 통신한다.
- * 네이밍: "{모듈}:{액션}" (예: blog:post-created)
- */
 export class EventBus {
   private readonly handlers = new Map<string, Set<Function>>()
   private readonly wildcardHandlers = new Set<Function>()

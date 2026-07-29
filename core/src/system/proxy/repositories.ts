@@ -20,18 +20,17 @@ export interface ProxyHost {
 export interface SslCert {
   id: number
   domain: string
-  domains: string // SAN 목록 (줄 단위, 비면 domain 단일)
+  domains: string
   cert_path: string
   key_path: string
-  provider: string // letsencrypt | manual | selfsigned
-  dns_provider: string // '' | cloudflare (DNS-01 갱신용)
-  dns_token: string // API 응답에 노출 금지
+  provider: string
+  dns_provider: string
+  dns_token: string
   expires_at: number
   auto_renew: number
   created_at: number
 }
 
-/** 인증서가 커버하는 전체 도메인 목록 (SAN 포함) */
 export function certDomains(cert: SslCert): string[] {
   const list = (cert.domains || '').split('\n').map((d) => d.trim()).filter(Boolean)
   return list.length ? list : [cert.domain]
@@ -77,7 +76,6 @@ export class ProxyHostRepository extends Repository<ProxyHost> {
     if (host) this.update(host.id, { ssl_enabled: enabled ? 1 : 0 })
   }
 
-  /** 있으면 타깃 갱신, 없으면 생성 (deploy 연동용) */
   upsert(data: { domain: string; target_scheme?: string; target_host?: string; target_port: number; description?: string }): ProxyHost {
     const existing = this.findByDomain(data.domain)
     if (existing) {
@@ -110,7 +108,6 @@ export class SslCertRepository extends Repository<SslCert> {
     return this.findBy({ domain } as Partial<SslCert>)
   }
 
-  /** 자동 갱신 대상 중 만료 임박(days 이내) 인증서 */
   dueForRenewal(days: number): SslCert[] {
     const deadline = Math.floor(Date.now() / 1000) + days * 86400
     return this.query()
@@ -136,7 +133,6 @@ export class AccessLogRepository extends Repository<AccessLog> {
     try {
       this.query().insert(entry as Partial<AccessLog>)
     } catch {
-      // 로그 실패는 요청 처리에 영향 주지 않음
     }
   }
 

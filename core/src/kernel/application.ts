@@ -11,19 +11,6 @@ import { ProxySystem } from '../system/proxy/index.js'
 import { DeploySystem } from '../system/deploy/index.js'
 import { AuthSystem } from '../system/auth/index.js'
 
-/**
- * Shelf 애플리케이션 — 전역 인스턴스 (ShelfApplication.instance).
- *
- * 앱 = Docker 컨테이너. 코어는 오케스트레이션만 담당한다:
- *  - DeploySystem: git → docker build → run, webhook CI/CD
- *  - ProxySystem: 80/443 리버스 프록시, 도메인 라우팅, SSL
- *  - Admin UI: 대시보드 / 앱·프록시 관리 / 가이드
- *
- * URL 구조:
- *  /admin/*        관리 화면 (deploy, proxy, system, settings, guide)
- *  /api/deploy/*   앱 관리 API
- *  /api/proxy/*    프록시 관리 API
- */
 export class ShelfApplication {
   private static _instance?: ShelfApplication
 
@@ -41,7 +28,6 @@ export class ShelfApplication {
 
   private constructor() {
     ensureDataDir()
-    // CORS는 의도적으로 열지 않는다 — 관리 UI/API는 동일 출처 전용
     this.hono.use('*', requestLogger)
     this.hono.onError(errorBoundary)
   }
@@ -60,10 +46,6 @@ export class ShelfApplication {
     process.on('SIGTERM', () => this.shutdown())
   }
 
-  /**
-   * ADMIN_DOMAIN이 설정되면 관리 UI(:81)를 프록시 호스트로 자동 등록한다.
-   * 프록시와 관리 UI는 같은 프로세스이므로 타깃은 항상 127.0.0.1이다.
-   */
   private registerAdminDomain(port: number): void {
     const domain = process.env.ADMIN_DOMAIN
     if (!domain) return
@@ -81,18 +63,15 @@ export class ShelfApplication {
     this.hono.get('/health', (c) => c.json({ ok: true, uptime: process.uptime() }))
     this.hono.get('/', (c) => c.redirect('/admin'))
 
-    // 인증: 공개 라우트(/login, /setup, /api/auth) + 나머지 전부 보호
     this.hono.route('/', this.auth.routes)
     this.hono.use('/admin/*', this.auth.requireAuth())
     this.hono.use('/admin', this.auth.requireAuth())
     this.hono.use('/api/proxy/*', this.auth.requireAuth())
     this.hono.use('/api/deploy/*', this.auth.requireAuth())
 
-    // API
     this.hono.route('/api/proxy', this.proxy.api)
     this.hono.route('/api/deploy', this.deploy.api)
 
-    // 관리 화면 (셸 자동 래핑)
     const apps = () => this.deploy.appSummaries()
     this.hono.route('/admin/deploy', this.wrapInShell('Apps', this.deploy.pages))
     this.hono.route('/admin/proxy', this.wrapInShell('Proxy Manager', this.proxy.pages))
