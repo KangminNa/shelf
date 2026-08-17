@@ -113,7 +113,7 @@ export class ProxyController {
       const { domain } = await c.req.json()
       if (!domain) return this.badRequest(c, 'domain is required')
       try {
-        const cert = await this.proxy.ssl.selfSigned(domain)
+        const cert = await this.proxy.ssl.selfSign(domain)
         return c.json({ ok: true, data: { domains: certDomains(cert), provider: cert.provider } })
       } catch (err: any) {
         return this.sslFailure(c, err, `self-signed generation failed for ${domain}`)
@@ -127,7 +127,7 @@ export class ProxyController {
         const saved = this.proxy.ssl.upload(domain, cert, key)
         return c.json({ ok: true, data: { domain, provider: saved.provider, expiresAt: saved.expires_at } })
       } catch (err: any) {
-        return c.json({ ok: false, error: { code: 'UPLOAD_ERROR', message: err.message } }, 500)
+        return this.sslFailure(c, err, `certificate upload failed for ${domain}`)
       }
     })
 
