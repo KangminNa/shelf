@@ -32,6 +32,17 @@ export class ContainerManager {
     if (self) await this.docker.connectNetwork(SHELF_NETWORK, self)
   }
 
+  async attachExistingContainers(): Promise<void> {
+    await this.prepareNetwork()
+    const containers = await this.docker.listContainers('shelf-')
+    for (const name of containers) {
+      await this.docker.connectNetwork(SHELF_NETWORK, name)
+    }
+    if (containers.length) {
+      this.log.info(`attached ${containers.length} existing container(s) to ${SHELF_NETWORK}`)
+    }
+  }
+
   async recreate(project: Project): Promise<void> {
     await this.prepareNetwork()
     await this.docker.runContainer({

@@ -84,6 +84,15 @@ export class DockerService {
     await this.run(['network', 'connect', network, container]).catch(() => {})
   }
 
+  async listContainers(namePrefix: string): Promise<string[]> {
+    try {
+      const { output } = await this.run(['ps', '-a', '--filter', `name=${namePrefix}`, '--format', '{{.Names}}'])
+      return output.split('\n').map((line) => line.trim()).filter(Boolean)
+    } catch {
+      return []
+    }
+  }
+
   async currentContainerId(): Promise<string | null> {
     try {
       const { output } = await this.run(['ps', '-q', '--filter', `id=${process.env.HOSTNAME || ''}`])
