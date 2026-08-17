@@ -1,8 +1,10 @@
 import { Hono } from 'hono'
 import { renderShell, type AppNavItem } from '../ui/shell.js'
-import { dashboardPage } from './pages/dashboard.js'
-import { systemPage } from './pages/system.js'
-import { appGuidePage } from './pages/app-guide.js'
+import type { Page } from '../ui/page.js'
+import { DashboardPage } from './pages/dashboard.js'
+import { SystemPage } from './pages/system.js'
+import { AppGuidePage } from './pages/app-guide.js'
+import { SettingsPage } from './pages/settings.js'
 
 export interface AdminDeps {
   apps(): Promise<AppNavItem[]>
@@ -13,26 +15,22 @@ export interface AdminDeps {
 export function createAdminRoutes(deps: AdminDeps) {
   const admin = new Hono()
 
-  const render = async (title: string, activePath: string, content: string) =>
-    renderShell({ title, activePath, content, apps: await deps.apps() })
+  const shell = async (title: string, activePath: string, page: Page) =>
+    renderShell({ title, activePath, content: page.render(), apps: await deps.apps() })
 
   admin.get('/', async (c) => {
-    const apps = await deps.apps()
-    return c.html(await render('Dashboard', '/admin', dashboardPage(apps, deps.proxyHostCount())))
+    const page = new DashboardPage({ apps: await deps.apps(), proxyHostCount: deps.proxyHostCount() })
+    return c.html(await shell('Dashboard', '/admin', page))
   })
 
   admin.get('/system', async (c) => {
-    const apps = await deps.apps()
-    return c.html(await render('System', '/admin/system', systemPage(apps, await deps.dockerAvailable())))
+    const page = new SystemPage({ apps: await deps.apps(), dockerAvailable: await deps.dockerAvailable() })
+    return c.html(await shell('System', '/admin/system', page))
   })
 
-  admin.get('/guide', async (c) => {
-    return c.html(await render('App guide', '/admin/guide', appGuidePage()))
-  })
+  admin.get('/guide', async (c) => c.html(await shell('App guide', '/admin/guide', new AppGuidePage())))
 
-  admin.get('/settings', async (c) => {
-    return c.html(await render('Settings', '/admin/settings', settingsPage()))
-  })
+  admin.get('/settings', async (c) => c.html(await shell('Settings', '/admin/settings', new SettingsPage())))
 
   admin.post('/api/restart', (c) => {
     setTimeout(() => process.exit(0), 300)
@@ -40,28 +38,4 @@ export function createAdminRoutes(deps: AdminDeps) {
   })
 
   return admin
-}
-
-function settingsPage() {
-  return `
-    <div class="shelf-card" style="max-width:560px;">
-      <div class="shelf-card-header">
-        <div class="shelf-card-title">Server settings</div>
-      </div>
-      <div style="display:flex; flex-direction:column; gap:16px;">
-        <div>
-          <label style="display:block; font-size:13px; font-weight:500; margin-bottom:4px;">Port</label>
-          <input type="text" value="${process.env.PORT || 9666}" disabled
-            style="width:120px; padding:8px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--bg-tertiary); color:var(--text-secondary); font-size:14px; font-family:var(--font-mono);">
-        </div>
-        <div>
-          <label style="display:block; font-size:13px; font-weight:500; margin-bottom:4px;">Environment</label>
-          <input type="text" value="${process.env.NODE_ENV || 'development'}" disabled
-            style="width:200px; padding:8px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--bg-tertiary); color:var(--text-secondary); font-size:14px; font-family:var(--font-mono);">
-        </div>
-        <div style="font-size:12px; color:var(--text-muted); padding-top:8px; border-top:1px solid var(--border);">
-          Server settings are configured via environment variables or <code style="background:var(--bg-tertiary); padding:2px 6px; border-radius:4px; font-family:var(--font-mono); font-size:12px;">.env</code> file.
-        </div>
-      </div>
-    </div>`
 }

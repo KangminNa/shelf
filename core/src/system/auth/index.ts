@@ -7,7 +7,7 @@ import type Database from 'better-sqlite3'
 import { AppDatabase } from '../../db/database.js'
 import { Repository } from '../../db/repository.js'
 import { Logger } from '../../services/log.js'
-import { loginPage, setupPage } from './views.js'
+import { LoginPage, SetupPage } from './views.js'
 
 export interface User {
   id: number
@@ -90,12 +90,12 @@ export class AuthSystem {
   private registerRoutes(): void {
     this.routes.get('/login', (c) => {
       if (this.needsSetup) return c.redirect('/setup')
-      return c.html(loginPage())
+      return c.html(new LoginPage().render())
     })
 
     this.routes.get('/setup', (c) => {
       if (!this.needsSetup) return c.redirect('/login')
-      return c.html(setupPage())
+      return c.html(new SetupPage().render())
     })
 
     this.routes.post('/api/auth/setup', async (c) => {

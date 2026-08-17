@@ -4,7 +4,7 @@ import type { EventBus } from '../../services/events.js'
 import { SslError } from './ssl-manager.js'
 import { certDomains, type ProxyHost, type SslCert } from './repositories.js'
 import type { ProxySystem } from './index.js'
-import { hostsPage, sslPage, logsPage } from './views.js'
+import { HostsPage, SslPage, AccessLogsPage } from './views.js'
 
 const HOST_FIELDS = ['domain', 'target_scheme', 'target_host', 'target_port', 'ssl_enabled', 'force_ssl', 'hsts_enabled', 'hsts_subdomains', 'enabled', 'description'] as const
 
@@ -182,24 +182,28 @@ export class ProxyController {
       const hosts = this.proxy.hosts.allSorted()
       const isCovered = this.coveredDomains()
       const coveredSet = new Set(hosts.filter((h) => isCovered(h.domain)).map((h) => h.domain))
-      return c.html(hostsPage(hosts, coveredSet, {
-        httpPort: this.proxy.server.httpPort,
-        httpsPort: this.proxy.server.httpsPort,
-        httpsActive: this.proxy.server.httpsActive,
-        certificateCount: this.proxy.server.certificateCount,
-      }))
+      return c.html(new HostsPage({
+        hosts,
+        certDomains: coveredSet,
+        status: {
+          httpPort: this.proxy.server.httpPort,
+          httpsPort: this.proxy.server.httpsPort,
+          httpsActive: this.proxy.server.httpsActive,
+          certificateCount: this.proxy.server.certificateCount,
+        },
+      }).render())
     })
 
     this.pages.get('/ssl', (c) => {
       const certs = this.proxy.certs.allSorted()
       const isCovered = this.coveredDomains()
       const domainsWithoutCert = this.proxy.hosts.query().pluck<string>('domain').filter((d) => !isCovered(d))
-      return c.html(sslPage(certs.map(sanitizeCert), domainsWithoutCert, this.proxy.ssl.defaultEmail))
+      return c.html(new SslPage({ certs: certs.map(sanitizeCert), domainsWithoutCert, defaultEmail: this.proxy.ssl.defaultEmail }).render())
     })
 
     this.pages.get('/logs', (c) => {
       const domain = c.req.query('domain') || ''
-      return c.html(logsPage(this.proxy.accessLogs.recent(100, domain || undefined), domain))
+      return c.html(new AccessLogsPage({ logs: this.proxy.accessLogs.recent(100, domain || undefined), selectedDomain: domain }).render())
     })
   }
 
