@@ -2,9 +2,8 @@ import { Hono } from 'hono'
 import type { Context } from 'hono'
 import * as crypto from 'node:crypto'
 import type { EventBus } from '../../services/events.js'
-import type { ProjectRepository, DeploymentRepository, Project } from './repositories.js'
-import type { ContainerManager } from './container-manager.js'
-import type { DeployPipeline } from './pipeline.js'
+import type { Project } from './repositories.js'
+import type { DeploySystem } from './index.js'
 import { projectsPage, projectDetailPage, deploymentsPage, type DisplayStatus } from './views.js'
 
 const PROJECT_FIELDS = ['source_type', 'repo_url', 'branch', 'git_token', 'image', 'port', 'container_port', 'env', 'volumes', 'domain', 'auto_deploy'] as const
@@ -36,11 +35,7 @@ export class DeployController {
   readonly pages = new Hono()
 
   constructor(
-    private readonly projects: ProjectRepository,
-    private readonly deployments: DeploymentRepository,
-    private readonly containers: ContainerManager,
-    private readonly pipeline: DeployPipeline,
-    private readonly webhookPort: number,
+    private readonly deploy: DeploySystem,
     private readonly events: EventBus
   ) {
     this.registerProjectApi()
@@ -49,15 +44,15 @@ export class DeployController {
   }
 
   private async displayStatus(project: Project): Promise<DisplayStatus> {
-    if (this.pipeline.isDeploying(project.id)) return 'deploying'
-    const status = await this.containers.status(project)
+    if (this.deploy.pipeline.isDeploying(project.id)) return 'deploying'
+    const status = await this.deploy.containers.status(project)
     return status === 'none' ? 'stopped' : status
   }
 
   private registerProjectApi(): void {
     this.api.get('/projects', async (c) => {
       const data = await Promise.all(
-        this.projects.allSorted().map(async (p) => ({
+        this.deploy.projects.allSorted().map(async (p) => ({
           ...sanitize(p),
           status: await this.displayStatus(p),
         }))
@@ -75,11 +70,11 @@ export class DeployController {
       if (sourceType === 'image' && !body.image) return this.badRequest(c, 'image is required for image source')
       const invalid = validateSourceInputs(body)
       if (invalid) return this.badRequest(c, invalid)
-      if (this.projects.findByName(body.name)) {
+      if (this.deploy.projects.findByName(body.name)) {
         return c.json({ ok: false, error: { code: 'CONFLICT', message: `App "${body.name}" already exists` } }, 409)
       }
 
-      const project = this.projects.create({
+      const project = this.deploy.projects.create({
         name: body.name,
         source_type: sourceType,
         repo_url: body.repo_url || '',
@@ -99,7 +94,7 @@ export class DeployController {
     })
 
     this.api.get('/projects/:id', async (c) => {
-      const project = this.projects.find(c.req.param('id'))
+      const project = this.deploy.projects.find(c.req.param('id'))
       if (!project) return this.notFound(c)
       return c.json({ ok: true, data: { ...sanitize(project), status: await this.displayStatus(project) } })
     })
@@ -115,28 +110,28 @@ export class DeployController {
         }
       }
       if (!Object.keys(patch).length) return this.badRequest(c, 'No fields to update')
-      const project = this.projects.update(c.req.param('id'), patch)
+      const project = this.deploy.projects.update(c.req.param('id'), patch)
       if (!project) return this.notFound(c)
       return c.json({ ok: true, data: sanitize(project) })
     })
 
     this.api.delete('/projects/:id', async (c) => {
       const id = Number(c.req.param('id'))
-      const project = this.projects.find(id)
+      const project = this.deploy.projects.find(id)
       if (project) {
-        await this.containers.remove(project)
-        this.pipeline.removeRepo(project.name)
-        this.deployments.deleteForProject(id)
-        this.projects.delete(id)
+        await this.deploy.containers.remove(project)
+        this.deploy.pipeline.removeRepo(project.name)
+        this.deploy.deployments.deleteForProject(id)
+        this.deploy.projects.delete(id)
         this.events.emit('deploy:project-deleted', { id, name: project.name })
       }
       return c.json({ ok: true, data: null })
     })
 
     this.api.post('/projects/:id/deploy', async (c) => {
-      const project = this.projects.find(c.req.param('id'))
+      const project = this.deploy.projects.find(c.req.param('id'))
       if (!project) return this.notFound(c)
-      const result = await this.pipeline.deploy(project, 'manual')
+      const result = await this.deploy.pipeline.deploy(project, 'manual')
       if (!result.ok) {
         return c.json({ ok: false, error: { code: 'DEPLOY_FAILED', message: result.error }, data: { deploymentId: result.deploymentId } }, 500)
       }
@@ -144,55 +139,55 @@ export class DeployController {
     })
 
     this.api.post('/projects/:id/start', async (c) => {
-      const project = this.projects.find(c.req.param('id'))
+      const project = this.deploy.projects.find(c.req.param('id'))
       if (!project) return this.notFound(c)
-      const result = await this.containers.start(project)
+      const result = await this.deploy.containers.start(project)
       if (!result.ok) return c.json({ ok: false, error: { code: 'START_FAILED', message: result.error } }, 400)
       return c.json({ ok: true, data: { status: 'running' } })
     })
 
     this.api.post('/projects/:id/stop', async (c) => {
-      const project = this.projects.find(c.req.param('id'))
+      const project = this.deploy.projects.find(c.req.param('id'))
       if (!project) return this.notFound(c)
-      await this.containers.stop(project)
+      await this.deploy.containers.stop(project)
       return c.json({ ok: true, data: { status: 'stopped' } })
     })
 
     this.api.get('/projects/:id/logs', async (c) => {
-      const project = this.projects.find(c.req.param('id'))
+      const project = this.deploy.projects.find(c.req.param('id'))
       if (!project) return this.notFound(c)
-      const status = await this.containers.status(project)
-      return c.json({ ok: true, data: { logs: await this.containers.logs(project), status } })
+      const status = await this.deploy.containers.status(project)
+      return c.json({ ok: true, data: { logs: await this.deploy.containers.logs(project), status } })
     })
 
     this.api.get('/projects/:id/webhook', (c) => {
-      const project = this.projects.find(c.req.param('id'))
+      const project = this.deploy.projects.find(c.req.param('id'))
       if (!project) return this.notFound(c)
-      return c.json({ ok: true, data: { path: `/hooks/${project.id}`, port: this.webhookPort, secret: project.webhook_secret } })
+      return c.json({ ok: true, data: { path: `/hooks/${project.id}`, port: this.deploy.webhook.port, secret: project.webhook_secret } })
     })
   }
 
   private registerDeploymentApi(): void {
     this.api.get('/deployments', (c) => {
       const limit = Number(c.req.query('limit') || 50)
-      return c.json({ ok: true, data: this.withProjectNames(this.deployments.recent(limit)) })
+      return c.json({ ok: true, data: this.withProjectNames(this.deploy.deployments.recent(limit)) })
     })
 
     this.api.get('/deployments/:id', (c) => {
-      const deployment = this.deployments.find(c.req.param('id'))
+      const deployment = this.deploy.deployments.find(c.req.param('id'))
       if (!deployment) return c.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Deployment not found' } }, 404)
       return c.json({ ok: true, data: deployment })
     })
 
     this.api.post('/deployments/:id/rollback', async (c) => {
-      const deployment = this.deployments.find(c.req.param('id'))
+      const deployment = this.deploy.deployments.find(c.req.param('id'))
       if (!deployment) return c.json({ ok: false, error: { code: 'NOT_FOUND', message: 'Deployment not found' } }, 404)
-      const project = this.projects.find(deployment.project_id)
+      const project = this.deploy.projects.find(deployment.project_id)
       if (!project) return this.notFound(c)
       if (project.source_type !== 'git' || !deployment.commit_hash) {
         return this.badRequest(c, 'Rollback is only available for git-sourced deployments with a recorded commit')
       }
-      const result = await this.pipeline.deploy(project, 'rollback', deployment.commit_hash)
+      const result = await this.deploy.pipeline.deploy(project, 'rollback', deployment.commit_hash)
       if (!result.ok) {
         return c.json({ ok: false, error: { code: 'ROLLBACK_FAILED', message: result.error }, data: { deploymentId: result.deploymentId } }, 500)
       }
@@ -203,30 +198,30 @@ export class DeployController {
   private registerPages(): void {
     this.pages.get('/', async (c) => {
       const items = await Promise.all(
-        this.projects.allSorted().map(async (project) => ({
+        this.deploy.projects.allSorted().map(async (project) => ({
           project,
           status: await this.displayStatus(project),
-          lastDeploy: this.deployments.latestFor(project.id),
+          lastDeploy: this.deploy.deployments.latestFor(project.id),
         }))
       )
-      return c.html(projectsPage(items, this.webhookPort))
+      return c.html(projectsPage(items, this.deploy.webhook.port))
     })
 
     this.pages.get('/projects/:id', async (c) => {
-      const project = this.projects.find(c.req.param('id'))
+      const project = this.deploy.projects.find(c.req.param('id'))
       if (!project) {
         return c.html('<div style="padding:48px; text-align:center; color:var(--text-muted);">App not found. <a href="/admin/deploy">Back</a></div>')
       }
-      return c.html(projectDetailPage(project, await this.displayStatus(project), this.deployments.forProject(project.id), this.webhookPort))
+      return c.html(projectDetailPage(project, await this.displayStatus(project), this.deploy.deployments.forProject(project.id), this.deploy.webhook.port))
     })
 
     this.pages.get('/deployments', (c) => {
-      return c.html(deploymentsPage(this.withProjectNames(this.deployments.recent(100))))
+      return c.html(deploymentsPage(this.withProjectNames(this.deploy.deployments.recent(100))))
     })
   }
 
   private withProjectNames<T extends { project_id: number }>(rows: T[]): Array<T & { project_name: string | null }> {
-    const names = new Map(this.projects.all().map((p) => [p.id, p.name]))
+    const names = new Map(this.deploy.projects.all().map((p) => [p.id, p.name]))
     return rows.map((r) => ({ ...r, project_name: names.get(r.project_id) ?? null }))
   }
 

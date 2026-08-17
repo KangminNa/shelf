@@ -21,7 +21,7 @@ export class DeploySystem {
   readonly containers: ContainerManager
   readonly pipeline: DeployPipeline
   readonly selfDeployer: SelfDeployer
-  private readonly webhook: WebhookServer
+  readonly webhook: WebhookServer
   private readonly controller: DeployController
   private readonly log = new Logger('deploy')
 
@@ -38,7 +38,7 @@ export class DeploySystem {
     this.pipeline = new DeployPipeline(reposDir, this.projects, this.deployments, this.containers, this.docker, events, this.log)
     this.selfDeployer = new SelfDeployer(this.docker, events, this.log.scope('self-deploy'))
     this.webhook = new WebhookServer(this.projects, this.pipeline, this.selfDeployer, this.log.scope('webhook'))
-    this.controller = new DeployController(this.projects, this.deployments, this.containers, this.pipeline, this.webhook.port, events)
+    this.controller = new DeployController(this, events)
 
     this.webhook.start()
     if (this.selfDeployer.configured) this.log.info('self-deploy enabled (POST /hooks/self)')

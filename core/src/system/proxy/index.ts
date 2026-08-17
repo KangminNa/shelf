@@ -30,7 +30,7 @@ export class ProxySystem {
 
     this.server = new ProxyServer(this.hosts, this.certs, this.accessLogs, this.log)
     this.ssl = new SslManager(this.certs, this.hosts, this.server, events, this.log.scope('ssl'))
-    this.controller = new ProxyController(this.hosts, this.certs, this.accessLogs, this.server, this.ssl, events, this.log)
+    this.controller = new ProxyController(this, events)
 
     this.server.start()
     this.scheduler.register('0 3 * * *', 'ssl-renewal-check', () => this.ssl.renewDueCertificates())
@@ -43,6 +43,10 @@ export class ProxySystem {
     })
 
     this.log.info('proxy system ready')
+  }
+
+  get logger(): Logger {
+    return this.log
   }
 
   get api(): Hono {
