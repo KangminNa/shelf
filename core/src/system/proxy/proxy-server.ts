@@ -183,7 +183,10 @@ export class ProxyServer {
 
     const upstream = transport.request(
       targetUrl,
-      { method: req.method, headers: this.forwardHeaders(req, host, encrypted) },
+      {
+        method: req.method,
+        headers: ProxyServer.forwardHeaders(req.headers, req.socket.remoteAddress || '', host, encrypted),
+      },
       (upstreamRes) => {
         res.writeHead(upstreamRes.statusCode || 502, this.responseHeaders(upstreamRes.headers, host, encrypted))
         upstreamRes.pipe(res)
@@ -201,14 +204,21 @@ export class ProxyServer {
     req.pipe(upstream)
   }
 
-  private forwardHeaders(req: http.IncomingMessage, host: ProxyHost, encrypted: boolean): http.OutgoingHttpHeaders {
+  static forwardHeaders(
+    incoming: http.IncomingHttpHeaders,
+    clientIp: string,
+    host: ProxyHost,
+    encrypted: boolean
+  ): http.OutgoingHttpHeaders {
+    const requestedHost = incoming.host || host.domain
+    const chain = incoming['x-forwarded-for']
     return {
-      ...req.headers,
-      host: `${host.target_host}:${host.target_port}`,
-      'x-real-ip': req.socket.remoteAddress || '',
-      'x-forwarded-for': req.socket.remoteAddress || '',
+      ...incoming,
+      host: requestedHost,
+      'x-real-ip': clientIp,
+      'x-forwarded-for': chain ? `${chain}, ${clientIp}` : clientIp,
       'x-forwarded-proto': encrypted ? 'https' : 'http',
-      'x-forwarded-host': host.domain,
+      'x-forwarded-host': requestedHost,
     }
   }
 

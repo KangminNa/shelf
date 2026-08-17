@@ -134,6 +134,9 @@ ProxySystem (조립 루트)
 └── ProxyController  # api + pages (호스트별 SSL/HSTS 편집 다이얼로그)
 ```
 
+프록시는 업스트림에 **원래 Host를 그대로 전달**한다(`X-Forwarded-Host`/`-Proto`/`-For`, `X-Real-IP` 동반).
+Portainer·Grafana처럼 Origin/Host를 검증하거나 절대 URL을 만드는 앱이 추가 설정 없이 동작하기 위한 조건이다.
+
 SSL 옵션 (호스트별, NPM 수준): SSL enabled(인증서 연결) · Force SSL(HTTP→HTTPS 301) · HSTS(+서브도메인).
 인증서는 여러 도메인(SAN)과 `*.도메인` 와일드카드(DNS-01 필요)를 지원하며, Cloudflare 토큰은 갱신용으로 저장되고 API 응답에서는 제거된다.
 
