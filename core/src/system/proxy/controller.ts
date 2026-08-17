@@ -1,7 +1,5 @@
-import { Hono } from 'hono'
-import type { Context } from 'hono'
+import { Controller, fields, notFound, invalid, conflict, type Request } from '../../kernel/controller.js'
 import type { EventBus } from '../../services/events.js'
-import { SslError } from './ssl-manager.js'
 import { certDomains, type ProxyHost, type SslCert } from './repositories.js'
 import type { ProxySystem } from './index.js'
 import { HostsPage, SslPage, AccessLogsPage } from './views.js'
@@ -13,37 +11,47 @@ function sanitizeCert(cert: SslCert): Omit<SslCert, 'dns_token'> & { has_dns_tok
   return { ...rest, has_dns_token: !!dns_token }
 }
 
-export class ProxyController {
-  readonly api = new Hono()
-  readonly pages = new Hono()
+function domainList(body: Record<string, any>): string[] {
+  const raw = Array.isArray(body.domains)
+    ? body.domains
+    : String(body.domains || body.domain || '').split(/[\n,]/)
+  const domains = raw.map((d: string) => d.trim()).filter(Boolean)
+  return domains.length ? domains : (invalid('domain(s) required') as never)
+}
 
+export class ProxyController extends Controller {
   constructor(
     private readonly proxy: ProxySystem,
     private readonly events: EventBus
   ) {
+    super(proxy.logger)
     this.registerHostApi()
     this.registerSslApi()
     this.registerMiscApi()
     this.registerPages()
   }
 
+  private host(id: string): ProxyHost {
+    return this.proxy.hosts.find(id) ?? notFound('Host')
+  }
+
+  private applied<T>(result: T): T {
+    this.proxy.server.reloadHosts()
+    return result
+  }
+
   private registerHostApi(): void {
-    this.api.get('/hosts', (c) => c.json({ ok: true, data: this.proxy.hosts.allSorted() }))
+    this.get('/hosts', () => this.proxy.hosts.allSorted())
 
-    this.api.get('/hosts/:id', (c) => {
-      const host = this.proxy.hosts.find(c.req.param('id'))
-      if (!host) return this.notFound(c, 'Host not found')
-      return c.json({ ok: true, data: host })
-    })
+    this.get('/hosts/:id', (req) => this.host(req.id))
 
-    this.api.post('/hosts', async (c) => {
-      const body = await c.req.json()
+    this.post('/hosts', (req) => {
+      const { body } = req
       if (!body.domain || !body.target_host || !body.target_port) {
-        return this.badRequest(c, 'domain, target_host, and target_port are required')
+        invalid('domain, target_host, and target_port are required')
       }
-      if (this.proxy.hosts.findByDomain(body.domain)) {
-        return c.json({ ok: false, error: { code: 'CONFLICT', message: `Domain "${body.domain}" already exists` } }, 409)
-      }
+      if (this.proxy.hosts.findByDomain(body.domain)) conflict(`Domain "${body.domain}" already exists`)
+
       const host = this.proxy.hosts.create({
         domain: body.domain,
         target_scheme: body.target_scheme || 'http',
@@ -53,114 +61,71 @@ export class ProxyController {
         force_ssl: body.force_ssl ? 1 : 0,
         description: body.description || '',
       })
-      this.proxy.server.reloadHosts()
       this.events.emit('proxy:host-created', { id: host.id, domain: host.domain })
-      return c.json({ ok: true, data: host }, 201)
+      return this.applied(host)
+    }, 201)
+
+    this.patch('/hosts/:id', (req) => {
+      const patch = fields<ProxyHost>(req.body, HOST_FIELDS)
+      if (!Object.keys(patch).length) invalid('No fields to update')
+      return this.applied(this.proxy.hosts.update(req.id, patch) ?? notFound('Host'))
     })
 
-    this.api.patch('/hosts/:id', async (c) => {
-      const body = await c.req.json()
-      const patch: Partial<ProxyHost> = {}
-      for (const field of HOST_FIELDS) {
-        if (body[field] !== undefined) {
-          patch[field] = typeof body[field] === 'boolean' ? (body[field] ? 1 : 0) : body[field]
-        }
-      }
-      if (!Object.keys(patch).length) return this.badRequest(c, 'No fields to update')
-      const host = this.proxy.hosts.update(c.req.param('id'), patch)
-      if (!host) return this.notFound(c, 'Host not found')
-      this.proxy.server.reloadHosts()
-      return c.json({ ok: true, data: host })
+    this.delete('/hosts/:id', (req) => {
+      this.proxy.hosts.delete(req.id)
+      return this.applied(null)
     })
 
-    this.api.delete('/hosts/:id', (c) => {
-      this.proxy.hosts.delete(c.req.param('id'))
-      this.proxy.server.reloadHosts()
-      return c.json({ ok: true, data: null })
-    })
-
-    this.api.post('/hosts/:id/toggle', (c) => {
-      const host = this.proxy.hosts.toggle(Number(c.req.param('id')))
-      if (!host) return this.notFound(c, 'Host not found')
-      this.proxy.server.reloadHosts()
-      return c.json({ ok: true, data: host })
-    })
+    this.post('/hosts/:id/toggle', (req) => this.applied(this.proxy.hosts.toggle(Number(req.id)) ?? notFound('Host')))
   }
 
   private registerSslApi(): void {
-    this.api.get('/certs', (c) => c.json({ ok: true, data: this.proxy.certs.allSorted().map(sanitizeCert) }))
+    this.get('/certs', () => this.proxy.certs.allSorted().map(sanitizeCert))
 
-    this.api.post('/certs/issue', async (c) => {
-      const body = await c.req.json()
-      const domains: string[] = Array.isArray(body.domains)
-        ? body.domains
-        : String(body.domains || body.domain || '').split(/[\n,]/).map((d: string) => d.trim()).filter(Boolean)
-      if (!domains.length) return this.badRequest(c, 'domain(s) required')
-      try {
-        const cert = await this.proxy.ssl.issue({
-          domains,
-          email: body.email,
-          challenge: body.challenge === 'dns' ? 'dns' : body.challenge === 'http' ? 'http' : undefined,
-          dnsToken: body.dns_token || undefined,
-        })
-        return c.json({ ok: true, data: { domains: certDomains(cert), expiresAt: cert.expires_at, provider: cert.provider } })
-      } catch (err: any) {
-        return this.sslFailure(c, err, `certificate issuance failed for ${domains.join(',')}`)
-      }
+    this.post('/certs/issue', async (req) => {
+      const { body } = req
+      const cert = await this.proxy.ssl.issue({
+        domains: domainList(body),
+        email: body.email,
+        challenge: body.challenge === 'dns' ? 'dns' : body.challenge === 'http' ? 'http' : undefined,
+        dnsToken: body.dns_token || undefined,
+      })
+      return { domains: certDomains(cert), expiresAt: cert.expires_at, provider: cert.provider }
     })
 
-    this.api.post('/certs/selfsigned', async (c) => {
-      const { domain } = await c.req.json()
-      if (!domain) return this.badRequest(c, 'domain is required')
-      try {
-        const cert = await this.proxy.ssl.selfSign(domain)
-        return c.json({ ok: true, data: { domains: certDomains(cert), provider: cert.provider } })
-      } catch (err: any) {
-        return this.sslFailure(c, err, `self-signed generation failed for ${domain}`)
-      }
+    this.post('/certs/selfsigned', async ({ body }) => {
+      const cert = await this.proxy.ssl.selfSign(body.domain || invalid('domain is required'))
+      return { domains: certDomains(cert), provider: cert.provider }
     })
 
-    this.api.post('/certs/upload', async (c) => {
-      const { domain, cert, key } = await c.req.json()
-      if (!domain || !cert || !key) return this.badRequest(c, 'domain, cert, and key are required')
-      try {
-        const saved = this.proxy.ssl.upload(domain, cert, key)
-        return c.json({ ok: true, data: { domain, provider: saved.provider, expiresAt: saved.expires_at } })
-      } catch (err: any) {
-        return this.sslFailure(c, err, `certificate upload failed for ${domain}`)
-      }
+    this.post('/certs/upload', ({ body }) => {
+      if (!body.domain || !body.cert || !body.key) invalid('domain, cert, and key are required')
+      const saved = this.proxy.ssl.upload(body.domain, body.cert, body.key)
+      return { domain: body.domain, provider: saved.provider, expiresAt: saved.expires_at }
     })
 
-    this.api.post('/certs/:id/renew', async (c) => {
-      try {
-        const cert = await this.proxy.ssl.renew(Number(c.req.param('id')))
-        return c.json({ ok: true, data: { domain: cert.domain, expiresAt: cert.expires_at } })
-      } catch (err: any) {
-        return this.sslFailure(c, err, 'certificate renewal failed')
-      }
+    this.post('/certs/:id/renew', async (req) => {
+      const cert = await this.proxy.ssl.renew(Number(req.id))
+      return { domain: cert.domain, expiresAt: cert.expires_at }
     })
 
-    this.api.delete('/certs/:id', (c) => {
-      this.proxy.ssl.remove(Number(c.req.param('id')))
-      return c.json({ ok: true, data: null })
+    this.delete('/certs/:id', (req) => {
+      this.proxy.ssl.remove(Number(req.id))
+      return null
     })
 
-    this.api.post('/certs/check-renewals', async (c) => {
+    this.post('/certs/check-renewals', async () => {
       await this.proxy.ssl.renewDueCertificates()
-      return c.json({ ok: true, data: { message: 'Renewal check complete' } })
+      return { message: 'Renewal check complete' }
     })
   }
 
   private registerMiscApi(): void {
-    this.api.get('/logs', (c) => {
-      const limit = Number(c.req.query('limit') || 50)
-      return c.json({ ok: true, data: this.proxy.accessLogs.recent(limit, c.req.query('domain') || undefined) })
-    })
+    this.get('/logs', (req) => this.proxy.accessLogs.recent(req.number('limit', 50), req.query('domain') || undefined))
 
-    this.api.post('/reload', (c) => {
-      this.proxy.server.reloadHosts()
+    this.post('/reload', () => {
       this.proxy.server.reloadCertificates()
-      return c.json({ ok: true, data: { hosts: this.proxy.hosts.enabled().length } })
+      return this.applied({ hosts: this.proxy.hosts.enabled().length })
     })
   }
 
@@ -178,50 +143,36 @@ export class ProxyController {
   }
 
   private registerPages(): void {
-    this.pages.get('/', (c) => {
+    this.page('/', () => {
       const hosts = this.proxy.hosts.allSorted()
       const isCovered = this.coveredDomains()
-      const coveredSet = new Set(hosts.filter((h) => isCovered(h.domain)).map((h) => h.domain))
-      return c.html(new HostsPage({
+      return new HostsPage({
         hosts,
-        certDomains: coveredSet,
+        certDomains: new Set(hosts.filter((h) => isCovered(h.domain)).map((h) => h.domain)),
         status: {
           httpPort: this.proxy.server.httpPort,
           httpsPort: this.proxy.server.httpsPort,
           httpsActive: this.proxy.server.httpsActive,
           certificateCount: this.proxy.server.certificateCount,
         },
-      }).render())
+      }).render()
     })
 
-    this.pages.get('/ssl', (c) => {
-      const certs = this.proxy.certs.allSorted()
+    this.page('/ssl', () => {
       const isCovered = this.coveredDomains()
-      const domainsWithoutCert = this.proxy.hosts.query().pluck<string>('domain').filter((d) => !isCovered(d))
-      return c.html(new SslPage({ certs: certs.map(sanitizeCert), domainsWithoutCert, defaultEmail: this.proxy.ssl.defaultEmail }).render())
+      return new SslPage({
+        certs: this.proxy.certs.allSorted().map(sanitizeCert),
+        domainsWithoutCert: this.proxy.hosts.query().pluck<string>('domain').filter((d) => !isCovered(d)),
+        defaultEmail: this.proxy.ssl.defaultEmail,
+      }).render()
     })
 
-    this.pages.get('/logs', (c) => {
-      const domain = c.req.query('domain') || ''
-      return c.html(new AccessLogsPage({ logs: this.proxy.accessLogs.recent(100, domain || undefined), selectedDomain: domain }).render())
+    this.page('/logs', (req: Request) => {
+      const domain = req.query('domain')
+      return new AccessLogsPage({
+        logs: this.proxy.accessLogs.recent(100, domain || undefined),
+        selectedDomain: domain,
+      }).render()
     })
-  }
-
-  private notFound(c: Context, message: string) {
-    return c.json({ ok: false, error: { code: 'NOT_FOUND', message } }, 404)
-  }
-
-  private badRequest(c: Context, message: string) {
-    return c.json({ ok: false, error: { code: 'VALIDATION', message } }, 400)
-  }
-
-  private sslFailure(c: Context, err: unknown, logMessage: string) {
-    if (err instanceof SslError) {
-      const status = err.code === 'NOT_FOUND' ? 404 : err.code === 'VALIDATION' || err.code === 'NOT_SUPPORTED' ? 400 : 500
-      return c.json({ ok: false, error: { code: err.code, message: err.message } }, status as any)
-    }
-    const message = err instanceof Error ? err.message : String(err)
-    this.proxy.logger.error(`${logMessage}: ${message}`)
-    return c.json({ ok: false, error: { code: 'ACME_ERROR', message } }, 500)
   }
 }

@@ -12,6 +12,15 @@
 - 금지: 비즈니스 규칙(배포 절차, 인증 판단, HTML)을 직접 갖는 것. 조립과 위임만 한다.
 - 여기만 여러 system을 안다. 라우트 등록은 **오직 여기서**.
 
+**Controller** (`kernel/controller.ts`) — 라우트가 값을 돌려주면 응답으로 바꾸고, 던져진 오류를 상태코드로 바꾼다.
+- 담당: `{ok:true,data}` 포장, 오류 코드→상태코드 매핑(NOT_FOUND 404 · VALIDATION 400 · CONFLICT 409 · 그 외 500), 500만 로깅, 본문 파싱
+- 하위 컨트롤러는 `this.get/post/patch/delete(path, handler)`와 `this.page(path, render)`만 쓴다 — Hono를 직접 만지지 않는다
+- 실패는 `notFound()` / `invalid()` / `conflict()` / `failed(code, message, data)`를 **던져서** 알린다 (if-return 사슬 금지)
+- `fields(body, NAMES)`가 허용된 필드만 뽑고 boolean을 0/1로 바꾼다
+- 금지: 도메인 규칙. 검증과 위임까지만 한다.
+
+**HttpError** — 코드 하나로 클라이언트에게 보일 실패를 표현한다. `status`는 코드에서 파생된다.
+
 ## system/auth — 이 서버에 들어올 수 있는가
 
 **AuthSystem** — 관리자 계정을 만들고 세션을 발급·검증하며, 보호된 경로의 출입을 판정한다.

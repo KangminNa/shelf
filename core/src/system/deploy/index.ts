@@ -23,7 +23,8 @@ export class DeploySystem {
   readonly selfDeployer: SelfDeployer
   readonly webhook: WebhookServer
   private readonly controller: DeployController
-  private readonly log = new Logger('deploy')
+  readonly logger = new Logger('deploy')
+  private readonly log = this.logger
 
   constructor(events: EventBus) {
     const db = new AppDatabase('deploy', join(process.cwd(), 'core', 'migrations', 'deploy'))
