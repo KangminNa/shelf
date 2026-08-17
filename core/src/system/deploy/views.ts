@@ -1,4 +1,4 @@
-import { Page, FORM, DIALOG, type Html } from '../../ui/page.js'
+import { StringTemplatePage, FORM, DIALOG, type Html } from '../../ui/page.js'
 import type { Project, Deployment } from './repositories.js'
 
 export type DisplayStatus = 'running' | 'stopped' | 'crashed' | 'deploying'
@@ -23,7 +23,7 @@ export interface ProjectListItem {
   lastDeploy?: Deployment
 }
 
-abstract class DeployPage extends Page {
+abstract class DeployPage extends StringTemplatePage {
   protected statusBadge(status: DisplayStatus): string {
     return STATUS_BADGES[status] || ''
   }

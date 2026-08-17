@@ -142,3 +142,41 @@ export abstract class Page {
     return raw(`<script>${body}</script>`)
   }
 }
+
+export abstract class StringTemplatePage extends Page {
+  protected trust(child: Child): Child {
+    return typeof child === 'string' ? raw(child) : child
+  }
+
+  protected override dialog(id: string, title: string, body: Child, maxWidth = 480): Html {
+    return super.dialog(id, title, this.trust(body), maxWidth)
+  }
+
+  protected override field(label: Child, control: Child, hint?: Child): Html {
+    return super.field(this.trust(label), this.trust(control), this.trust(hint))
+  }
+
+  protected override checkbox(name: string, label: Child, checked = false, indent = false): Html {
+    return super.checkbox(name, this.trust(label), checked, indent)
+  }
+
+  protected override sectionHeader(title: Child, actions?: Child): Html {
+    return super.sectionHeader(this.trust(title), this.trust(actions))
+  }
+
+  protected override card(body: Child, style?: string): Html {
+    return super.card(this.trust(body), style)
+  }
+
+  protected override tableCard(headers: string[], rows: Child): Html {
+    return super.tableCard(headers, this.trust(rows))
+  }
+
+  protected override emptyState(title: Child, description: Child, action?: Child): Html {
+    return super.emptyState(this.trust(title), this.trust(description), this.trust(action))
+  }
+
+  protected override notice(body: Child): Html {
+    return super.notice(this.trust(body))
+  }
+}
