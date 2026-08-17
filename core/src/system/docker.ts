@@ -1,4 +1,4 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { Logger } from '../services/log.js'
 
@@ -102,6 +102,15 @@ export class DockerService {
     } catch {
       return []
     }
+  }
+
+  spawnDetached(image: string, script: string, mounts: string[]): void {
+    const args = ['run', '-d', '--rm']
+    for (const mount of mounts) args.push('-v', mount)
+    args.push(image, 'sh', '-c', script)
+    const child = spawn('docker', args, { detached: true, stdio: 'ignore' })
+    child.unref()
+    this.log.info(`spawned detached helper container (${image})`)
   }
 
   private async run(args: string[], timeout = DockerService.CMD_TIMEOUT_MS): Promise<{ output: string }> {

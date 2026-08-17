@@ -160,6 +160,14 @@ test('webhook server rejects bad signatures, accepts valid HMAC', async () => {
   await api(`/api/deploy/projects/${id}`, { method: 'DELETE' })
 })
 
+test('self-deploy webhook returns 404 when SELF_DEPLOY_SECRET is unset', async () => {
+  const viaHookPort = await fetch(`http://127.0.0.1:${WEBHOOK_PORT}/hooks/self`, { method: 'POST', body: '{}' })
+  assert.equal(viaHookPort.status, 404)
+
+  const viaProxy = await api('/hooks/self', { method: 'POST', body: '{}' }, false)
+  assert.equal(viaProxy.status, 404)
+})
+
 test('login rate limit locks this test-runner IP after repeated failures (keep ordered after auth tests)', async () => {
   for (let i = 0; i < 5; i++) {
     const res = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ username: 'admin', password: 'wrong-' + i }) }, false)

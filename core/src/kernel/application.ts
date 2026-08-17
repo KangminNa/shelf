@@ -63,6 +63,8 @@ export class ShelfApplication {
     this.hono.get('/health', (c) => c.json({ ok: true, uptime: process.uptime() }))
     this.hono.get('/', (c) => c.redirect('/admin'))
 
+    this.hono.route('/hooks', this.deploy.webhookRoutes)
+
     this.hono.route('/', this.auth.routes)
     this.hono.use('/admin/*', this.auth.requireAuth())
     this.hono.use('/admin', this.auth.requireAuth())
