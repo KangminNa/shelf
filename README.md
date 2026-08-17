@@ -39,8 +39,9 @@ npm run dev
 Production (Shelf itself runs in Docker, needs docker.sock):
 
 ```bash
+docker network create shelf-net   # once — Shelf and every app share this network
 docker compose up -d
-# admin on :81, proxy on :80/:443, webhooks on :9100
+# proxy on :80/:443 · admin and webhooks are bound to 127.0.0.1 and served through the proxy
 ```
 
 ## Deploying your first app
@@ -75,7 +76,7 @@ See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full development guide (K
 - Shelf mounts `/var/run/docker.sock`, which grants it **full control of the host's Docker daemon** (effectively root-equivalent on the host). Only run Shelf on machines you own, and only give admin credentials to people you'd trust with the server itself.
 - Deploying an app means running arbitrary code in a container on your machine. Only deploy repositories you trust — an admin account is root-equivalent **by design**.
 - Built-in protections: session auth with scrypt hashing, login rate limiting (5 failures → 15m lockout), Secure/httpOnly/SameSite cookies, HMAC-verified webhooks with body size limits, no CORS, input validation on git/image references, secrets stripped from API responses and masked in logs.
-- Recommended deployment: expose only **80/443** (and **9100** if you use webhooks). Set `ADMIN_DOMAIN` so the admin UI is served through the proxy with SSL, and keep port 81 firewalled. Enable Force SSL + HSTS on the admin domain.
+- Recommended deployment: expose only **80/443**. Set `ADMIN_DOMAIN` so the admin UI is served through the proxy with SSL; compose already binds admin (81) and webhooks (9100) to 127.0.0.1 so they are only reachable through the proxy. Enable Force SSL + HSTS on the admin domain.
 - Secrets (git tokens, webhook secrets, DNS tokens) are stored in plaintext inside `data/` — protect that directory (file permissions, encrypted disk, careful backups).
 
 ## License

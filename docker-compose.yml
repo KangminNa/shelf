@@ -15,6 +15,13 @@ services:
       - ./data:/app/data
       # 자기 재배포용: Shelf 소스 저장소 (SELF_DEPLOY_DIR와 일치)
       - ./:/shelf
+    # 운영 설정은 .env 파일에 둔다 (git 추적 안 됨 → git pull 충돌 없음)
+    #   ADMIN_DOMAIN=shelf.example.com
+    #   ACME_EMAIL=you@example.com
+    #   SELF_DEPLOY_SECRET=<openssl rand -hex 32>
+    env_file:
+      - path: .env
+        required: false
     environment:
       - PORT=81
       - NODE_ENV=production
@@ -23,14 +30,7 @@ services:
       - WEBHOOK_PORT=9100
       # 앱 컨테이너와 공유하는 네트워크 — 프록시가 컨테이너 이름으로 앱에 직접 도달
       - SHELF_NETWORK=shelf-net
-      # - ACME_EMAIL=you@example.com
-      # 관리 UI를 프록시(80/443) 뒤로 자동 등록
-      # - ADMIN_DOMAIN=shelf.example.com
-      # Shelf 자기 재배포(CI/CD) — 설정하면 POST /hooks/self 활성화
-      # GitHub webhook: https://<도메인>/hooks/self (프록시 경유) + 아래 secret
-      # - SELF_DEPLOY_SECRET=change-me-to-a-long-random-string
-      # - SELF_DEPLOY_DIR=/shelf
-      # - SELF_DEPLOY_BRANCH=main
+      - SELF_DEPLOY_DIR=/shelf
     networks:
       - shelf-net
     healthcheck:
@@ -40,6 +40,8 @@ services:
       start_period: 10s
       retries: 3
 
+# Shelf와 앱 컨테이너가 공유하는 네트워크. compose가 만들고 Shelf가 앱을 붙인다.
+# 이미 존재하면 그대로 사용된다 (docker network create shelf-net 을 미리 해둬도 무방).
 networks:
   shelf-net:
     name: shelf-net
