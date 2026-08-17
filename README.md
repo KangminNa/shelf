@@ -69,7 +69,7 @@ core/src/
 └── config.ts               env-based settings
 ```
 
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for the full development guide (Korean).
+Docs (Korean): [SPEC](docs/SPEC.md) — what it provides · [OBJECTS](docs/OBJECTS.md) — what each class is responsible for · [ARCHITECTURE](docs/ARCHITECTURE.md) — layers and patterns · [PROCESS](docs/PROCESS.md) — how features get built and verified · [HISTORY](docs/HISTORY.md) — why it looks like this · [DEVELOPMENT](docs/DEVELOPMENT.md) — class-level walkthrough.
 
 ## Security notes
 

@@ -4,7 +4,19 @@
 
 Shelf is a self-hosted app platform, shipped as a **single Docker image**. Apps are Docker containers deployed from Git repos (with a Dockerfile) or plain Docker images. The core orchestrates: build, CI/CD webhooks, reverse proxy (80/443), SSL, and an admin UI.
 
-**Read [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before writing code** — it defines the layer rules, design patterns, and where new code goes. [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) is the full dev guide (Korean).
+**Before writing code, read these in order** (all Korean):
+
+| Doc | Question it answers |
+|---|---|
+| [docs/SPEC.md](docs/SPEC.md) | **What** we provide — every feature has an F-number and a status. Nothing outside this list gets built. |
+| [docs/OBJECTS.md](docs/OBJECTS.md) | **Who** does it — one responsibility sentence per class. Pick the owner before adding code; if none fits, write the sentence first. |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | **What shape** — layers, dependency direction, patterns, review checklist. |
+| [docs/PROCESS.md](docs/PROCESS.md) | **How we work** — the feature loop and what `npm test` enforces automatically. |
+| [docs/HISTORY.md](docs/HISTORY.md) | **Why it looks like this** — three direction changes and the lessons from production. |
+
+[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) is the class-level walkthrough.
+
+`core/tests/architecture.test.ts` fails when code drifts from these docs (cross-system imports, raw SQL outside `db/`, undocumented classes, undeclared events). Treat a failure there as a spec violation, not a test to loosen.
 
 ## Structure
 
