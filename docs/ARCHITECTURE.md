@@ -26,7 +26,7 @@
 
 1. `kernel`만 여러 system을 안다. **system끼리는 import 금지** — 통신은 EventBus로만
 2. `db/`, `services/`, `ui/`는 어떤 system도 모른다 (역참조 금지)
-3. HTML은 `views.ts`의 **순수 함수**에만 — 데이터를 인자로 받고 문자열을 반환, DB/네트워크 접근 금지
+3. HTML은 `views.ts`의 **Page 클래스**에만 — props를 받아 문자열을 반환, DB/네트워크 접근 금지 (2-1 참고)
 4. Hono(`c.req`, `c.json`)는 **controller와 kernel에서만** 등장
 5. 날 SQL은 `db/` 디렉토리 안에서만 — 도메인 코드는 Repository 메서드로만 데이터 접근
 
@@ -69,7 +69,7 @@
 **A. 기존 시스템에 API/화면 추가**
 1. 데이터가 필요하면 `repositories.ts`에 메서드 추가 (SQL은 QueryBuilder로)
 2. 로직이 크면 도메인 클래스(예: `pipeline.ts`)에, 작으면 controller에
-3. `controller.ts`에 라우트, HTML은 `views.ts`에 순수 함수
+3. `controller.ts`에 라우트, HTML은 `views.ts`의 Page 클래스 (`new XPage(props).render()`)
 4. 응답 포맷: 성공 `{ ok: true, data }` / 실패 `{ ok: false, error: { code, message } }`
 
 **B. 새 시스템 기능 (예: 알림, 백업)**
@@ -79,7 +79,7 @@ core/src/system/{name}/
 ├── repositories.ts  # Repository<T> 상속 (DB가 필요하면 AppDatabase('{name}'))
 ├── (도메인 클래스)    # 실제 로직
 ├── controller.ts    # api/pages Hono
-└── views.ts         # HTML 순수 함수
+└── views.ts         # Page 클래스 (el 빌더로 조합)
 ```
 + `core/migrations/{name}/001_init.sql`
 + `kernel/application.ts`에서 생성·라우팅·shutdown 연결 (이 파일 외에는 수정할 곳 없음)
@@ -95,7 +95,8 @@ core/src/system/{name}/
 
 - [ ] system A에서 system B를 import하지 않았는가 → EventBus
 - [ ] controller/pipeline 등 도메인 코드에 `sqlite.prepare(...)`가 없는가 → Repository
-- [ ] views 함수가 인자 외의 것(DB, env, fetch)에 접근하지 않는가
+- [ ] Page 클래스가 props 외의 것(DB, fetch)에 접근하지 않는가
+- [ ] 새 HTML을 문자열 템플릿이 아니라 `el` 빌더로 조합했는가
 - [ ] 시크릿(토큰, webhook secret)이 API 응답·로그에 노출되지 않는가 → `sanitize()`/마스킹
 - [ ] 적용된 마이그레이션 파일을 수정하지 않았는가
 - [ ] 새 의존성을 추가했는가 → 꼭 필요한가? (코어 런타임 의존성 3개 유지: hono, @hono/node-server, better-sqlite3)
@@ -119,6 +120,6 @@ Shelf 자체가 하나의 이미지다. 운영 = `docker compose up -d`.
 ## 6. 코드 스타일
 
 - 클래스: 생성자에서 의존성 주입, `readonly` 필드, private 메서드는 `// --- 내부 ---` 아래에
-- 파일 상단에 역할을 설명하는 블록 주석 (한국어)
+- 주석 없이 읽히게 쓴다 — 설명이 필요하면 메서드로 추출해 이름을 붙인다
 - 상수는 `static readonly` 또는 파일 상단 UPPER_SNAKE
 - async 여부는 호출 체인에 맞춰 일관되게 (docker 관련은 전부 async)
