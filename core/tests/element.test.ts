@@ -51,22 +51,6 @@ test('escapeHtml handles nullish input', () => {
   assert.equal(escapeHtml(0), '0')
 })
 
-test('StringTemplatePage trusts string children so legacy views are not double-escaped', async () => {
-  const { StringTemplatePage } = await import('../src/ui/page.js')
-  class Legacy extends StringTemplatePage {
-    render() {
-      return this.tableCard(['H'], '<tr><td>cell</td></tr>').toString()
-    }
-    header() {
-      return this.sectionHeader('Title', '<button>Go</button>').toString()
-    }
-  }
-  const page = new Legacy()
-  assert.match(page.render(), /<tr><td>cell<\/td><\/tr>/)
-  assert.doesNotMatch(page.render(), /&lt;tr&gt;/)
-  assert.match(page.header(), /<button>Go<\/button>/)
-})
-
 test('Page (builder-based) still escapes string children', async () => {
   const { Page } = await import('../src/ui/page.js')
   class Modern extends Page {

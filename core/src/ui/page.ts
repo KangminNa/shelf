@@ -1,6 +1,30 @@
 import { el, raw, join, escapeHtml, type Html, type Child, type Attrs } from './element.js'
+import {
+  act,
+  openDialog,
+  closeDialog,
+  submits,
+  loads,
+  live,
+  copies,
+  fills,
+  tab,
+  panel,
+  tabValue,
+  revealsWhen,
+  revealed,
+  matches,
+  toggles,
+  reloads,
+  type ActionOptions,
+  type LoadOptions,
+  type LiveOptions,
+} from './runtime.js'
 
 export { el, raw, join, type Html, type Child, type Attrs }
+export { act, openDialog, closeDialog, submits, loads, live, copies, fills }
+export { tab, panel, tabValue, revealsWhen, revealed, matches, toggles, reloads }
+export type { ActionOptions, LoadOptions, LiveOptions }
 
 export const FORM = {
   input: `width:100%; padding:8px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--bg); color:var(--text); font-size:14px;`,
@@ -42,12 +66,36 @@ export abstract class Page {
     return `${Math.floor(seconds)}s`
   }
 
-  protected hide(id: string): string {
-    return `document.getElementById('${id}').style.display='none'`
+  protected openButton(dialogId: string, label: Child, variant = 'primary', size = 'sm'): Html {
+    return el.button(
+      { ...openDialog(dialogId), class: `shelf-btn shelf-btn-${variant}${size ? ` shelf-btn-${size}` : ''}` },
+      label
+    )
   }
 
-  protected show(id: string): string {
-    return `document.getElementById('${id}').style.display='flex'`
+  protected actionButton(
+    method: string,
+    url: string,
+    label: Child,
+    options: ActionOptions & { variant?: string; size?: string; title?: string; danger?: boolean } = {}
+  ): Html {
+    const { variant = 'ghost', size = 'sm', title, danger, ...action } = options
+    return el.button(
+      {
+        ...act(method, url, action),
+        class: `shelf-btn shelf-btn-${variant}${size ? ` shelf-btn-${size}` : ''}`,
+        title,
+        style: danger ? 'color:var(--danger);' : undefined,
+      },
+      label
+    )
+  }
+
+  protected tabBar(group: string, options: Array<[string, Child]>): Html {
+    return el.div(
+      { style: 'display:flex; gap:8px; margin-bottom:16px;' },
+      options.map(([value, label], index) => el.button(tab(group, value, index === 0), label))
+    )
   }
 
   protected dialog(id: string, title: string, body: Child, maxWidth = 480): Html {
@@ -58,7 +106,7 @@ export abstract class Page {
         el.div(
           { style: DIALOG.header },
           el.h3({ style: 'font-size:16px; font-weight:600;' }, title),
-          el.button({ onclick: this.hide(id), class: 'shelf-btn shelf-btn-ghost shelf-btn-icon' }, raw('&times;'))
+          el.button({ ...closeDialog(id), class: 'shelf-btn shelf-btn-ghost shelf-btn-icon' }, raw('&times;'))
         ),
         body
       )
@@ -68,7 +116,7 @@ export abstract class Page {
   protected dialogActions(dialogId: string, submitLabel: string, submitId?: string): Html {
     return el.div(
       { style: DIALOG.footer },
-      el.button({ type: 'button', onclick: this.hide(dialogId), class: 'shelf-btn shelf-btn-secondary' }, 'Cancel'),
+      el.button({ type: 'button', ...closeDialog(dialogId), class: 'shelf-btn shelf-btn-secondary' }, 'Cancel'),
       el.button({ type: 'submit', id: submitId, class: 'shelf-btn shelf-btn-primary' }, submitLabel)
     )
   }
@@ -138,45 +186,4 @@ export abstract class Page {
     )
   }
 
-  protected script(body: string): Html {
-    return raw(`<script>${body}</script>`)
-  }
-}
-
-export abstract class StringTemplatePage extends Page {
-  protected trust(child: Child): Child {
-    return typeof child === 'string' ? raw(child) : child
-  }
-
-  protected override dialog(id: string, title: string, body: Child, maxWidth = 480): Html {
-    return super.dialog(id, title, this.trust(body), maxWidth)
-  }
-
-  protected override field(label: Child, control: Child, hint?: Child): Html {
-    return super.field(this.trust(label), this.trust(control), this.trust(hint))
-  }
-
-  protected override checkbox(name: string, label: Child, checked = false, indent = false): Html {
-    return super.checkbox(name, this.trust(label), checked, indent)
-  }
-
-  protected override sectionHeader(title: Child, actions?: Child): Html {
-    return super.sectionHeader(this.trust(title), this.trust(actions))
-  }
-
-  protected override card(body: Child, style?: string): Html {
-    return super.card(this.trust(body), style)
-  }
-
-  protected override tableCard(headers: string[], rows: Child): Html {
-    return super.tableCard(headers, this.trust(rows))
-  }
-
-  protected override emptyState(title: Child, description: Child, action?: Child): Html {
-    return super.emptyState(this.trust(title), this.trust(description), this.trust(action))
-  }
-
-  protected override notice(body: Child): Html {
-    return super.notice(this.trust(body))
-  }
 }

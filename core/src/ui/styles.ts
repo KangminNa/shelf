@@ -364,6 +364,14 @@ body {
 
 .shelf-btn-primary:hover { opacity: 0.9; }
 
+.shelf-btn.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+[hidden] { display: none !important; }
+
 .shelf-btn-secondary {
   background: var(--bg);
   color: var(--text);

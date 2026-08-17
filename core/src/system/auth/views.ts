@@ -1,10 +1,12 @@
-import { Page, raw } from '../../ui/page.js'
+import { Page, el, join, raw, submits, matches, type Attrs, type Child } from '../../ui/page.js'
+import { RUNTIME_SCRIPT } from '../../ui/runtime.js'
 
 const AUTH_STYLES = `
   * { margin:0; padding:0; box-sizing:border-box; }
   :root {
     --bg:#f8f9fb; --card:#ffffff; --text:#1a1d23; --muted:#8b919c;
-    --border:#e4e7ec; --accent:#4361ee; --danger:#e5484d; --radius:10px;
+    --border:#e4e7ec; --accent:#4361ee; --danger:#e5484d; --success:#30a46c;
+    --radius:10px; --shadow:0 8px 32px rgba(0,0,0,0.12);
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg:#0f1115; --card:#171a21; --text:#e6e8ec; --muted:#7d8590; --border:#262b35; }
@@ -30,16 +32,18 @@ const AUTH_STYLES = `
     width:100%; padding:11px; border:0; border-radius:var(--radius);
     background:var(--accent); color:#fff; font-size:14px; font-weight:600; cursor:pointer;
   }
-  button:hover { opacity:0.92; }
-  .error { color:var(--danger); font-size:13px; margin-bottom:14px; display:none; }`
+  button:hover { opacity:0.92; }`
 
-const SHELF_LOGO = `<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="7" rx="2"/><rect x="2" y="13" width="20" height="7" rx="2"/><line x1="6" y1="7.5" x2="6.01" y2="7.5"/><line x1="6" y1="16.5" x2="6.01" y2="16.5"/></svg>`
+const SHELF_LOGO = raw(
+  `<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="7" rx="2"/><rect x="2" y="13" width="20" height="7" rx="2"/><line x1="6" y1="7.5" x2="6.01" y2="7.5"/><line x1="6" y1="16.5" x2="6.01" y2="16.5"/></svg>`
+)
 
 abstract class AuthPage extends Page {
   protected abstract readonly title: string
   protected abstract readonly subtitle: string
-  protected abstract form(): string
-  protected abstract submitHandler(): string
+  protected abstract readonly endpoint: string
+  protected abstract readonly submitLabel: string
+  protected abstract fields(): Child
 
   render(): string {
     return `<!DOCTYPE html>
@@ -47,98 +51,63 @@ abstract class AuthPage extends Page {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>${this.title} - Shelf</title>
+  <title>${this.escape(this.title)} - Shelf</title>
   <style>${AUTH_STYLES}</style>
+  <script>${RUNTIME_SCRIPT}</script>
 </head>
 <body>
-  <div class="card">
-    <div class="logo">${SHELF_LOGO} Shelf</div>
-    <div class="sub">${this.subtitle}</div>
-    ${this.form()}
-    ${this.script(this.submitHandler()).toString()}
-  </div>
+  ${this.cardBody()}
 </body>
 </html>`
   }
 
-  protected showError(): string {
-    return `
-      const el = document.getElementById('error');
-      el.textContent = json.error?.message || '${this.title} failed';
-      el.style.display = 'block';`
+  private cardBody(): string {
+    return el.div(
+      { class: 'card' },
+      el.div({ class: 'logo' }, SHELF_LOGO, ' Shelf'),
+      el.div({ class: 'sub' }, this.subtitle),
+      el.form(
+        { ...submits('POST', this.endpoint, { then: 'redirect:/admin' }) },
+        this.fields(),
+        el.button({ type: 'submit' }, this.submitLabel)
+      )
+    ).toString()
+  }
+
+  protected credential(label: string, name: string, type: string, attrs: Attrs = {}): Child {
+    return join([el.label({}, label), el.input({ type, name, required: true, ...attrs })])
   }
 }
 
 export class LoginPage extends AuthPage {
   protected readonly title = 'Sign in'
   protected readonly subtitle = 'Sign in to your server'
+  protected readonly endpoint = '/api/auth/login'
+  protected readonly submitLabel = 'Sign in'
 
-  protected form(): string {
-    return `
-      <form id="form">
-        <label>Username</label>
-        <input type="text" name="username" autocomplete="username" required autofocus>
-        <label>Password</label>
-        <input type="password" name="password" autocomplete="current-password" required>
-        <div class="error" id="error"></div>
-        <button type="submit">Sign in</button>
-      </form>`
-  }
-
-  protected submitHandler(): string {
-    return `
-      document.getElementById('form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const fd = new FormData(e.target);
-        const res = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: fd.get('username'), password: fd.get('password') }),
-        });
-        const json = await res.json();
-        if (json.ok) location.href = '/admin';
-        else {${this.showError()}}
-      });`
+  protected fields(): Child {
+    return [
+      this.credential('Username', 'username', 'text', { autocomplete: 'username', autofocus: true }),
+      this.credential('Password', 'password', 'password', { autocomplete: 'current-password' }),
+    ]
   }
 }
 
 export class SetupPage extends AuthPage {
   protected readonly title = 'Setup'
   protected readonly subtitle = 'Welcome! Create your admin account to get started.'
+  protected readonly endpoint = '/api/auth/setup'
+  protected readonly submitLabel = 'Create account'
 
-  protected form(): string {
-    return `
-      <form id="form">
-        <label>Username</label>
-        <input type="text" name="username" autocomplete="username" required autofocus>
-        <label>Password (min 8 chars)</label>
-        <input type="password" name="password" autocomplete="new-password" minlength="8" required>
-        <label>Confirm password</label>
-        <input type="password" name="confirm" autocomplete="new-password" required>
-        <div class="error" id="error"></div>
-        <button type="submit">Create account</button>
-      </form>`
-  }
-
-  protected submitHandler(): string {
-    return `
-      document.getElementById('form').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        const fd = new FormData(e.target);
-        const el = document.getElementById('error');
-        if (fd.get('password') !== fd.get('confirm')) {
-          el.textContent = 'Passwords do not match';
-          el.style.display = 'block';
-          return;
-        }
-        const res = await fetch('/api/auth/setup', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: fd.get('username'), password: fd.get('password') }),
-        });
-        const json = await res.json();
-        if (json.ok) location.href = '/admin';
-        else {${this.showError()}}
-      });`
+  protected fields(): Child {
+    return [
+      this.credential('Username', 'username', 'text', { autocomplete: 'username', autofocus: true }),
+      this.credential('Password (min 8 chars)', 'password', 'password', { autocomplete: 'new-password', minlength: 8 }),
+      this.credential('Confirm password', 'confirm', 'password', {
+        autocomplete: 'new-password',
+        'data-omit-empty': '',
+        ...matches('[name=password]', 'Passwords do not match'),
+      }),
+    ]
   }
 }

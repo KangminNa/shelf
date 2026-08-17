@@ -39,6 +39,10 @@ function renderChild(child: Child): string {
   return escapeHtml(child)
 }
 
+export function attrs(values: Attrs): string {
+  return renderAttrs(values).trimStart()
+}
+
 function renderAttrs(attrs: Attrs): string {
   return Object.entries(attrs)
     .filter(([, value]) => value !== null && value !== undefined && value !== false)

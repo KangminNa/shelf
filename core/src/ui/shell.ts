@@ -1,5 +1,7 @@
 import { css } from './styles.js'
 import { icon } from './icons.js'
+import { RUNTIME_SCRIPT, act, toggles, reloads } from './runtime.js'
+import { attrs } from './element.js'
 
 export interface AppNavItem {
   id: number
@@ -62,6 +64,7 @@ export function renderShell(opts: ShellOpts): string {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${title} - Shelf</title>
   <style>${css}</style>
+  <script>${RUNTIME_SCRIPT}</script>
 </head>
 <body>
   <div class="shelf-layout">
@@ -105,7 +108,7 @@ export function renderShell(opts: ShellOpts): string {
           <a href="/admin/settings" class="shelf-btn shelf-btn-ghost shelf-btn-icon" title="Settings">
             ${icon('settings')}
           </a>
-          <button onclick="fetch('/api/auth/logout',{method:'POST'}).then(()=>location.href='/login')" class="shelf-btn shelf-btn-ghost shelf-btn-icon" title="Sign out">
+          <button ${attrs(act('POST', '/api/auth/logout', { then: 'redirect:/login' }))} class="shelf-btn shelf-btn-ghost shelf-btn-icon" title="Sign out">
             ${icon('power')}
           </button>
         </div>
@@ -123,6 +126,7 @@ export function renderShell(opts: ShellOpts): string {
 }
 
 function previewLayout(content: string, previewUrl: string): string {
+  const swap = attrs(toggles('#shelf-preview,#shelf-preview-show', 'shelf-preview-hidden'))
   return `
       <div style="display:flex; height:calc(100vh - var(--topbar-h)); overflow:hidden;">
         <main class="shelf-content" style="flex:1; min-width:0; overflow:auto;">
@@ -134,28 +138,17 @@ function previewLayout(content: string, previewUrl: string): string {
             <span style="font-weight:600;">Live preview</span>
             <code style="font-family:var(--font-mono); font-size:12px; color:var(--text-muted);">${previewUrl}</code>
             <div style="margin-left:auto; display:flex; gap:4px;">
-              <button onclick="document.getElementById('shelf-preview-frame').contentWindow.location.reload()" class="shelf-btn shelf-btn-ghost shelf-btn-sm shelf-btn-icon" title="Refresh">${icon('refresh', 15)}</button>
+              <button ${attrs(reloads('#shelf-preview-frame'))} class="shelf-btn shelf-btn-ghost shelf-btn-sm shelf-btn-icon" title="Refresh">${icon('refresh', 15)}</button>
               <a href="${previewUrl}" target="_blank" class="shelf-btn shelf-btn-ghost shelf-btn-sm shelf-btn-icon" title="Open in new tab">${icon('link', 15)}</a>
-              <button onclick="togglePreview()" class="shelf-btn shelf-btn-ghost shelf-btn-sm shelf-btn-icon" title="Hide preview">${icon('eye', 15)}</button>
+              <button ${swap} class="shelf-btn shelf-btn-ghost shelf-btn-sm shelf-btn-icon" title="Hide preview">${icon('eye', 15)}</button>
             </div>
           </div>
           <iframe id="shelf-preview-frame" src="${previewUrl}" style="flex:1; border:0; width:100%; background:#fff;"></iframe>
         </aside>
-        <button id="shelf-preview-show" onclick="togglePreview()" title="Show preview"
-          style="display:none; position:fixed; right:16px; bottom:16px; z-index:50; padding:10px 14px; border:1px solid var(--border); border-radius:999px; background:var(--bg); color:var(--text); cursor:pointer; box-shadow:var(--shadow); font-size:13px; align-items:center; gap:6px;">
+        <button id="shelf-preview-show" ${swap} title="Show preview" hidden
+          style="position:fixed; right:16px; bottom:16px; z-index:50; padding:10px 14px; border:1px solid var(--border); border-radius:999px; background:var(--bg); color:var(--text); cursor:pointer; box-shadow:var(--shadow); font-size:13px; align-items:center; gap:6px;">
           ${icon('eye', 15)} Preview
         </button>
       </div>
-      <script>
-        function togglePreview() {
-          const panel = document.getElementById('shelf-preview');
-          const show = document.getElementById('shelf-preview-show');
-          const hidden = panel.style.display === 'none';
-          panel.style.display = hidden ? 'flex' : 'none';
-          show.style.display = hidden ? 'none' : 'inline-flex';
-          localStorage.setItem('shelf-preview-hidden', hidden ? '0' : '1');
-        }
-        if (localStorage.getItem('shelf-preview-hidden') === '1') togglePreview();
-      </script>
   `
 }

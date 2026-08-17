@@ -74,6 +74,22 @@ test('views only render — they import no data or network dependency', () => {
   assert.deepEqual(offenders, [], `views must receive data as props, not fetch it: ${offenders.join(', ')}`)
 })
 
+test('views declare intent — the client runtime is the only place that writes browser behavior', () => {
+  const offenders: string[] = []
+  for (const file of sourceFiles()) {
+    const path = relative(file)
+    if (path === 'ui/runtime.ts') continue
+    if (!path.endsWith('views.ts') && !path.startsWith('admin/pages/') && !path.startsWith('ui/')) continue
+
+    const source = read(file)
+    if (/\son(?:click|change|submit|input)=/.test(source)) offenders.push(`${path}: inline event handler`)
+    if (/fetch\(/.test(source)) offenders.push(`${path}: hand-written fetch`)
+    if (/addEventListener\(/.test(source)) offenders.push(`${path}: hand-written listener`)
+  }
+
+  assert.deepEqual(offenders, [], `use runtime helpers (act/submits/loads/live/tab) instead: ${offenders.join(', ')}`)
+})
+
 test('container and image naming has a single source of truth', () => {
   const offenders = sourceFiles()
     .filter((file) => relative(file) !== 'system/deploy/container-manager.ts')

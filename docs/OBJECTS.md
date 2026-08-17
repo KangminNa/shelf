@@ -148,7 +148,24 @@
 **el / Html / raw** (`ui/element.ts`) — 태그를 런타임에 조립하며 텍스트·속성을 기본 이스케이프한다.
 - 신뢰된 마크업만 `raw()`로 명시적 예외
 
-**renderShell** — 사이드바·탑바·프리뷰 패널로 관리 화면을 감싼다.
+**renderShell** — 사이드바·탑바·프리뷰 패널로 관리 화면을 감싸고 클라이언트 런타임을 한 번 심는다.
+
+**클라이언트 런타임** (`ui/runtime.ts`) — 화면이 선언한 의도를 브라우저에서 실행한다. 브라우저 동작을 쓰는 **유일한 장소**.
+- 화면은 **무엇을 할지만 선언**하고, 어떻게 할지는 런타임이 안다 — 페이지는 fetch도 리스너도 쓰지 않는다
+- 선언 도구 (이것 말고 다른 방법은 없다):
+
+| 헬퍼 | 화면이 말하는 것 | 런타임이 하는 일 |
+|---|---|---|
+| `act(method, url, {confirm, busy, then})` | 이 버튼은 이 API를 호출한다 | 확인창 → 비활성화 → 호출 → 리로드/이동, 실패는 토스트 |
+| `submits(method, url, opts)` | 이 폼은 이 API로 간다 | 입력을 JSON으로 만들어 `act`와 동일하게 처리 |
+| `loads(url, {into, pick, open})` | 눌리면 이 내용을 저기에 채운다 | GET → 값 추출 → 채우기 → (선택) 다이얼로그 열기 |
+| `live(url, {pick, every})` | 이 요소는 이 엔드포인트의 현재 값이다 | 로드 시 채우고 주기적으로 갱신 |
+| `tab/panel/tabValue(group, value)` | 이 버튼과 저 패널은 한 그룹이다 | 선택된 것만 보이게 하고 숨은 입력값을 맞춘다 |
+| `revealsWhen(selector, value)` | 이 값일 때만 저 영역이 필요하다 | 값이 맞을 때만 보인다 |
+| `matches(selector, message)` | 이 두 칸은 같아야 한다 | 다르면 제출을 막고 알린다 |
+| `openDialog` / `closeDialog` / `copies` / `fills` / `toggles` / `reloads` | 열기·닫기·복사·채우기·접기·새로고침 | 그대로 수행 |
+- 금지: 화면별 특수 스크립트. 새 동작이 필요하면 **런타임에 프리미티브를 추가**하고 표에 한 줄 적는다.
+- `core/tests/architecture.test.ts`가 뷰의 인라인 핸들러·fetch·addEventListener를 실패로 만든다.
 
 ## middleware
 

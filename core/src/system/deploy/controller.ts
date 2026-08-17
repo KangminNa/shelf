@@ -214,11 +214,14 @@ export class DeployController {
       if (!project) {
         return c.html('<div style="padding:48px; text-align:center; color:var(--text-muted);">App not found. <a href="/admin/deploy">Back</a></div>')
       }
+      const target = ContainerManager.proxyTarget(project)
       return c.html(new ProjectDetailPage({
         project,
         status: await this.displayStatus(project),
         deployments: this.deploy.deployments.forProject(project.id),
         webhookPort: this.deploy.webhook.port,
+        container: ContainerManager.containerName(project),
+        proxyTarget: target ? `${target.host}:${target.port}` : null,
       }).render())
     })
 
