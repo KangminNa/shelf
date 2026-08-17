@@ -3,6 +3,8 @@ import type { EventBus } from '../../services/events.js'
 import type { Logger } from '../../services/log.js'
 import type { Project } from './repositories.js'
 
+export const SHELF_NETWORK = process.env.SHELF_NETWORK || 'shelf-net'
+
 export class ContainerManager {
   constructor(
     private readonly docker: DockerService,
@@ -18,10 +20,24 @@ export class ContainerManager {
     return project.source_type === 'image' ? project.image : `shelf-app-${project.name}`
   }
 
+  static proxyTarget(project: Project): { host: string; port: number } | null {
+    const port = project.container_port || project.port
+    if (!port) return null
+    return { host: ContainerManager.containerName(project), port }
+  }
+
+  async prepareNetwork(): Promise<void> {
+    await this.docker.ensureNetwork(SHELF_NETWORK)
+    const self = process.env.HOSTNAME
+    if (self) await this.docker.connectNetwork(SHELF_NETWORK, self)
+  }
+
   async recreate(project: Project): Promise<void> {
+    await this.prepareNetwork()
     await this.docker.runContainer({
       name: ContainerManager.containerName(project),
       image: ContainerManager.imageTag(project),
+      network: SHELF_NETWORK,
       hostPort: project.port,
       containerPort: project.container_port,
       env: ContainerManager.parseLines(project.env, '='),
@@ -37,6 +53,7 @@ export class ContainerManager {
         await this.recreate(project)
       } else {
         await this.docker.startContainer(name)
+        await this.docker.connectNetwork(SHELF_NETWORK, name)
       }
       return { ok: true }
     } catch (err: any) {

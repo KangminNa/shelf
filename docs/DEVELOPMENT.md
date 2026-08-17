@@ -105,6 +105,9 @@ DeploySystem (조립 루트)
 - **Private 저장소**: 앱에 access token(GitHub fine-grained PAT 권장)을 설정하면 clone/fetch 명령에만 토큰 URL을 사용 — `.git/config`에는 평문 URL만 남고, 배포 로그와 API 응답에서 토큰은 마스킹/제거됨
 - **롤백**: 배포 이력의 커밋으로 `git reset --hard {hash}` → 재빌드 → 재배포 (git 소스 전용)
 - 컨테이너는 `--restart unless-stopped`로 실행 → 서버 재부팅에도 자동 복구
+- **네트워크**: Shelf와 모든 앱 컨테이너가 `shelf-net`(부팅 시 자동 생성)을 공유한다.
+  프록시는 앱에 **컨테이너 이름**(`shelf-{앱}:{container_port}`)으로 직접 접근하므로
+  호스트 포트를 열 필요가 없다 — Host port는 앱을 별도로 직접 노출하고 싶을 때만 쓰는 선택 항목
 
 ### system/auth — 인증
 

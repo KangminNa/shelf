@@ -14,6 +14,7 @@ export interface RunOptions {
   env?: Record<string, string>
   volumes?: string[]
   restart?: string
+  network?: string
 }
 
 export class DockerError extends Error {
@@ -51,6 +52,9 @@ export class DockerService {
     await this.removeContainer(opts.name).catch(() => {})
 
     const args = ['run', '-d', '--name', opts.name, '--restart', opts.restart || 'unless-stopped']
+    if (opts.network) {
+      args.push('--network', opts.network)
+    }
     if (opts.hostPort && opts.containerPort) {
       args.push('-p', `${opts.hostPort}:${opts.containerPort}`)
     }
@@ -65,6 +69,28 @@ export class DockerService {
     const { output } = await this.run(args)
     this.log.info(`container ${opts.name} started (${opts.image})`)
     return output.trim()
+  }
+
+  async ensureNetwork(name: string): Promise<void> {
+    try {
+      await this.run(['network', 'inspect', name])
+    } catch {
+      await this.run(['network', 'create', name])
+      this.log.info(`created docker network ${name}`)
+    }
+  }
+
+  async connectNetwork(network: string, container: string): Promise<void> {
+    await this.run(['network', 'connect', network, container]).catch(() => {})
+  }
+
+  async currentContainerId(): Promise<string | null> {
+    try {
+      const { output } = await this.run(['ps', '-q', '--filter', `id=${process.env.HOSTNAME || ''}`])
+      return output.trim() || null
+    } catch {
+      return null
+    }
   }
 
   async startContainer(name: string): Promise<void> {

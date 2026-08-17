@@ -165,11 +165,12 @@ export class DeployPipeline {
   }
 
   private publishDomain(project: Project): void {
-    if (!project.domain || !project.port) return
+    const target = ContainerManager.proxyTarget(project)
+    if (!project.domain || !target) return
     this.events.emit('proxy:register-host', {
       domain: project.domain,
-      target_host: process.env.APP_HOST || '127.0.0.1',
-      target_port: project.port,
+      target_host: target.host,
+      target_port: target.port,
       description: `app: ${project.name}`,
     })
   }

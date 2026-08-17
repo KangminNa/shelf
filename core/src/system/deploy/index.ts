@@ -41,6 +41,7 @@ export class DeploySystem {
     this.controller = new DeployController(this, events)
 
     this.webhook.start()
+    this.containers.prepareNetwork().catch((err) => this.log.warn(`docker network setup failed: ${err.message}`))
     if (this.selfDeployer.configured) this.log.info('self-deploy enabled (POST /hooks/self)')
     this.docker.available().then((ok) => {
       if (!ok) this.log.warn('Docker daemon not reachable — deploys will fail until Docker is running')

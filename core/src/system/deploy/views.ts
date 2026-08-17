@@ -146,8 +146,8 @@ export class ProjectsPage extends DeployPage {
   private portFields(): string {
     return `
       <div style="display:flex; gap:12px;">
-        <div style="flex:1;">${this.field('Host port', `<input type="number" name="port" placeholder="3000" style="${FORM.input}">`)}</div>
-        <div style="flex:1;">${this.field('Container port', `<input type="number" name="container_port" placeholder="80" style="${FORM.input}">`)}</div>
+        <div style="flex:1;">${this.field('Host port (선택 — 직접 노출할 때만)', `<input type="number" name="port" placeholder="비워두세요" style="${FORM.input}">`)}</div>
+        <div style="flex:1;">${this.field('Container port', `<input type="number" name="container_port" placeholder="3000" required style="${FORM.input}">`, '앱이 리슨하는 포트. 프록시가 이 포트로 직접 연결합니다')}</div>
       </div>`
   }
 
@@ -254,7 +254,8 @@ export class ProjectDetailPage extends DeployPage {
         : ['Image', `<code style="font-size:12px;">${this.escape(p.image)}</code>`],
       p.source_type === 'git' ? ['Branch', this.escape(p.branch)] : null,
       ['Container', `<code style="font-size:12px;">shelf-${this.escape(p.name)}</code>`],
-      ['Ports', p.port ? `${p.port} &rarr; ${p.container_port || '?'} (host &rarr; container)` : '-'],
+      ['Proxy target', p.container_port ? `<code style="font-size:12px;">shelf-${this.escape(p.name)}:${p.container_port}</code>` : '-'],
+      ['Host port', p.port ? `${p.port} (직접 노출)` : '없음 (프록시 전용)'],
       ['Volumes', p.volumes ? `<code style="font-size:12px; white-space:pre-line;">${this.escape(p.volumes)}</code>` : '-'],
       ['Domain', p.domain ? this.escape(p.domain) : '-'],
       ['Auto deploy', p.auto_deploy ? 'on' : 'off'],
@@ -338,7 +339,7 @@ export class ProjectDetailPage extends DeployPage {
       <form id="edit-form" style="${DIALOG.body}">
         ${sourceFields}
         <div style="display:flex; gap:12px;">
-          <div style="flex:1;">${this.field('Host port', `<input type="number" name="port" value="${p.port ?? ''}" style="${FORM.input}">`)}</div>
+          <div style="flex:1;">${this.field('Host port (선택)', `<input type="number" name="port" value="${p.port ?? ''}" style="${FORM.input}">`)}</div>
           <div style="flex:1;">${this.field('Container port', `<input type="number" name="container_port" value="${p.container_port ?? ''}" style="${FORM.input}">`)}</div>
         </div>
         ${this.field('Domain', `<input type="text" name="domain" value="${this.escape(p.domain)}" style="${FORM.input}">`)}
