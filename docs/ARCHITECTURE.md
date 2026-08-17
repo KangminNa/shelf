@@ -44,10 +44,25 @@
 | **Adapter** | `system/docker.ts` DockerService | 외부 CLI를 타입 있는 메서드로 감싸 도메인 코드에서 명령 문자열 제거 |
 | **Chain of Responsibility** | Hono 미들웨어 파이프라인 | `auth → request-logger → handler → error-boundary` |
 | **Template(마이그레이션)** | `core/migrations/{scope}/NNN_*.sql` | 스키마 변경을 순차 적용 파일로 표준화 |
+| **Strategy** | `system/proxy/issuers/` (LetsEncrypt/SelfSigned/ManualUpload) | 발급 방식별 클래스 — 새 방식은 클래스 추가로 끝 |
+| **Adapter(DNS)** | `system/proxy/dns/cloudflare.ts` | DNS-01 챌린지용 외부 API — 제공자 추가 시 이 폴더에 클래스 하나 |
+| **Composite(뷰)** | `ui/element.ts` + `ui/page.ts` | 태그를 런타임 조합, 텍스트·속성 자동 이스케이프 |
 
 **앞으로 권장** (지금은 미적용, 조건 충족 시 도입):
-- **Strategy** — 배포 소스가 git/image 외로 늘어나면(예: tarball, registry webhook) `pipeline.ts`의 분기를 `DeploySource` 인터페이스로 추출
+- **Strategy(배포 소스)** — 배포 소스가 git/image 외로 늘어나면(예: tarball, registry webhook) `pipeline.ts`의 분기를 `DeploySource` 인터페이스로 추출
 - **Health-check + Blue/Green** — 무중단 배포 도입 시 `ContainerManager.recreate()`를 "새 컨테이너 기동 → 헬스체크 → 트래픽 전환 → 구 컨테이너 제거"로 교체
+
+## 2-1. 화면(Page) 규약
+
+모든 화면은 `Page`를 상속한 클래스이고, 호출부는 항상 `new XPage(props).render()` 한 형태다.
+
+- 필드는 `props` 하나만 둔다 — 부품이 늘어도 생성자 시그니처가 안 바뀐다
+- 다이얼로그·스크립트·행(row) 등 화면의 부분은 **private 메서드**로 (모듈 전역 함수 금지)
+- HTML은 `el.div({...}, children)`으로 조합한다. 문자열 템플릿을 새로 쓰지 않는다
+  - 텍스트/속성은 **기본 이스케이프** — `escape()` 호출을 잊을 수 없는 구조
+  - 신뢰된 마크업만 `raw()`로 명시적 opt-in
+- 공통 스타일은 `FORM`/`DIALOG` 토큰을 쓴다 (인라인 style 문자열 중복 금지)
+- 시스템별 공통 조각은 중간 추상 클래스로: `AuthPage`(자체 레이아웃), `DeployPage`(상태 배지·수명주기 버튼), `ProxyPage`(호스트 폼·SSL 옵션)
 
 ## 3. 새 코드를 어디에 두는가 (레시피)
 
