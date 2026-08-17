@@ -1,4 +1,4 @@
-import { Page, FORM, DIALOG } from '../../ui/page.js'
+import { Page, FORM, DIALOG, type Html } from '../../ui/page.js'
 import type { Project, Deployment } from './repositories.js'
 
 export type DisplayStatus = 'running' | 'stopped' | 'crashed' | 'deploying'
@@ -114,7 +114,7 @@ export class ProjectsPage extends DeployPage {
       </div>`
   }
 
-  private addDialog(): string {
+  private addDialog(): Html {
     const form = `
       <div style="display:flex; gap:8px; margin-bottom:16px;">
         <button type="button" onclick="setSource('git')" id="tab-git" class="shelf-btn shelf-btn-primary shelf-btn-sm">Git repository</button>
@@ -245,7 +245,7 @@ export class ProjectDetailPage extends DeployPage {
       </div>`
   }
 
-  private configCard(): string {
+  private configCard(): Html {
     const { project: p } = this.props
     const rows: Array<[string, string] | null> = [
       ['Source', `<span class="shelf-badge shelf-badge-${p.source_type === 'image' ? 'info' : 'success'}">${p.source_type}</span>`],
@@ -267,7 +267,7 @@ export class ProjectDetailPage extends DeployPage {
       <table style="font-size:13px; width:100%;">${body}</table>`)
   }
 
-  private webhookCard(): string {
+  private webhookCard(): Html {
     const { project: p, webhookPort } = this.props
     if (p.source_type !== 'git') {
       return this.card(`
@@ -288,7 +288,7 @@ export class ProjectDetailPage extends DeployPage {
       <div style="font-size:12px; color:var(--text-muted); margin-top:8px;">Content type: application/json · Event: push · Branch: ${this.escape(p.branch)}</div>`)
   }
 
-  private logsCard(): string {
+  private logsCard(): Html {
     return this.card(`
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
         <div style="font-size:13px; font-weight:600;">Container logs</div>
@@ -316,7 +316,7 @@ export class ProjectDetailPage extends DeployPage {
       </tr>`
   }
 
-  private logDialog(): string {
+  private logDialog(): Html {
     return this.dialog(
       'log-dialog',
       'Deployment log',
@@ -325,7 +325,7 @@ export class ProjectDetailPage extends DeployPage {
     )
   }
 
-  private editDialog(): string {
+  private editDialog(): Html {
     const { project: p } = this.props
     const sourceFields = p.source_type === 'git'
       ? `

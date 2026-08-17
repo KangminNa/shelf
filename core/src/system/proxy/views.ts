@@ -1,4 +1,4 @@
-import { Page, FORM, DIALOG } from '../../ui/page.js'
+import { Page, FORM, DIALOG, raw, type Html } from '../../ui/page.js'
 import type { ProxyHost, AccessLog } from './repositories.js'
 
 export interface ProxyServerStatus {
@@ -142,7 +142,7 @@ export class HostsPage extends ProxyPage {
       </tr>`
   }
 
-  private addDialog(): string {
+  private addDialog(): Html {
     const form = `
       <form id="add-form" style="${DIALOG.body}">
         ${this.hostFormFields()}
@@ -155,7 +155,7 @@ export class HostsPage extends ProxyPage {
     return this.dialog('add-dialog', 'Add proxy host', form, 480)
   }
 
-  private editDialog(): string {
+  private editDialog(): Html {
     const form = `
       <form id="host-edit-form" style="${DIALOG.body}">
         <input type="hidden" name="id">
@@ -285,22 +285,22 @@ export class SslPage extends ProxyPage {
       </tr>`
   }
 
-  private uncoveredDomains(): string {
+  private uncoveredDomains(): Html {
     const { domainsWithoutCert } = this.props
-    if (!domainsWithoutCert.length) return ''
+    if (!domainsWithoutCert.length) return raw('')
     const chips = domainsWithoutCert.map((domain) => `
       <div style="display:flex; align-items:center; gap:8px; padding:6px 12px; background:var(--bg-tertiary); border-radius:var(--radius); font-size:13px;">
         ${this.escape(domain)}
         <button onclick="prefillIssue('${this.escape(domain)}')" class="shelf-btn shelf-btn-primary shelf-btn-sm" style="padding:2px 8px; font-size:11px;">Issue SSL</button>
       </div>`).join('')
-    return `
+    return raw(`
       <div class="shelf-card shelf-mt-lg">
         <div style="font-size:13px; font-weight:600; margin-bottom:8px;">Domains without SSL</div>
         <div style="display:flex; flex-wrap:wrap; gap:8px;">${chips}</div>
-      </div>`
+      </div>`)
   }
 
-  private issueDialog(): string {
+  private issueDialog(): Html {
     const tabs = `
       <div style="display:flex; gap:8px; margin-bottom:16px;">
         <button onclick="showTab('le')" id="tab-le" class="shelf-btn shelf-btn-primary shelf-btn-sm">Let's Encrypt</button>
@@ -353,8 +353,8 @@ export class SslPage extends ProxyPage {
       </form>`
   }
 
-  private statusToast(): string {
-    return `<div id="ssl-status" style="display:none; position:fixed; bottom:24px; right:24px; padding:12px 20px; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); font-size:13px; z-index:200;"></div>`
+  private statusToast(): Html {
+    return raw(`<div id="ssl-status" style="display:none; position:fixed; bottom:24px; right:24px; padding:12px 20px; background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); box-shadow:var(--shadow); font-size:13px; z-index:200;"></div>`)
   }
 
   private scripts(): string {

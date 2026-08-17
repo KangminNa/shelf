@@ -1,4 +1,4 @@
-import { Page } from '../../ui/page.js'
+import { Page, el, raw, join, type Html, type Child } from '../../ui/page.js'
 
 const EXAMPLE_STRUCTURE = `my-app/
 ├── Dockerfile          # 필수 — 이게 앱의 계약 전부다
@@ -17,62 +17,75 @@ const EXAMPLE_FLOW = `git push
   → git pull → docker build → 컨테이너 재생성 (shelf-{app})
   → 도메인 설정 시 프록시 자동 연결 (80/443, SSL)`
 
+const strong = (text: string) => el.b({ style: 'color:var(--text);' }, text)
+
 export class AppGuidePage extends Page {
   render(): string {
-    return `
-      <div style="max-width:820px;">
-        ${this.sectionHeader('앱 배포 가이드', '<a href="/admin/deploy" class="shelf-btn shelf-btn-ghost shelf-btn-sm">&larr; Apps</a>')}
-        ${this.intro()}
-        ${this.step('1. 저장소 구조', this.code(EXAMPLE_STRUCTURE))}
-        ${this.step('2. Dockerfile 예시 (Node.js)', this.code(EXAMPLE_DOCKERFILE), '앱 등록 시 <b>Container port</b>에 EXPOSE 포트(여기선 3000)를, <b>Host port</b>에 서버에서 노출할 포트를 넣으면 됩니다.')}
-        ${this.step('3. 배포 방식 2가지', this.sourceTypes())}
-        ${this.step('4. CI/CD 파이프라인', this.code(EXAMPLE_FLOW), 'webhook URL과 secret은 앱 상세 페이지에 표시됩니다. GitHub 저장소 Settings &rarr; Webhooks에 등록하세요.')}
-        ${this.step('5. 데이터 & 설정', this.dataNotes())}
-      </div>`
+    return el.div(
+      { style: 'max-width:820px;' },
+      this.sectionHeader('앱 배포 가이드', el.a({ href: '/admin/deploy', class: 'shelf-btn shelf-btn-ghost shelf-btn-sm' }, raw('&larr; Apps'))),
+      this.intro(),
+      this.step('1. 저장소 구조', this.code(EXAMPLE_STRUCTURE)),
+      this.step('2. Dockerfile 예시 (Node.js)', this.code(EXAMPLE_DOCKERFILE), [
+        '앱 등록 시 ', strong('Container port'), '에 EXPOSE 포트(여기선 3000)를, ', strong('Host port'), '에 서버에서 노출할 포트를 넣으면 됩니다.',
+      ]),
+      this.step('3. 배포 방식 2가지', this.sourceTypes()),
+      this.step('4. CI/CD 파이프라인', this.code(EXAMPLE_FLOW), 'webhook URL과 secret은 앱 상세 페이지에 표시됩니다. GitHub 저장소 Settings → Webhooks에 등록하세요.'),
+      this.step('5. 데이터 & 설정', this.dataNotes())
+    ).toString()
   }
 
-  private intro(): string {
-    return this.card(`
-      <p style="font-size:14px; line-height:1.7; color:var(--text-secondary);">
-        Shelf의 앱은 <b style="color:var(--text);">Docker 컨테이너</b>입니다.
-        계약은 단 하나 — <b style="color:var(--text);">저장소 루트에 Dockerfile이 있고, 컨테이너가 포트 하나로 HTTP를 서빙한다</b>.
-        언어·프레임워크·DB는 완전히 자유입니다 (컨테이너 안에서 SQLite, Postgres, Redis 뭐든).
-        빌드·실행·재시작·도메인·SSL·CI/CD는 Shelf가 처리합니다.
-      </p>`, 'margin-bottom:16px;')
+  private intro(): Html {
+    return this.card(
+      el.p(
+        { style: 'font-size:14px; line-height:1.7; color:var(--text-secondary);' },
+        'Shelf의 앱은 ', strong('Docker 컨테이너'), '입니다. 계약은 단 하나 — ',
+        strong('저장소 루트에 Dockerfile이 있고, 컨테이너가 포트 하나로 HTTP를 서빙한다'), '. ',
+        '언어·프레임워크·DB는 완전히 자유입니다 (컨테이너 안에서 SQLite, Postgres, Redis 뭐든). ',
+        '빌드·실행·재시작·도메인·SSL·CI/CD는 Shelf가 처리합니다.'
+      ),
+      'margin-bottom:16px;'
+    )
   }
 
-  private step(title: string, body: string, note = ''): string {
-    return this.card(`
-      <div style="font-size:14px; font-weight:600; margin-bottom:10px;">${title}</div>
-      ${body}
-      ${note ? `<p style="font-size:13px; color:var(--text-muted); margin-top:10px;">${note}</p>` : ''}`,
-      'margin-bottom:16px;')
+  private step(title: string, body: Child, note?: Child): Html {
+    return this.card(
+      [
+        el.div({ style: 'font-size:14px; font-weight:600; margin-bottom:10px;' }, title),
+        body,
+        note ? el.p({ style: 'font-size:13px; color:var(--text-muted); margin-top:10px;' }, note) : null,
+      ],
+      'margin-bottom:16px;'
+    )
   }
 
-  private sourceTypes(): string {
+  private sourceTypes(): Html {
     return this.list([
-      '<b style="color:var(--text);">Git repository</b> — 저장소 URL 등록 → Shelf가 clone & <code>docker build</code> → 실행. webhook을 등록하면 push마다 자동 재배포 (CI/CD)',
-      '<b style="color:var(--text);">Docker image</b> — <code>nginx:alpine</code>, <code>ghcr.io/...</code> 등 기존 이미지를 그대로 실행. Docker Hub의 어떤 앱이든 설치 가능',
+      [strong('Git repository'), ' — 저장소 URL 등록 → Shelf가 clone & ', el.code({}, 'docker build'), ' → 실행. webhook을 등록하면 push마다 자동 재배포 (CI/CD)'],
+      [strong('Docker image'), ' — ', el.code({}, 'nginx:alpine'), ', ', el.code({}, 'ghcr.io/...'), ' 등 기존 이미지를 그대로 실행. Docker Hub의 어떤 앱이든 설치 가능'],
     ])
   }
 
-  private dataNotes(): string {
+  private dataNotes(): Html {
     return this.list([
-      '<b style="color:var(--text);">환경변수</b> — 앱 등록 시 KEY=VALUE로 입력, 컨테이너에 주입됨',
-      '<b style="color:var(--text);">볼륨</b> — <code>host:container</code> 형식. DB 파일 등 영속 데이터는 볼륨으로 보존',
-      '<b style="color:var(--text);">도메인</b> — 입력하면 <a href="/admin/proxy" style="color:var(--accent);">프록시</a>에 자동 등록, SSL은 프록시에서 원클릭 발급',
-      '<b style="color:var(--text);">재시작 정책</b> — <code>unless-stopped</code>: 서버 재부팅에도 컨테이너 자동 복구',
+      [strong('환경변수'), ' — 앱 등록 시 KEY=VALUE로 입력, 컨테이너에 주입됨'],
+      [strong('볼륨'), ' — ', el.code({}, 'host:container'), ' 형식. DB 파일 등 영속 데이터는 볼륨으로 보존'],
+      [strong('도메인'), ' — 입력하면 ', el.a({ href: '/admin/proxy', style: 'color:var(--accent);' }, '프록시'), '에 자동 등록, SSL은 프록시에서 원클릭 발급'],
+      [strong('재시작 정책'), ' — ', el.code({}, 'unless-stopped'), ': 서버 재부팅에도 컨테이너 자동 복구'],
     ])
   }
 
-  private list(items: string[]): string {
-    return `
-      <ul style="font-size:13px; line-height:1.9; color:var(--text-secondary); padding-left:18px;">
-        ${items.map((item) => `<li>${item}</li>`).join('')}
-      </ul>`
+  private list(items: Child[]): Html {
+    return el.ul(
+      { style: 'font-size:13px; line-height:1.9; color:var(--text-secondary); padding-left:18px;' },
+      items.map((item) => el.li({}, item))
+    )
   }
 
-  private code(source: string): string {
-    return `<pre style="font-family:var(--font-mono); font-size:12.5px; line-height:1.6; background:var(--bg-tertiary); padding:14px 16px; border-radius:var(--radius); overflow-x:auto; margin:0;">${this.escape(source)}</pre>`
+  private code(source: string): Html {
+    return el.pre(
+      { style: 'font-family:var(--font-mono); font-size:12.5px; line-height:1.6; background:var(--bg-tertiary); padding:14px 16px; border-radius:var(--radius); overflow-x:auto; margin:0;' },
+      source
+    )
   }
 }

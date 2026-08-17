@@ -1,10 +1,6 @@
-const HTML_ESCAPES: Record<string, string> = {
-  '&': '&amp;',
-  '<': '&lt;',
-  '>': '&gt;',
-  '"': '&quot;',
-  "'": '&#39;',
-}
+import { el, raw, join, escapeHtml, type Html, type Child, type Attrs } from './element.js'
+
+export { el, raw, join, type Html, type Child, type Attrs }
 
 export const FORM = {
   input: `width:100%; padding:8px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--bg); color:var(--text); font-size:14px;`,
@@ -25,7 +21,7 @@ export abstract class Page {
   abstract render(): string
 
   protected escape(value: unknown): string {
-    return String(value ?? '').replace(/[&<>"']/g, (ch) => HTML_ESCAPES[ch])
+    return escapeHtml(value)
   }
 
   protected formatDate(unixSeconds: number): string {
@@ -46,75 +42,103 @@ export abstract class Page {
     return `${Math.floor(seconds)}s`
   }
 
-  protected dialog(id: string, title: string, body: string, maxWidth = 480): string {
-    return `
-      <div id="${id}" style="${DIALOG.backdrop}">
-        <div style="${DIALOG.panel} max-width:${maxWidth}px;">
-          <div style="${DIALOG.header}">
-            <h3 style="font-size:16px; font-weight:600;">${title}</h3>
-            <button onclick="document.getElementById('${id}').style.display='none'" class="shelf-btn shelf-btn-ghost shelf-btn-icon">&times;</button>
-          </div>
-          ${body}
-        </div>
-      </div>`
+  protected hide(id: string): string {
+    return `document.getElementById('${id}').style.display='none'`
   }
 
-  protected dialogActions(dialogId: string, submitLabel: string, submitId = ''): string {
-    return `
-      <div style="${DIALOG.footer}">
-        <button type="button" onclick="document.getElementById('${dialogId}').style.display='none'" class="shelf-btn shelf-btn-secondary">Cancel</button>
-        <button type="submit" ${submitId ? `id="${submitId}"` : ''} class="shelf-btn shelf-btn-primary">${submitLabel}</button>
-      </div>`
+  protected show(id: string): string {
+    return `document.getElementById('${id}').style.display='flex'`
   }
 
-  protected field(label: string, control: string, hint = ''): string {
-    return `
-      <div>
-        <label style="${FORM.label}">${label}</label>
-        ${control}
-        ${hint ? `<div style="${FORM.hint}">${hint}</div>` : ''}
-      </div>`
+  protected dialog(id: string, title: string, body: Child, maxWidth = 480): Html {
+    return el.div(
+      { id, style: DIALOG.backdrop },
+      el.div(
+        { style: `${DIALOG.panel} max-width:${maxWidth}px;` },
+        el.div(
+          { style: DIALOG.header },
+          el.h3({ style: 'font-size:16px; font-weight:600;' }, title),
+          el.button({ onclick: this.hide(id), class: 'shelf-btn shelf-btn-ghost shelf-btn-icon' }, raw('&times;'))
+        ),
+        body
+      )
+    )
   }
 
-  protected checkbox(name: string, label: string, checked = false, indent = false): string {
-    return `
-      <label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer;${indent ? ' padding-left:22px;' : ''}">
-        <input type="checkbox" name="${name}" ${checked ? 'checked' : ''}> ${label}
-      </label>`
+  protected dialogActions(dialogId: string, submitLabel: string, submitId?: string): Html {
+    return el.div(
+      { style: DIALOG.footer },
+      el.button({ type: 'button', onclick: this.hide(dialogId), class: 'shelf-btn shelf-btn-secondary' }, 'Cancel'),
+      el.button({ type: 'submit', id: submitId, class: 'shelf-btn shelf-btn-primary' }, submitLabel)
+    )
   }
 
-  protected sectionHeader(title: string, actions = ''): string {
-    return `
-      <div class="shelf-section-header">
-        <h2 class="shelf-section-title">${title}</h2>
-        ${actions ? `<div style="display:flex; gap:8px;">${actions}</div>` : ''}
-      </div>`
+  protected field(label: Child, control: Child, hint?: Child): Html {
+    return el.div(
+      {},
+      el.label({ style: FORM.label }, label),
+      control,
+      hint ? el.div({ style: FORM.hint }, hint) : null
+    )
   }
 
-  protected card(body: string, style = ''): string {
-    return `<div class="shelf-card"${style ? ` style="${style}"` : ''}>${body}</div>`
+  protected input(attrs: Attrs): Html {
+    return el.input({ ...attrs, style: `${FORM.input}${attrs.style ? ` ${attrs.style}` : ''}` })
   }
 
-  protected tableCard(headers: string[], rows: string): string {
-    return `
-      <div class="shelf-card" style="padding:0; overflow:hidden;">
-        <table class="shelf-table">
-          <thead><tr>${headers.map((h) => `<th>${h}</th>`).join('')}</tr></thead>
-          <tbody>${rows}</tbody>
-        </table>
-      </div>`
+  protected textarea(attrs: Attrs, value?: Child): Html {
+    return el.textarea({ ...attrs, style: `${FORM.input} ${FORM.mono}` }, value)
   }
 
-  protected emptyState(title: string, description: string, action = ''): string {
-    return `
-      <div style="text-align:center; padding:48px 24px; color:var(--text-secondary);">
-        <h2 style="font-size:18px; font-weight:600; color:var(--text); margin-bottom:8px;">${title}</h2>
-        <p style="font-size:13px; margin-bottom:16px;">${description}</p>
-        ${action}
-      </div>`
+  protected checkbox(name: string, label: Child, checked = false, indent = false): Html {
+    return el.label(
+      { style: `display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer;${indent ? ' padding-left:22px;' : ''}` },
+      el.input({ type: 'checkbox', name, checked }),
+      ' ',
+      label
+    )
   }
 
-  protected script(body: string): string {
-    return `<script>${body}</script>`
+  protected sectionHeader(title: Child, actions?: Child): Html {
+    return el.div(
+      { class: 'shelf-section-header' },
+      el.h2({ class: 'shelf-section-title' }, title),
+      actions ? el.div({ style: 'display:flex; gap:8px;' }, actions) : null
+    )
+  }
+
+  protected card(body: Child, style?: string): Html {
+    return el.div({ class: 'shelf-card', style }, body)
+  }
+
+  protected tableCard(headers: string[], rows: Child): Html {
+    return el.div(
+      { class: 'shelf-card', style: 'padding:0; overflow:hidden;' },
+      el.table(
+        { class: 'shelf-table' },
+        el.thead({}, el.tr({}, headers.map((header) => el.th({}, header)))),
+        el.tbody({}, rows)
+      )
+    )
+  }
+
+  protected emptyState(title: Child, description: Child, action?: Child): Html {
+    return el.div(
+      { style: 'text-align:center; padding:48px 24px; color:var(--text-secondary);' },
+      el.h2({ style: 'font-size:18px; font-weight:600; color:var(--text); margin-bottom:8px;' }, title),
+      el.p({ style: 'font-size:13px; margin-bottom:16px;' }, description),
+      action
+    )
+  }
+
+  protected notice(body: Child): Html {
+    return el.div(
+      { style: 'font-size:12px; color:var(--text-muted); padding:8px 12px; background:var(--bg-tertiary); border-radius:var(--radius);' },
+      body
+    )
+  }
+
+  protected script(body: string): Html {
+    return raw(`<script>${body}</script>`)
   }
 }

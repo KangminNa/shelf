@@ -1,4 +1,4 @@
-import { Page } from '../../ui/page.js'
+import { Page, raw } from '../../ui/page.js'
 
 const AUTH_STYLES = `
   * { margin:0; padding:0; box-sizing:border-box; }
@@ -55,7 +55,7 @@ abstract class AuthPage extends Page {
     <div class="logo">${SHELF_LOGO} Shelf</div>
     <div class="sub">${this.subtitle}</div>
     ${this.form()}
-    ${this.script(this.submitHandler())}
+    ${this.script(this.submitHandler()).toString()}
   </div>
 </body>
 </html>`
