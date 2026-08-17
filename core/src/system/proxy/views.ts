@@ -28,6 +28,11 @@ const PROVIDER_BADGES: Record<string, string> = {
 const TRASH_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>`
 const POWER_ICON = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"/><line x1="12" y1="2" x2="12" y2="12"/></svg>`
 
+function ownedByApp(host: ProxyHost): string | null {
+  const match = /^app:\s*(.+)$/.exec(host.description || '')
+  return match ? match[1].trim() : null
+}
+
 abstract class ProxyPage extends StringTemplatePage {
   protected hostFormFields(host?: ProxyHost): string {
     const scheme = (value: string) => (host?.target_scheme === value ? ' selected' : '')
@@ -125,7 +130,9 @@ export class HostsPage extends ProxyPage {
       <tr>
         <td>
           <div style="font-weight:500;">${this.escape(h.domain)}</div>
-          ${h.description ? `<div style="font-size:12px; color:var(--text-muted);">${this.escape(h.description)}</div>` : ''}
+          ${ownedByApp(h)
+            ? `<div style="font-size:12px; color:var(--text-muted);"><span class="shelf-badge shelf-badge-info">app</span> ${this.escape(ownedByApp(h)!)} — 타깃은 배포가 관리합니다</div>`
+            : h.description ? `<div style="font-size:12px; color:var(--text-muted);">${this.escape(h.description)}</div>` : ''}
         </td>
         <td>
           <code style="font-size:12px; background:var(--bg-tertiary); padding:2px 8px; border-radius:4px; font-family:var(--font-mono);">${h.target_scheme}://${this.escape(h.target_host)}:${h.target_port}</code>
@@ -195,6 +202,12 @@ export class HostsPage extends ProxyPage {
         f.querySelector('[name=force_ssl]').checked = !!h.force_ssl;
         f.querySelector('[name=hsts_enabled]').checked = !!h.hsts_enabled;
         f.querySelector('[name=hsts_subdomains]').checked = !!h.hsts_subdomains;
+        const owned = /^app:\s*/.test(h.description || '');
+        for (const name of ['target_scheme', 'target_host', 'target_port']) {
+          const input = f.querySelector('[name=' + name + ']');
+          input.disabled = owned;
+          input.title = owned ? '이 호스트는 앱 배포가 자동 관리합니다 (앱 설정에서 변경하세요)' : '';
+        }
         document.getElementById('host-edit-dialog').style.display = 'flex';
       }
       document.getElementById('add-form')?.addEventListener('submit', async (e) => {

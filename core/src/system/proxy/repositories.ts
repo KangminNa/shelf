@@ -71,6 +71,12 @@ export class ProxyHostRepository extends Repository<ProxyHost> {
     return this.update(id, { enabled: host.enabled ? 0 : 1 })
   }
 
+  deleteByTarget(targetHost: string): string[] {
+    const matches = this.findAllBy({ target_host: targetHost } as Partial<ProxyHost>)
+    for (const host of matches) this.delete(host.id)
+    return matches.map((host) => host.domain)
+  }
+
   setSslEnabled(domain: string, enabled: boolean): void {
     const host = this.findByDomain(domain)
     if (host) this.update(host.id, { ssl_enabled: enabled ? 1 : 0 })

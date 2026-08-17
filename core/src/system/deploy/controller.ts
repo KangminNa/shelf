@@ -4,6 +4,7 @@ import * as crypto from 'node:crypto'
 import type { EventBus } from '../../services/events.js'
 import type { Project } from './repositories.js'
 import type { DeploySystem } from './index.js'
+import { ContainerManager } from './container-manager.js'
 import { ProjectsPage, ProjectDetailPage, DeploymentsPage, type DisplayStatus } from './views.js'
 
 const PROJECT_FIELDS = ['source_type', 'repo_url', 'branch', 'git_token', 'image', 'port', 'container_port', 'env', 'volumes', 'domain', 'auto_deploy'] as const
@@ -123,6 +124,7 @@ export class DeployController {
         this.deploy.pipeline.removeRepo(project.name)
         this.deploy.deployments.deleteForProject(id)
         this.deploy.projects.delete(id)
+        this.events.emit('proxy:release-target', { target_host: ContainerManager.containerName(project) })
         this.events.emit('deploy:project-deleted', { id, name: project.name })
       }
       return c.json({ ok: true, data: null })

@@ -42,6 +42,15 @@ export class ProxySystem {
       this.log.info(`registered proxy host ${host.domain} -> ${host.target_host}:${host.target_port} (via event)`)
     })
 
+    events.on('proxy:release-target', (payload: any) => {
+      if (!payload?.target_host) return
+      const removed = this.hosts.deleteByTarget(payload.target_host)
+      if (removed.length) {
+        this.server.reloadHosts()
+        this.log.info(`removed ${removed.length} proxy host(s) for ${payload.target_host}: ${removed.join(', ')}`)
+      }
+    })
+
     this.log.info('proxy system ready')
   }
 

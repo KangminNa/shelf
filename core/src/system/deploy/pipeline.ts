@@ -166,7 +166,9 @@ export class DeployPipeline {
 
   private publishDomain(project: Project): void {
     const target = ContainerManager.proxyTarget(project)
-    if (!project.domain || !target) return
+    if (!target) return
+    this.events.emit('proxy:release-target', { target_host: target.host })
+    if (!project.domain) return
     this.events.emit('proxy:register-host', {
       domain: project.domain,
       target_host: target.host,
