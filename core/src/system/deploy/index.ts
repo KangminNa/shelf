@@ -13,6 +13,7 @@ import { WebhookServer } from './webhook-server.js'
 import { WebhookHandler } from './webhook-handler.js'
 import { SelfDeployer } from './self-deployer.js'
 import { AppWatcher } from './app-watcher.js'
+import { UsageSampler } from './usage-sampler.js'
 import { Scheduler } from '../../services/scheduler.js'
 import { DeployController } from './controller.js'
 
@@ -27,6 +28,7 @@ export class DeploySystem {
   readonly selfDeployer: SelfDeployer
   readonly webhook: WebhookServer
   readonly watcher: AppWatcher
+  readonly usage: UsageSampler
   private readonly hooks: WebhookHandler
   private readonly scheduler = new Scheduler('deploy')
   private readonly controller: DeployController
@@ -52,6 +54,9 @@ export class DeploySystem {
     this.webhook = new WebhookServer(this.hooks, this.log.scope('webhook'))
     this.controller = new DeployController(this, events)
 
+    this.usage = new UsageSampler(this.docker)
+    this.scheduler.register('* * * * *', 'usage-sample', () => this.usage.refresh())
+    this.usage.refresh().catch(() => {})
     this.watcher = new AppWatcher(this.projects, this.containers, events, this.log.scope('watch'))
     this.scheduler.register('* * * * *', 'app-health', () => this.watcher.check())
 
@@ -88,23 +93,22 @@ export class DeploySystem {
     return routes
   }
 
-  async appUsage(): Promise<Array<{ name: string; cpu: number | null; memory: number | null }>> {
-    const stats = await this.docker.stats('shelf-')
-    return this.projects.allSorted().map((project) => {
-      const usage = stats.get(ContainerManager.containerName(project))
-      return { name: project.name, cpu: usage?.cpu ?? null, memory: usage?.memory ?? null }
-    })
+  appUsage(): Array<{ name: string; cpu: number | null; memory: number | null }> {
+    return this.projects.allSorted().map((project) => ({
+      name: project.name,
+      ...this.usage.of(ContainerManager.containerName(project)),
+    }))
   }
 
   async appSummaries(): Promise<Array<{ id: number; name: string; running: boolean; port: number | null }>> {
-    return Promise.all(
-      this.projects.allSorted().map(async (p) => ({
-        id: p.id,
-        name: p.name,
-        running: (await this.containers.status(p)) === 'running',
-        port: p.port,
-      }))
-    )
+    const projects = this.projects.allSorted()
+    const statuses = await this.containers.statuses(projects)
+    return projects.map((project) => ({
+      id: project.id,
+      name: project.name,
+      running: statuses.get(project.id) === 'running',
+      port: project.port,
+    }))
   }
 
   shutdown(): void {

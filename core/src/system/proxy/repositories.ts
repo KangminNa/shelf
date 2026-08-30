@@ -161,4 +161,9 @@ export class AccessLogRepository extends Repository<AccessLog> {
     if (domain) qb.where('domain', domain)
     return qb.all()
   }
+
+  forget(olderThanDays: number): number {
+    const cutoff = Math.floor(Date.now() / 1000) - olderThanDays * 86400
+    return this.query().where('created_at', '<', cutoff).delete()
+  }
 }

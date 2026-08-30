@@ -11,6 +11,8 @@ import { ProxyController } from './controller.js'
 
 export type { ProxyHost, SslCert, AccessLog } from './repositories.js'
 
+const ACCESS_LOG_RETENTION_DAYS = Number(process.env.ACCESS_LOG_RETENTION_DAYS || 14)
+
 export class ProxySystem {
   readonly hosts: ProxyHostRepository
   readonly certs: SslCertRepository
@@ -34,6 +36,10 @@ export class ProxySystem {
 
     this.server.start()
     this.scheduler.register('0 3 * * *', 'ssl-renewal-check', () => this.ssl.renewDueCertificates())
+    this.scheduler.register('0 4 * * *', 'access-log-rotation', async () => {
+      const removed = this.accessLogs.forget(ACCESS_LOG_RETENTION_DAYS)
+      if (removed) this.log.info(`pruned ${removed} access log rows older than ${ACCESS_LOG_RETENTION_DAYS} days`)
+    })
 
     events.on('proxy:register-host', (payload: any) => {
       if (!payload?.domain || !payload?.target_port) return

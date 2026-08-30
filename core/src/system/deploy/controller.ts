@@ -51,6 +51,17 @@ export class DeployController extends Controller {
     return status === 'none' ? 'stopped' : status
   }
 
+  private async displayStatuses(projects: Project[]): Promise<Map<number, DisplayStatus>> {
+    const statuses = await this.deploy.containers.statuses(projects)
+    return new Map(
+      projects.map((project) => {
+        if (this.deploy.pipeline.isDeploying(project.id)) return [project.id, 'deploying' as DisplayStatus]
+        const status = statuses.get(project.id)
+        return [project.id, (status === 'none' || !status ? 'stopped' : status) as DisplayStatus]
+      })
+    )
+  }
+
   private async runPipeline(project: Project, trigger: 'manual' | 'rollback', commit?: string) {
     const result = await this.deploy.pipeline.deploy(project, trigger, commit)
     if (!result.ok) failed(`${trigger === 'rollback' ? 'ROLLBACK' : 'DEPLOY'}_FAILED`, result.error || 'deploy failed', { deploymentId: result.deploymentId })
@@ -58,11 +69,11 @@ export class DeployController extends Controller {
   }
 
   private registerProjectApi(): void {
-    this.get('/projects', () =>
-      Promise.all(
-        this.deploy.projects.allSorted().map(async (p) => ({ ...sanitize(p), status: await this.displayStatus(p) }))
-      )
-    )
+    this.get('/projects', async () => {
+      const projects = this.deploy.projects.allSorted()
+      const statuses = await this.displayStatuses(projects)
+      return projects.map((project) => ({ ...sanitize(project), status: statuses.get(project.id) }))
+    })
 
     this.post('/projects', ({ body }) => {
       if (!body.name || !/^[a-z0-9-_]+$/i.test(body.name)) invalid('name is required (alphanumeric with dashes/underscores)')
@@ -156,13 +167,13 @@ export class DeployController extends Controller {
 
   private registerPages(): void {
     this.page('/', async () => {
-      const items = await Promise.all(
-        this.deploy.projects.allSorted().map(async (project) => ({
-          project,
-          status: await this.displayStatus(project),
-          lastDeploy: this.deploy.deployments.latestFor(project.id),
-        }))
-      )
+      const projects = this.deploy.projects.allSorted()
+      const statuses = await this.displayStatuses(projects)
+      const items = projects.map((project) => ({
+        project,
+        status: statuses.get(project.id)!,
+        lastDeploy: this.deploy.deployments.latestFor(project.id),
+      }))
       return new ProjectsPage({ items, webhookBase: this.deploy.publicAddress.urlFor('/hooks') }).render()
     })
 

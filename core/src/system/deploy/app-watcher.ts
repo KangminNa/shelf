@@ -25,11 +25,12 @@ export class AppWatcher {
   }
 
   async check(): Promise<void> {
-    for (const project of this.projects.all()) {
-      if (this.stoppedOnPurpose.has(project.id)) continue
+    const projects = this.projects.all().filter((project) => !this.stoppedOnPurpose.has(project.id))
+    const statuses = await this.containers.statuses(projects)
 
-      const status = await this.containers.status(project)
-      if (status === 'none') continue
+    for (const project of projects) {
+      const status = statuses.get(project.id)
+      if (!status || status === 'none') continue
 
       const now: Liveness = status === 'running' ? 'up' : 'down'
       const before = this.seen.get(project.id)

@@ -33,3 +33,27 @@ test('container and image naming conventions', () => {
   const imageApp = { ...base, source_type: 'image' as const, image: 'nginx:alpine' }
   assert.equal(ContainerManager.imageTag(imageApp), 'nginx:alpine')
 })
+
+test('a batched status lookup keeps the containers it could read when others are missing', async () => {
+  const { DockerService } = await import('../src/system/docker.js')
+  const docker = new DockerService({ warn() {}, info() {}, error() {}, debug() {} } as any)
+
+  // docker inspect exits non-zero when any name is unknown, but still prints the ones it found.
+  const failure: any = new Error('no such object')
+  failure.output = '/shelf-live running 0\n'
+  ;(docker as any).run = async () => { throw failure }
+
+  const statuses = await docker.statuses(['shelf-live', 'shelf-missing'])
+  assert.equal(statuses.get('shelf-live'), 'running', 'a running container must not be reported as stopped')
+  assert.equal(statuses.get('shelf-missing'), undefined, 'unknown containers are simply absent')
+})
+
+test('a batched status lookup asks docker nothing when there are no apps', async () => {
+  const { DockerService } = await import('../src/system/docker.js')
+  const docker = new DockerService({ warn() {}, info() {}, error() {}, debug() {} } as any)
+  let called = false
+  ;(docker as any).run = async () => { called = true; return { output: '' } }
+
+  assert.equal((await docker.statuses([])).size, 0)
+  assert.equal(called, false)
+})

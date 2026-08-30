@@ -20,24 +20,26 @@ export interface AdminDeps {
   apps(): Promise<AppNavItem[]>
   proxyHostCount(): number
   dockerAvailable(): Promise<boolean>
-  appUsage(): Promise<AppUsage[]>
+  appUsage(): AppUsage[]
 }
 
 export function createAdminRoutes(deps: AdminDeps) {
   const admin = new Hono()
   const host = new HostMetrics(join(dataDir()))
 
-  const shell = async (title: string, activePath: string, page: Page) =>
-    renderShell({ title, activePath, content: page.render(), apps: await deps.apps() })
+  const shell = async (title: string, activePath: string, page: Page, apps?: AppNavItem[]) =>
+    renderShell({ title, activePath, content: page.render(), apps: apps ?? (await deps.apps()) })
 
   admin.get('/', async (c) => {
-    const page = new DashboardPage({ apps: await deps.apps(), proxyHostCount: deps.proxyHostCount() })
-    return c.html(await shell('Dashboard', '/admin', page))
+    const apps = await deps.apps()
+    const page = new DashboardPage({ apps, proxyHostCount: deps.proxyHostCount() })
+    return c.html(await shell('Dashboard', '/admin', page, apps))
   })
 
   admin.get('/system', async (c) => {
-    const page = new SystemPage({ apps: await deps.apps(), dockerAvailable: await deps.dockerAvailable() })
-    return c.html(await shell('System', '/admin/system', page))
+    const apps = await deps.apps()
+    const page = new SystemPage({ apps, dockerAvailable: await deps.dockerAvailable() })
+    return c.html(await shell('System', '/admin/system', page, apps))
   })
 
   admin.get('/guide', async (c) => c.html(await shell('App guide', '/admin/guide', new AppGuidePage())))
@@ -46,7 +48,7 @@ export function createAdminRoutes(deps: AdminDeps) {
 
   admin.get('/metrics', async (c) => {
     const snapshot = host.snapshot()
-    const usage = await deps.appUsage()
+    const usage = deps.appUsage()
     return c.json({
       ok: true,
       data: {

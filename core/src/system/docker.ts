@@ -152,13 +152,30 @@ export class DockerService {
     await this.run(['rmi', '-f', tag]).catch(() => {})
   }
 
+  async statuses(names: string[]): Promise<Map<string, ContainerStatus>> {
+    const result = new Map<string, ContainerStatus>()
+    if (!names.length) return result
+
+    const output = await this.readOnly(['inspect', '-f', '{{.Name}} {{.State.Status}} {{.State.ExitCode}}', ...names])
+    for (const line of output.split('\n')) {
+      const [name, state, exitCode] = line.trim().split(' ')
+      if (!name.startsWith('/')) continue
+      result.set(name.slice(1), DockerService.toStatus(state, exitCode))
+    }
+    return result
+  }
+
+  private static toStatus(state?: string, exitCode?: string): ContainerStatus {
+    if (state === 'running') return 'running'
+    if (state === 'exited') return exitCode === '0' ? 'stopped' : 'crashed'
+    return 'stopped'
+  }
+
   async status(name: string): Promise<ContainerStatus> {
     try {
       const { output } = await this.run(['inspect', '-f', '{{.State.Status}} {{.State.ExitCode}}', name])
       const [state, exitCode] = output.trim().split(' ')
-      if (state === 'running') return 'running'
-      if (state === 'exited') return exitCode === '0' ? 'stopped' : 'crashed'
-      return 'stopped'
+      return DockerService.toStatus(state, exitCode)
     } catch {
       return 'none'
     }
@@ -182,13 +199,24 @@ export class DockerService {
     this.log.info(`spawned detached helper container (${image})`)
   }
 
+  private async readOnly(args: string[]): Promise<string> {
+    try {
+      const { output } = await this.run(args)
+      return output
+    } catch (err: any) {
+      return (err.output || '').toString()
+    }
+  }
+
   private async run(args: string[], timeout = DockerService.CMD_TIMEOUT_MS): Promise<{ output: string }> {
     try {
       const { stdout, stderr } = await exec('docker', args, { timeout, maxBuffer: 10 * 1024 * 1024 })
       return { output: [stdout, stderr].filter(Boolean).join('\n') }
     } catch (err: any) {
       const stderr = (err.stderr || '').toString()
-      throw new DockerError(stderr.trim().split('\n').pop() || err.message, stderr)
+      const failure = new DockerError(stderr.trim().split('\n').pop() || err.message, stderr)
+      ;(failure as any).output = (err.stdout || '').toString()
+      throw failure
     }
   }
 }

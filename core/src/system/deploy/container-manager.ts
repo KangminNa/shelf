@@ -87,6 +87,13 @@ export class ContainerManager {
     this.log.info(`removed container ${name}`)
   }
 
+  async statuses(projects: Project[]): Promise<Map<number, ContainerStatus>> {
+    const byName = await this.docker.statuses(projects.map((p) => ContainerManager.containerName(p)))
+    return new Map(
+      projects.map((project) => [project.id, byName.get(ContainerManager.containerName(project)) ?? 'none'])
+    )
+  }
+
   async status(project: Project): Promise<ContainerStatus> {
     return this.docker.status(ContainerManager.containerName(project))
   }

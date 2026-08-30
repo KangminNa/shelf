@@ -13,7 +13,12 @@ function watcherOn(statuses: string[]) {
     events.on(event, (p: any) => seen.push({ event, name: p.name }))
   }
   let step = 0
-  const containers = { status: async () => statuses[Math.min(step++, statuses.length - 1)] } as any
+  const containers = {
+    statuses: async (projects: any[]) => {
+      const status = statuses[Math.min(step++, statuses.length - 1)]
+      return new Map(projects.map((p) => [p.id, status]))
+    },
+  } as any
   const projects = { all: () => [PROJECT] } as any
   return { watcher: new AppWatcher(projects, containers, events, silent), seen, events }
 }
