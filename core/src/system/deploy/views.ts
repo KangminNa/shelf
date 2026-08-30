@@ -4,6 +4,7 @@ import {
   DIALOG,
   el,
   join,
+  raw,
   loads,
   live,
   copies,
@@ -148,12 +149,12 @@ abstract class DeployPage extends Page {
 }
 
 export class ProjectsPage extends DeployPage {
-  constructor(private readonly props: { items: ProjectListItem[]; publicDomain: string | null }) {
+  constructor(private readonly props: { items: ProjectListItem[]; webhookBase: string | null }) {
     super()
   }
 
   render(): string {
-    const { items, publicDomain } = this.props
+    const { items, webhookBase } = this.props
     return join([
       this.sectionHeader(`Apps (${items.length})`, this.openButton('add-dialog', '+ New app')),
       items.length
@@ -168,8 +169,8 @@ export class ProjectsPage extends DeployPage {
           ),
       el.div(
         { style: `margin-top:16px; ${MUTED}` },
-        publicDomain
-          ? `Webhook: https://${publicDomain}/hooks/{app} · Apps run as Docker containers`
+        webhookBase
+          ? `Webhook: ${webhookBase}/{app} · Apps run as Docker containers`
           : 'ADMIN_DOMAIN 미설정 — 웹훅을 받으려면 .env 에 설정하세요 · Apps run as Docker containers'
       ),
       this.addDialog(),
@@ -239,6 +240,7 @@ export class ProjectDetailPage extends DeployPage {
       status: DisplayStatus
       deployments: Deployment[]
       webhookUrl: string | null
+      webhookSecure: boolean
       container: string
       proxyTarget: string | null
     }
@@ -320,7 +322,7 @@ export class ProjectDetailPage extends DeployPage {
   }
 
   private webhookCard(): Html {
-    const { project, webhookUrl } = this.props
+    const { project, webhookUrl, webhookSecure } = this.props
     const title = el.div({ style: 'font-size:13px; font-weight:600; margin-bottom:12px;' }, 'Webhook (CI/CD)')
     const boxed = `${MONO} background:var(--bg-tertiary); padding:8px 12px; border-radius:var(--radius); word-break:break-all;`
 
@@ -360,6 +362,13 @@ export class ProjectDetailPage extends DeployPage {
         { style: `${MUTED} margin-top:10px;` },
         `Content type: application/json · Event: Just the push event · 배포 대상 브랜치: ${project.branch}`
       ),
+      webhookSecure
+        ? null
+        : this.notice(
+            raw(
+              'SSL 인증서가 없어 <b>http</b> 주소입니다. <a href="/admin/proxy/ssl" style="color:var(--accent);">Proxy → SSL</a> 에서 이 도메인 인증서를 발급하면 https 로 바뀝니다.'
+            )
+          ),
     ])
   }
 

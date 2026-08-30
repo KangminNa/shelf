@@ -4,6 +4,7 @@ import { Hono } from 'hono'
 import { AppDatabase } from '../../db/database.js'
 import { Logger } from '../../services/log.js'
 import type { EventBus } from '../../services/events.js'
+import type { PublicAddress } from '../../kernel/public-address.js'
 import { DockerService } from '../docker.js'
 import { ProjectRepository, DeploymentRepository } from './repositories.js'
 import { ContainerManager } from './container-manager.js'
@@ -28,7 +29,10 @@ export class DeploySystem {
   readonly logger = new Logger('deploy')
   private readonly log = this.logger
 
-  constructor(events: EventBus) {
+  constructor(
+    events: EventBus,
+    readonly publicAddress: PublicAddress
+  ) {
     const db = new AppDatabase('deploy', join(process.cwd(), 'core', 'migrations', 'deploy'))
     const reposDir = join(process.cwd(), 'data', 'deploy', 'repos')
     mkdirSync(reposDir, { recursive: true })

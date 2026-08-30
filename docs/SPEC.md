@@ -35,6 +35,8 @@
 | F-14 | 앱마다 webhook URL·secret 발급 및 UI 표시 (`https://{ADMIN_DOMAIN}/hooks/{id}`) | ✅ |
 | F-15 | Shelf 자신도 webhook으로 재배포 (`/hooks/self`, sibling 컨테이너 방식) | ✅ |
 | F-57 | webhook이 80/443(프록시)으로 도달 — GitHub이 여는 포트는 그 둘뿐 | ✅ |
+| F-58 | `ADMIN_DOMAIN` 설정 시 부팅마다 프록시에 자동 등록 (webhook 경로 포함) | ✅ |
+| F-59 | webhook 주소의 스킴은 인증서 유무가 결정 — 없으면 `http`와 발급 안내 | ✅ |
 | F-16 | 배포 실패 알림 (외부 채널) | ❌ |
 
 ## 3. 리버스 프록시

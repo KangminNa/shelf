@@ -17,6 +17,19 @@ export class SslManager {
 
   readonly defaultEmail = process.env.ACME_EMAIL || ''
 
+  covers(domain: string): boolean {
+    const name = domain.toLowerCase()
+    const dot = name.indexOf('.')
+    const wildcard = dot === -1 ? null : `*${name.slice(dot)}`
+    for (const cert of this.certRepo.all()) {
+      for (const covered of certDomains(cert)) {
+        const known = covered.toLowerCase()
+        if (known === name || (wildcard && known === wildcard)) return true
+      }
+    }
+    return false
+  }
+
   private readonly store = new CertificateStore(join(process.cwd(), 'data', 'ssl'))
   private readonly letsEncrypt: LetsEncryptIssuer
   private readonly selfSigned: SelfSignedIssuer

@@ -10,6 +10,7 @@ import { createAdminRoutes } from '../admin/routes.js'
 import { ProxySystem } from '../system/proxy/index.js'
 import { DeploySystem } from '../system/deploy/index.js'
 import { AuthSystem } from '../system/auth/index.js'
+import { PublicAddress } from './public-address.js'
 
 export class ShelfApplication {
   private static _instance?: ShelfApplication
@@ -35,7 +36,10 @@ export class ShelfApplication {
   async start(port: number): Promise<void> {
     this.auth = new AuthSystem()
     this.proxy = new ProxySystem(this.events)
-    this.deploy = new DeploySystem(this.events)
+    this.deploy = new DeploySystem(
+      this.events,
+      new PublicAddress(process.env.ADMIN_DOMAIN || null, (domain) => this.proxy.ssl.covers(domain))
+    )
 
     this.registerAdminDomain(port)
     this.registerRoutes()

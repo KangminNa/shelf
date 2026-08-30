@@ -12,6 +12,11 @@
 - 금지: 비즈니스 규칙(배포 절차, 인증 판단, HTML)을 직접 갖는 것. 조립과 위임만 한다.
 - 여기만 여러 system을 안다. 라우트 등록은 **오직 여기서**.
 
+**PublicAddress** (`kernel/public-address.ts`) — 바깥에서 이 서버를 부를 때 쓰는 주소 하나를 만든다. 스킴은 **인증서 유무가 정한다**.
+- `ADMIN_DOMAIN`이 없으면 주소가 없다(`null`) — 웹훅을 받을 수 없다는 뜻이고 화면이 그렇게 말한다
+- 커널이 프록시의 인증서 판정을 주입한다 — deploy가 proxy를 import하지 않고도 https 여부를 안다
+- 금지: 도메인·인증서 상태를 스스로 저장하는 것. 물어볼 뿐이다.
+
 **Controller** (`kernel/controller.ts`) — 라우트가 값을 돌려주면 응답으로 바꾸고, 던져진 오류를 상태코드로 바꾼다.
 - 담당: `{ok:true,data}` 포장, 오류 코드→상태코드 매핑(NOT_FOUND 404 · VALIDATION 400 · CONFLICT 409 · 그 외 500), 500만 로깅, 본문 파싱
 - 하위 컨트롤러는 `this.get/post/patch/delete(path, handler)`와 `this.page(path, render)`만 쓴다 — Hono를 직접 만지지 않는다
@@ -93,6 +98,7 @@
 
 **SslManager** — 인증서의 생애(발급·갱신·삭제)를 관리하고 발급 방식은 발급자에게 맡긴다.
 - 발급 후 호스트의 SSL을 켜고 프록시를 리로드하는 것까지가 책임
+- `covers(domain)` — "이 도메인에 쓸 인증서가 있는가"의 **단일 출처** (와일드카드 포함). 화면·주소 생성이 모두 이걸 묻는다
 - 금지: ACME 프로토콜·openssl·PEM 파싱을 직접 하는 것
 
 **CertificateIssuer 구현체** — 각자 한 가지 방식으로 인증서 파일을 만들어 경로를 돌려준다.

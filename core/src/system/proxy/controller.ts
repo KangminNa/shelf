@@ -129,26 +129,12 @@ export class ProxyController extends Controller {
     })
   }
 
-  private coveredDomains(): (domain: string) => boolean {
-    const covered = new Set<string>()
-    for (const cert of this.proxy.certs.all()) {
-      for (const d of certDomains(cert)) covered.add(d.toLowerCase())
-    }
-    return (domain: string) => {
-      const name = domain.toLowerCase()
-      if (covered.has(name)) return true
-      const dot = name.indexOf('.')
-      return dot !== -1 && covered.has(`*${name.slice(dot)}`)
-    }
-  }
-
   private registerPages(): void {
     this.page('/', () => {
       const hosts = this.proxy.hosts.allSorted()
-      const isCovered = this.coveredDomains()
       return new HostsPage({
         hosts,
-        certDomains: new Set(hosts.filter((h) => isCovered(h.domain)).map((h) => h.domain)),
+        certDomains: new Set(hosts.filter((h) => this.proxy.ssl.covers(h.domain)).map((h) => h.domain)),
         status: {
           httpPort: this.proxy.server.httpPort,
           httpsPort: this.proxy.server.httpsPort,
@@ -159,10 +145,9 @@ export class ProxyController extends Controller {
     })
 
     this.page('/ssl', () => {
-      const isCovered = this.coveredDomains()
       return new SslPage({
         certs: this.proxy.certs.allSorted().map(sanitizeCert),
-        domainsWithoutCert: this.proxy.hosts.query().pluck<string>('domain').filter((d) => !isCovered(d)),
+        domainsWithoutCert: this.proxy.hosts.query().pluck<string>('domain').filter((d) => !this.proxy.ssl.covers(d)),
         defaultEmail: this.proxy.ssl.defaultEmail,
       }).render()
     })
