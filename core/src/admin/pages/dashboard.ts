@@ -1,5 +1,5 @@
-import { statCard, button } from '../../ui/index.js'
-import { Page, el, raw, join, type Html } from '../../ui/page.js'
+import { statCard, button, icon } from '../../ui/index.js'
+import { Page, el, raw, join, live, field, type Html, type Child } from '../../ui/page.js'
 import type { AppNavItem } from '../../ui/shell.js'
 
 export interface DashboardProps {
@@ -13,19 +13,41 @@ export class DashboardPage extends Page {
   }
 
   render(): string {
-    return join([this.stats(), this.appSection(), this.quickActions()]).toString()
+    return el.div(
+      { ...live('/admin/metrics', { every: 5000 }) },
+      this.stats(),
+      this.appSection(),
+      this.quickActions()
+    ).toString()
   }
 
   private stats(): Html {
     const { apps, proxyHostCount } = this.props
     const running = apps.filter((app) => app.running).length
-    const memoryMb = Math.round(process.memoryUsage().rss / 1024 / 1024)
     return el.div(
       { class: 'shelf-stats' },
       raw(statCard({ label: 'Apps', value: String(apps.length), sub: `${running} running`, icon: 'package', color: 'blue' })),
       raw(statCard({ label: 'Proxy hosts', value: String(proxyHostCount), sub: 'domains routed', icon: 'globe', color: 'green' })),
-      raw(statCard({ label: 'Uptime', value: this.formatDuration(process.uptime()), sub: 'since start', icon: 'clock', color: 'green' })),
-      raw(statCard({ label: 'Memory', value: `${memoryMb} MB`, sub: 'RSS usage', icon: 'cpu', color: 'amber' }))
+      this.metricCard('CPU', 'cpu.busy', 'cpu.detail', 'cpu', 'var(--accent)'),
+      this.metricCard('Memory', 'memory.used', 'memory.detail', 'database', 'var(--warning)'),
+      this.metricCard('Disk free', 'disk.free', 'disk.detail', 'hardDrive', 'var(--success)'),
+      this.metricCard('Host uptime', 'uptime.value', 'uptime.detail', 'clock', 'var(--text-muted)')
+    )
+  }
+
+  private metricCard(label: string, valuePath: string, detailPath: string, iconName: string, color: string): Html {
+    return el.div(
+      { class: 'shelf-stat' },
+      el.div(
+        { style: 'display:flex; align-items:center; justify-content:space-between;' },
+        el.div(
+          {},
+          el.div({ class: 'shelf-stat-label' }, label),
+          el.div({ class: 'shelf-stat-value', ...field(valuePath) }, '—'),
+          el.div({ class: 'shelf-stat-sub', ...field(detailPath) }, 'measuring...')
+        ),
+        el.div({ style: `color:${color}; opacity:0.6;` }, raw(icon(iconName as never, 28)))
+      )
     )
   }
 
@@ -55,7 +77,13 @@ export class DashboardPage extends Page {
         el.div(
           {},
           el.div({ class: 'shelf-module-name' }, app.name),
-          el.div({ class: 'shelf-module-version' }, `${app.running ? 'running' : 'stopped'}${app.port ? ` · :${app.port}` : ''}`)
+          el.div({ class: 'shelf-module-version' }, `${app.running ? 'running' : 'stopped'}${app.port ? ` · :${app.port}` : ''}`),
+          el.div(
+            { class: 'shelf-module-version', style: 'font-family:var(--font-mono);' },
+            el.span({ ...field(`apps.${app.name}.cpu`) }, '—'),
+            ' CPU · ',
+            el.span({ ...field(`apps.${app.name}.memory`) }, '—')
+          )
         )
       )
     )

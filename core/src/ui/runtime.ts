@@ -59,6 +59,10 @@ export function live(url: string, options: LiveOptions = {}): Attrs {
   }
 }
 
+export function field(path: string): Attrs {
+  return { 'data-field': path }
+}
+
 export function copies(value: string): Attrs {
   return { 'data-copy': value }
 }
@@ -212,7 +216,15 @@ export const RUNTIME_SCRIPT = `
   const refresh = async (el) => {
     try {
       const result = await request('GET', attr(el, 'data-live'));
-      fill(el, pick(result, attr(el, 'data-pick')), attr(el, 'data-empty'));
+      const fields = el.querySelectorAll('[data-field]');
+      if (!fields.length) {
+        fill(el, pick(result, attr(el, 'data-pick')), attr(el, 'data-empty'));
+        return;
+      }
+      fields.forEach((target) => {
+        const value = pick(result, attr(target, 'data-field'));
+        target.textContent = value === undefined || value === null ? (attr(el, 'data-empty') || '—') : value;
+      });
     } catch (err) {
       fill(el, '', err.message);
     }

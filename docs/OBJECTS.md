@@ -187,12 +187,19 @@
 | `submits(method, url, opts)` | 이 폼은 이 API로 간다 | 입력을 JSON으로 만들어 `act`와 동일하게 처리 |
 | `loads(url, {into, pick, open})` | 눌리면 이 내용을 저기에 채운다 | GET → 값 추출 → 채우기 → (선택) 다이얼로그 열기 |
 | `live(url, {pick, every})` | 이 요소는 이 엔드포인트의 현재 값이다 | 로드 시 채우고 주기적으로 갱신 |
+| `field(path)` (`live` 안에서) | 응답의 이 자리 값은 여기에 | **요청 한 번**으로 자손 여러 곳을 채운다 |
 | `tab/panel/tabValue(group, value)` | 이 버튼과 저 패널은 한 그룹이다 | 선택된 것만 보이게 하고 숨은 입력값을 맞춘다 |
 | `revealsWhen(selector, value)` | 이 값일 때만 저 영역이 필요하다 | 값이 맞을 때만 보인다 |
 | `matches(selector, message)` | 이 두 칸은 같아야 한다 | 다르면 제출을 막고 알린다 |
 | `openDialog` / `closeDialog` / `copies` / `fills` / `toggles` / `reloads` | 열기·닫기·복사·채우기·접기·새로고침 | 그대로 수행 |
 - 금지: 화면별 특수 스크립트. 새 동작이 필요하면 **런타임에 프리미티브를 추가**하고 표에 한 줄 적는다.
 - `core/tests/architecture.test.ts`가 뷰의 인라인 핸들러·fetch·addEventListener를 실패로 만든다.
+
+**HostMetrics** (`services/host-metrics.ts`) — 이 서버의 CPU·메모리·디스크 현황을 한 장으로 만든다.
+- CPU 사용률은 **두 시점의 차분**이다 — 직전 스냅샷을 들고 있다가 다음 호출과 비교한다
+- 읽을 수 없는 값은 추측하지 않고 `null`로 둔다 (화면이 "unknown"이라고 말한다)
+- 컨테이너 안에서도 `/proc`·`os`가 호스트 값을 주는 것에 기대며, 못 읽으면 그대로 null
+- 금지: 화면용 문자열 만들기(→`ui/format.ts`), 컨테이너별 수치(→DockerService)
 
 ## middleware
 

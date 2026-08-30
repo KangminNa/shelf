@@ -8,6 +8,7 @@ import {
   live,
   copies,
   fills,
+  field,
   tab,
   panel,
   tabValue,
@@ -22,7 +23,7 @@ import {
 } from './runtime.js'
 
 export { el, raw, join, type Html, type Child, type Attrs }
-export { act, openDialog, closeDialog, submits, loads, live, copies, fills }
+export { act, openDialog, closeDialog, submits, loads, live, copies, fills, field }
 export { tab, panel, tabValue, revealsWhen, revealed, matches, toggles, reloads }
 export type { ActionOptions, LoadOptions, LiveOptions }
 

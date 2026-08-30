@@ -84,6 +84,40 @@ export class DockerService {
     await this.run(['network', 'connect', network, container]).catch(() => {})
   }
 
+  async stats(namePrefix: string): Promise<Map<string, { cpu: number | null; memory: number | null; memoryLimit: number | null }>> {
+    const result = new Map<string, { cpu: number | null; memory: number | null; memoryLimit: number | null }>()
+    try {
+      const names = await this.listContainers(namePrefix)
+      if (!names.length) return result
+      const { output } = await this.run(['stats', '--no-stream', '--format', '{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}', ...names])
+      for (const line of output.split('\n')) {
+        const [name, cpu, mem] = line.split('\t')
+        if (!name) continue
+        const [used, limit] = (mem || '').split('/')
+        result.set(name.trim(), {
+          cpu: DockerService.percent(cpu),
+          memory: DockerService.size(used),
+          memoryLimit: DockerService.size(limit),
+        })
+      }
+    } catch {
+      return result
+    }
+    return result
+  }
+
+  private static percent(text?: string): number | null {
+    const value = Number((text || '').replace('%', '').trim())
+    return Number.isFinite(value) ? value / 100 : null
+  }
+
+  private static size(text?: string): number | null {
+    const match = /([\d.]+)\s*([KMGT]?i?B)/i.exec(text || '')
+    if (!match) return null
+    const scale: Record<string, number> = { b: 1, kib: 1024, kb: 1000, mib: 1024 ** 2, mb: 1000 ** 2, gib: 1024 ** 3, gb: 1000 ** 3, tib: 1024 ** 4, tb: 1000 ** 4 }
+    return Number(match[1]) * (scale[match[2].toLowerCase()] ?? 1)
+  }
+
   async listContainers(namePrefix: string): Promise<string[]> {
     try {
       const { output } = await this.run(['ps', '-a', '--filter', `name=${namePrefix}`, '--format', '{{.Names}}'])

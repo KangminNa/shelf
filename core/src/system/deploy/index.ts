@@ -81,6 +81,14 @@ export class DeploySystem {
     return routes
   }
 
+  async appUsage(): Promise<Array<{ name: string; cpu: number | null; memory: number | null }>> {
+    const stats = await this.docker.stats('shelf-')
+    return this.projects.allSorted().map((project) => {
+      const usage = stats.get(ContainerManager.containerName(project))
+      return { name: project.name, cpu: usage?.cpu ?? null, memory: usage?.memory ?? null }
+    })
+  }
+
   async appSummaries(): Promise<Array<{ id: number; name: string; running: boolean; port: number | null }>> {
     return Promise.all(
       this.projects.allSorted().map(async (p) => ({

@@ -97,6 +97,7 @@ export class ShelfApplication {
         apps,
         proxyHostCount: () => this.proxy.hosts.count(),
         dockerAvailable: () => this.deploy.docker.available(),
+        appUsage: () => this.deploy.appUsage(),
       })
     )
   }
