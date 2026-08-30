@@ -56,3 +56,31 @@ test('other client headers pass through untouched', () => {
   assert.equal(headers.cookie, 'session=abc')
   assert.equal(headers['user-agent'], 'test-agent')
 })
+
+test('upsert turns the security flags on and off together', async () => {
+  const { ProxyHostRepository } = await import('../src/system/proxy/repositories.js')
+  const Database = (await import('better-sqlite3')).default
+  const db = new Database(':memory:')
+  db.exec(`CREATE TABLE proxy_hosts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT NOT NULL UNIQUE,
+    target_scheme TEXT NOT NULL DEFAULT 'http', target_host TEXT NOT NULL, target_port INTEGER NOT NULL,
+    ssl_enabled INTEGER NOT NULL DEFAULT 0, force_ssl INTEGER NOT NULL DEFAULT 0,
+    hsts_enabled INTEGER NOT NULL DEFAULT 0, hsts_subdomains INTEGER NOT NULL DEFAULT 0,
+    enabled INTEGER NOT NULL DEFAULT 1, description TEXT NOT NULL DEFAULT '',
+    created_at INTEGER DEFAULT (unixepoch()), updated_at INTEGER DEFAULT (unixepoch()))`)
+  const hosts = new ProxyHostRepository(db)
+
+  const plain = hosts.upsert({ domain: 'admin.test', target_port: 81, secure: false })
+  assert.equal(plain.force_ssl, 0, 'no certificate means no redirect to a port that is not listening')
+
+  const secured = hosts.upsert({ domain: 'admin.test', target_port: 81, secure: true })
+  assert.equal(secured.ssl_enabled, 1)
+  assert.equal(secured.force_ssl, 1)
+  assert.equal(secured.hsts_enabled, 1)
+
+  const reverted = hosts.upsert({ domain: 'admin.test', target_port: 81, secure: false })
+  assert.equal(reverted.force_ssl, 0, 'losing the certificate must not lock the admin out')
+
+  const untouched = hosts.upsert({ domain: 'admin.test', target_port: 81 })
+  assert.equal(untouched.force_ssl, 0, 'omitting secure leaves the flags as they are')
+})

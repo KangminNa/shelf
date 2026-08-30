@@ -82,13 +82,26 @@ export class ProxyHostRepository extends Repository<ProxyHost> {
     if (host) this.update(host.id, { ssl_enabled: enabled ? 1 : 0 })
   }
 
-  upsert(data: { domain: string; target_scheme?: string; target_host?: string; target_port: number; description?: string }): ProxyHost {
+  upsert(data: {
+    domain: string
+    target_scheme?: string
+    target_host?: string
+    target_port: number
+    description?: string
+    secure?: boolean
+  }): ProxyHost {
+    const secureFlags = data.secure === undefined ? {} : {
+      ssl_enabled: data.secure ? 1 : 0,
+      force_ssl: data.secure ? 1 : 0,
+      hsts_enabled: data.secure ? 1 : 0,
+    }
     const existing = this.findByDomain(data.domain)
     if (existing) {
       return this.update(existing.id, {
         target_host: data.target_host || '127.0.0.1',
         target_port: data.target_port,
         enabled: 1,
+        ...secureFlags,
       }) as ProxyHost
     }
     return this.create({
@@ -97,6 +110,7 @@ export class ProxyHostRepository extends Repository<ProxyHost> {
       target_host: data.target_host || '127.0.0.1',
       target_port: data.target_port,
       description: data.description || '',
+      ...secureFlags,
     })
   }
 }

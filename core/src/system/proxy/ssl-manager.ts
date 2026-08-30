@@ -65,7 +65,6 @@ export class SslManager {
     })
 
     this.activate(cert)
-    this.events.emit('proxy:cert-issued', { domain: domains[0], domains })
     return cert
   }
 
@@ -132,16 +131,20 @@ export class SslManager {
   remove(certId: number): void {
     const cert = this.certRepo.find(certId)
     if (!cert) return
-    for (const domain of certDomains(cert)) this.hostRepo.setSslEnabled(domain, false)
+    const domains = certDomains(cert)
+    for (const domain of domains) this.hostRepo.setSslEnabled(domain, false)
     this.certRepo.delete(certId)
     this.reloadServer()
+    this.events.emit('proxy:cert-removed', { domain: cert.domain, domains })
   }
 
   private activate(cert: SslCert): void {
-    for (const domain of certDomains(cert)) {
+    const domains = certDomains(cert)
+    for (const domain of domains) {
       if (!domain.startsWith('*.')) this.hostRepo.setSslEnabled(domain, true)
     }
     this.reloadServer()
+    this.events.emit('proxy:cert-issued', { domain: cert.domain, domains })
   }
 
   private reloadServer(): void {

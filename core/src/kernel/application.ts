@@ -53,14 +53,24 @@ export class ShelfApplication {
   private registerAdminDomain(port: number): void {
     const domain = process.env.ADMIN_DOMAIN
     if (!domain) return
-    this.proxy.hosts.upsert({
-      domain,
-      target_host: '127.0.0.1',
-      target_port: port,
-      description: 'Shelf admin (auto-registered via ADMIN_DOMAIN)',
-    })
-    this.proxy.server.reloadHosts()
-    this.log.info(`admin UI registered on proxy: ${domain} -> :${port}`)
+
+    const apply = () => {
+      const secure = this.proxy.ssl.covers(domain)
+      this.proxy.hosts.upsert({
+        domain,
+        target_host: '127.0.0.1',
+        target_port: port,
+        description: 'Shelf admin (auto-registered via ADMIN_DOMAIN)',
+        secure,
+      })
+      this.proxy.server.reloadHosts()
+      this.log.info(`admin UI on proxy: ${domain} -> :${port}${secure ? ' (HTTPS enforced)' : ' (no certificate yet — HTTP only)'}`)
+    }
+
+    apply()
+    for (const event of ['proxy:cert-issued', 'proxy:cert-renewed', 'proxy:cert-removed']) {
+      this.events.on(event, apply)
+    }
   }
 
   private registerRoutes(): void {

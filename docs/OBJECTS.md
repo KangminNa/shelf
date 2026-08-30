@@ -8,6 +8,8 @@
 ## kernel — 조립과 수명주기
 
 **ShelfApplication** — 전역 인스턴스로서 시스템들을 만들고 라우트를 붙이고 서버를 띄우고 내린다.
+- 관리 도메인 정책의 주인: 인증서가 생기면 HTTPS 강제·HSTS를 켜고, 인증서가 사라지면 되돌린다
+  (인증서 없이 강제가 남으면 관리자가 자기 서버에서 잠긴다)
 - 소유: `index.ts`가 `.instance.start(port)` 한 번 호출
 - 금지: 비즈니스 규칙(배포 절차, 인증 판단, HTML)을 직접 갖는 것. 조립과 위임만 한다.
 - 여기만 여러 system을 안다. 라우트 등록은 **오직 여기서**.
@@ -150,8 +152,9 @@
 | `deploy:project-deleted` | 통지 | DeployController | — |
 | `deploy:container-started` | 통지 | ContainerManager | — |
 | `proxy:host-created` | 통지 | ProxyController | — |
-| `proxy:cert-issued` | 통지 | SslManager | — |
-| `proxy:cert-renewed` | 통지 | SslManager | — |
+| `proxy:cert-issued` | 통지 | SslManager (`activate()` — 발급·자체서명·업로드 공통) | ShelfApplication (관리 도메인 HTTPS 강제 재적용) |
+| `proxy:cert-renewed` | 통지 | SslManager | ShelfApplication |
+| `proxy:cert-removed` | 통지 | SslManager | ShelfApplication (강제 해제 — 인증서 없이 잠기지 않게) |
 | `proxy:cert-renewal-failed` | 통지 | SslManager | — |
 
 통지형 구독자가 비어 있는 것은 알림 기능(F-16)이 아직 없기 때문이다. 그 기능은 이 이벤트들을 구독해서 만든다.
