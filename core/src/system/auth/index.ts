@@ -46,6 +46,14 @@ class SessionRepository extends Repository<Session> {
   deleteExpired(): void {
     this.query().where('expires_at', '<', Math.floor(Date.now() / 1000)).delete()
   }
+
+  deleteForUser(userId: number): number {
+    return this.query().where('user_id', userId).delete()
+  }
+
+  deleteAll(): number {
+    return this.query().delete()
+  }
 }
 
 export class AuthSystem {
@@ -109,8 +117,7 @@ export class AuthSystem {
       if (!password || password.length < 8) {
         return c.json({ ok: false, error: { code: 'VALIDATION', message: 'Password must be at least 8 characters' } }, 400)
       }
-      const user = this.users.create({ username, password_hash: AuthSystem.hashPassword(password) })
-      this.log.info(`admin account created: ${username}`)
+      const user = this.createAccount(username, password)
       this.issueSession(c, user)
       return c.json({ ok: true, data: { username } }, 201)
     })
@@ -145,6 +152,31 @@ export class AuthSystem {
       deleteCookie(c, AuthSystem.COOKIE, { path: '/' })
       return c.json({ ok: true, data: null })
     })
+  }
+
+  createAccount(username: string, password: string): User {
+    const user = this.users.create({ username, password_hash: AuthSystem.hashPassword(password) } as Partial<User>)
+    this.log.info(`admin account created: ${username}`)
+    return user
+  }
+
+  get accounts(): string[] {
+    return this.users.query().orderBy('username').pluck<string>('username')
+  }
+
+  setPassword(username: string, password: string): boolean {
+    const user = this.users.findByUsername(username)
+    if (!user) return false
+    this.users.update(user.id, { password_hash: AuthSystem.hashPassword(password) } as Partial<User>)
+    this.sessions.deleteForUser(user.id)
+    this.log.warn(`password reset for "${username}" — all sessions revoked`)
+    return true
+  }
+
+  forgetEveryone(): void {
+    this.sessions.deleteAll()
+    for (const user of this.users.all()) this.users.delete(user.id)
+    this.log.warn('all accounts removed — server reopened for setup')
   }
 
   private issueSession(c: any, user: User): void {
@@ -187,7 +219,8 @@ export class AuthSystem {
   private validateSession(token: string): boolean {
     const session = this.sessions.findByToken(token)
     if (!session) return false
-    if (session.expires_at < Math.floor(Date.now() / 1000)) {
+    const expired = session.expires_at < Math.floor(Date.now() / 1000)
+    if (expired || !this.users.find(session.user_id)) {
       this.sessions.delete(session.id)
       return false
     }

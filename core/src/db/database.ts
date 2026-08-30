@@ -3,10 +3,13 @@ import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { Repository, type Entity } from './repository.js'
 
-const DATA_DIR = process.env.DATA_DIR || join(process.cwd(), 'data')
+export function dataDir(): string {
+  return process.env.DATA_DIR || join(process.cwd(), 'data')
+}
 
 export function ensureDataDir(): void {
-  if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true })
+  const dir = dataDir()
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
 }
 
 export class AppDatabase {
@@ -15,7 +18,7 @@ export class AppDatabase {
 
   constructor(scope: string, migrationsDir?: string) {
     ensureDataDir()
-    this.raw = new BetterSqlite3(join(DATA_DIR, `${scope}.db`))
+    this.raw = new BetterSqlite3(join(dataDir(), `${scope}.db`))
     this.raw.pragma('journal_mode = WAL')
     this.raw.pragma('foreign_keys = ON')
     if (migrationsDir && existsSync(migrationsDir)) {

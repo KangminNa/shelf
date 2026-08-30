@@ -27,6 +27,9 @@
 - 소유: ShelfApplication
 - 금지: 앱·프록시 도메인 지식. 인증 외 판단.
 - `requireAuth()`가 유일한 출입구. 공개 경로는 `routes`(=`/login`, `/setup`, `/api/auth/*`)뿐.
+- 세션은 **사용자가 살아있을 때만** 유효하다. 계정이 사라지면 그 세션은 검증 시 폐기된다.
+- 비밀번호를 잊었을 때의 복구는 서버 셸에서만 가능하다 — `accounts` / `setPassword()` / `forgetEveryone()`
+  (`core/src/cli/admin.ts`가 이 셋을 명령으로 노출). HTTP로는 복구 경로를 열지 않는다.
 
 **UserRepository / SessionRepository** (auth 내부) — 관리자 계정과 세션 토큰을 저장·조회하고 만료 세션을 지운다.
 - auth 밖으로 노출하지 않는다 (다른 시스템은 사용자 테이블을 몰라야 한다)

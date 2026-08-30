@@ -24,7 +24,8 @@
     "dev": "tsx watch core/src/index.ts",
     "build": "npm run build --workspaces",
     "start": "node core/dist/index.js",
-    "test": "tsx --test core/tests/*.test.ts"
+    "test": "tsx --test core/tests/*.test.ts",
+    "admin": "tsx core/src/cli/admin.ts"
   },
   "engines": {
     "node": ">=20.0.0"
