@@ -32,8 +32,9 @@
 |---|---|---|
 | F-12 | GitHub/GitLab webhook으로 push 시 자동 재배포 | ✅ |
 | F-13 | webhook은 HMAC 서명 검증, 등록된 브랜치만 반응, 바디 크기 제한 | ✅ |
-| F-14 | 앱마다 webhook URL·secret 발급 및 UI 표시 | ✅ |
+| F-14 | 앱마다 webhook URL·secret 발급 및 UI 표시 (`https://{ADMIN_DOMAIN}/hooks/{id}`) | ✅ |
 | F-15 | Shelf 자신도 webhook으로 재배포 (`/hooks/self`, sibling 컨테이너 방식) | ✅ |
+| F-57 | webhook이 80/443(프록시)으로 도달 — GitHub이 여는 포트는 그 둘뿐 | ✅ |
 | F-16 | 배포 실패 알림 (외부 채널) | ❌ |
 
 ## 3. 리버스 프록시

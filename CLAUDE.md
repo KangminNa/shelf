@@ -61,6 +61,7 @@ PORT=9667 PROXY_HTTP_PORT=8087 PROXY_HTTPS_PORT=8447 WEBHOOK_PORT=9100 npx tsx c
 
 - Auth: session cookie (`shelf_session`), first run → `/setup`; all `/admin` + `/api/{deploy,proxy}` protected; webhook port 9100 uses HMAC instead
 - Lost password: `npm run admin passwd <user> <new>` (or `reset` to reopen `/setup`) — server shell only, no HTTP recovery path
+- Webhooks: `POST https://{ADMIN_DOMAIN}/hooks/{projectId}` (via proxy on 80/443) — `WebhookHandler` decides, two transports (`:9100` server + main app `/hooks`) only adapt
 - App containers: named `shelf-{app}`, built images `shelf-app-{app}`, `--restart unless-stopped`
 - When Shelf itself runs in Docker: proxy reaches apps via `APP_HOST=host.docker.internal`
 - Runtime data lives in `data/` (gitignored) — one dir to back up

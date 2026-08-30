@@ -148,12 +148,12 @@ abstract class DeployPage extends Page {
 }
 
 export class ProjectsPage extends DeployPage {
-  constructor(private readonly props: { items: ProjectListItem[]; webhookPort: number }) {
+  constructor(private readonly props: { items: ProjectListItem[]; publicDomain: string | null }) {
     super()
   }
 
   render(): string {
-    const { items, webhookPort } = this.props
+    const { items, publicDomain } = this.props
     return join([
       this.sectionHeader(`Apps (${items.length})`, this.openButton('add-dialog', '+ New app')),
       items.length
@@ -168,7 +168,9 @@ export class ProjectsPage extends DeployPage {
           ),
       el.div(
         { style: `margin-top:16px; ${MUTED}` },
-        `Webhook server on :${webhookPort} · Apps run as Docker containers`
+        publicDomain
+          ? `Webhook: https://${publicDomain}/hooks/{app} · Apps run as Docker containers`
+          : 'ADMIN_DOMAIN 미설정 — 웹훅을 받으려면 .env 에 설정하세요 · Apps run as Docker containers'
       ),
       this.addDialog(),
     ]).toString()
@@ -236,7 +238,7 @@ export class ProjectDetailPage extends DeployPage {
       project: Project
       status: DisplayStatus
       deployments: Deployment[]
-      webhookPort: number
+      webhookUrl: string | null
       container: string
       proxyTarget: string | null
     }
@@ -318,8 +320,9 @@ export class ProjectDetailPage extends DeployPage {
   }
 
   private webhookCard(): Html {
-    const { project, webhookPort } = this.props
+    const { project, webhookUrl } = this.props
     const title = el.div({ style: 'font-size:13px; font-weight:600; margin-bottom:12px;' }, 'Webhook (CI/CD)')
+    const boxed = `${MONO} background:var(--bg-tertiary); padding:8px 12px; border-radius:var(--radius); word-break:break-all;`
 
     if (project.source_type !== 'git') {
       return this.card([
@@ -328,26 +331,35 @@ export class ProjectDetailPage extends DeployPage {
       ])
     }
 
+    if (!webhookUrl) {
+      return this.card([
+        title,
+        this.notice('웹훅을 받으려면 .env 에 ADMIN_DOMAIN 을 설정하고 재시작하세요. 그 도메인의 80/443으로 GitHub push를 받습니다.'),
+      ])
+    }
+
     return this.card([
       title,
       el.div(
-        { style: 'font-size:13px; color:var(--text-secondary); margin-bottom:8px;' },
-        'Add this webhook to your GitHub repository (Settings → Webhooks):'
+        { style: 'font-size:13px; color:var(--text-secondary); margin-bottom:4px;' },
+        'GitHub 저장소 → Settings → Webhooks → Add webhook'
       ),
+      el.div({ style: 'font-size:12px; color:var(--text-muted); margin-bottom:4px;' }, 'Payload URL'),
       el.div(
-        { style: `${MONO} background:var(--bg-tertiary); padding:8px 12px; border-radius:var(--radius); margin-bottom:8px; word-break:break-all;` },
-        `http://<server-ip>:${webhookPort}/hooks/${project.id}`
+        { style: 'display:flex; gap:8px; align-items:center; margin-bottom:10px;' },
+        el.div({ style: `${boxed} flex:1;` }, webhookUrl),
+        el.button({ ...copies(webhookUrl), class: 'shelf-btn shelf-btn-ghost shelf-btn-sm' }, 'Copy')
       ),
-      el.div({ style: 'font-size:13px; color:var(--text-secondary); margin-bottom:4px;' }, 'Secret:'),
+      el.div({ style: 'font-size:12px; color:var(--text-muted); margin-bottom:4px;' }, 'Secret'),
       el.div(
         { style: 'display:flex; gap:8px; align-items:center;' },
-        el.code(
-          { style: `${MONO} background:var(--bg-tertiary); padding:6px 12px; border-radius:var(--radius); flex:1; overflow:hidden; text-overflow:ellipsis;` },
-          project.webhook_secret
-        ),
+        el.code({ style: `${boxed} flex:1; overflow:hidden; text-overflow:ellipsis;` }, project.webhook_secret),
         el.button({ ...copies(project.webhook_secret), class: 'shelf-btn shelf-btn-ghost shelf-btn-sm' }, 'Copy')
       ),
-      el.div({ style: `${MUTED} margin-top:8px;` }, `Content type: application/json · Event: push · Branch: ${project.branch}`),
+      el.div(
+        { style: `${MUTED} margin-top:10px;` },
+        `Content type: application/json · Event: Just the push event · 배포 대상 브랜치: ${project.branch}`
+      ),
     ])
   }
 

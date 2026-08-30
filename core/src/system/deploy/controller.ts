@@ -163,7 +163,7 @@ export class DeployController extends Controller {
           lastDeploy: this.deploy.deployments.latestFor(project.id),
         }))
       )
-      return new ProjectsPage({ items, webhookPort: this.deploy.webhook.port }).render()
+      return new ProjectsPage({ items, publicDomain: DeployController.publicDomain() }).render()
     })
 
     this.page('/projects/:id', async (req) => {
@@ -174,7 +174,7 @@ export class DeployController extends Controller {
         project,
         status: await this.displayStatus(project),
         deployments: this.deploy.deployments.forProject(project.id),
-        webhookPort: this.deploy.webhook.port,
+        webhookUrl: this.webhookUrl(project.id),
         container: ContainerManager.containerName(project),
         proxyTarget: target ? `${target.host}:${target.port}` : null,
       }).render()
@@ -183,6 +183,15 @@ export class DeployController extends Controller {
     this.page('/deployments', () =>
       new DeploymentsPage({ rows: this.withProjectNames(this.deploy.deployments.recent(100)) }).render()
     )
+  }
+
+  private webhookUrl(projectId: number): string | null {
+    const domain = DeployController.publicDomain()
+    return domain ? `https://${domain}/hooks/${projectId}` : null
+  }
+
+  static publicDomain(): string | null {
+    return process.env.ADMIN_DOMAIN || null
   }
 
   private withProjectNames<T extends { project_id: number }>(rows: T[]): Array<T & { project_name: string | null }> {

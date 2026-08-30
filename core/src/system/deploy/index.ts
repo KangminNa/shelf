@@ -9,6 +9,7 @@ import { ProjectRepository, DeploymentRepository } from './repositories.js'
 import { ContainerManager } from './container-manager.js'
 import { DeployPipeline } from './pipeline.js'
 import { WebhookServer } from './webhook-server.js'
+import { WebhookHandler } from './webhook-handler.js'
 import { SelfDeployer } from './self-deployer.js'
 import { DeployController } from './controller.js'
 
@@ -22,6 +23,7 @@ export class DeploySystem {
   readonly pipeline: DeployPipeline
   readonly selfDeployer: SelfDeployer
   readonly webhook: WebhookServer
+  private readonly hooks: WebhookHandler
   private readonly controller: DeployController
   readonly logger = new Logger('deploy')
   private readonly log = this.logger
@@ -38,7 +40,8 @@ export class DeploySystem {
     this.containers = new ContainerManager(this.docker, events, this.log)
     this.pipeline = new DeployPipeline(reposDir, this.projects, this.deployments, this.containers, this.docker, events, this.log)
     this.selfDeployer = new SelfDeployer(this.docker, events, this.log.scope('self-deploy'))
-    this.webhook = new WebhookServer(this.projects, this.pipeline, this.selfDeployer, this.log.scope('webhook'))
+    this.hooks = new WebhookHandler(this.projects, this.pipeline, this.selfDeployer, this.log.scope('webhook'))
+    this.webhook = new WebhookServer(this.hooks, this.log.scope('webhook'))
     this.controller = new DeployController(this, events)
 
     this.webhook.start()
@@ -60,21 +63,16 @@ export class DeploySystem {
 
   get webhookRoutes(): Hono {
     const routes = new Hono()
-    routes.post('/self', async (c) => {
-      if (!this.selfDeployer.configured) {
-        return c.json({ ok: false, error: 'Self-deploy not configured' }, 404)
-      }
+    routes.post('/:hook', async (c) => {
       const body = Buffer.from(await c.req.arrayBuffer())
-      if (!this.selfDeployer.verify(body, c.req.header('x-hub-signature-256'))) {
-        return c.json({ ok: false, error: 'Invalid signature' }, 401)
-      }
-      let payload: { ref?: string } = {}
-      try { payload = JSON.parse(body.toString()) } catch {}
-      if (!this.selfDeployer.matchesBranch(payload)) {
-        return c.json({ ok: true, message: 'Ignoring push to other branch' })
-      }
-      this.selfDeployer.trigger()
-      return c.json({ ok: true, message: 'Rebuilding Shelf...' }, 202)
+      const reply = this.hooks.handle({
+        path: `/${c.req.param('hook')}`,
+        body,
+        signature: c.req.header('x-hub-signature-256'),
+        gitlabToken: c.req.header('x-gitlab-token'),
+        secretParam: c.req.query('secret'),
+      })
+      return c.json(reply.body, reply.status as never)
     })
     return routes
   }
