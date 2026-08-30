@@ -12,6 +12,8 @@ import { DeployPipeline } from './pipeline.js'
 import { WebhookServer } from './webhook-server.js'
 import { WebhookHandler } from './webhook-handler.js'
 import { SelfDeployer } from './self-deployer.js'
+import { AppWatcher } from './app-watcher.js'
+import { Scheduler } from '../../services/scheduler.js'
 import { DeployController } from './controller.js'
 
 export type { Project, Deployment } from './repositories.js'
@@ -24,7 +26,9 @@ export class DeploySystem {
   readonly pipeline: DeployPipeline
   readonly selfDeployer: SelfDeployer
   readonly webhook: WebhookServer
+  readonly watcher: AppWatcher
   private readonly hooks: WebhookHandler
+  private readonly scheduler = new Scheduler('deploy')
   private readonly controller: DeployController
   readonly logger = new Logger('deploy')
   private readonly log = this.logger
@@ -47,6 +51,9 @@ export class DeploySystem {
     this.hooks = new WebhookHandler(this.projects, this.pipeline, this.selfDeployer, this.log.scope('webhook'))
     this.webhook = new WebhookServer(this.hooks, this.log.scope('webhook'))
     this.controller = new DeployController(this, events)
+
+    this.watcher = new AppWatcher(this.projects, this.containers, events, this.log.scope('watch'))
+    this.scheduler.register('* * * * *', 'app-health', () => this.watcher.check())
 
     this.webhook.start()
     this.containers.attachExistingContainers().catch((err) => this.log.warn(`docker network setup failed: ${err.message}`))
@@ -101,6 +108,7 @@ export class DeploySystem {
   }
 
   shutdown(): void {
+    this.scheduler.stopAll()
     this.webhook.stop()
   }
 }

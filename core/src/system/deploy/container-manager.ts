@@ -65,6 +65,7 @@ export class ContainerManager {
       } else {
         await this.docker.startContainer(name)
         await this.docker.connectNetwork(SHELF_NETWORK, name)
+        this.events.emit('deploy:container-started', { projectId: project.id, name: project.name })
       }
       return { ok: true }
     } catch (err: any) {
@@ -74,6 +75,7 @@ export class ContainerManager {
 
   async stop(project: Project): Promise<void> {
     await this.docker.stopContainer(ContainerManager.containerName(project))
+    this.events.emit('deploy:container-stopped', { projectId: project.id, name: project.name })
   }
 
   async remove(project: Project): Promise<void> {

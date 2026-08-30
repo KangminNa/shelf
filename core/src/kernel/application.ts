@@ -10,6 +10,7 @@ import { createAdminRoutes } from '../admin/routes.js'
 import { ProxySystem } from '../system/proxy/index.js'
 import { DeploySystem } from '../system/deploy/index.js'
 import { AuthSystem } from '../system/auth/index.js'
+import { NotifySystem } from '../system/notify/index.js'
 import { PublicAddress } from './public-address.js'
 
 export class ShelfApplication {
@@ -26,6 +27,7 @@ export class ShelfApplication {
   auth!: AuthSystem
   proxy!: ProxySystem
   deploy!: DeploySystem
+  notify!: NotifySystem
 
   private constructor() {
     ensureDataDir()
@@ -40,6 +42,7 @@ export class ShelfApplication {
       this.events,
       new PublicAddress(process.env.ADMIN_DOMAIN || null, (domain) => this.proxy.ssl.covers(domain))
     )
+    this.notify = new NotifySystem(this.events)
 
     this.registerAdminDomain(port)
     this.registerRoutes()
@@ -84,13 +87,16 @@ export class ShelfApplication {
     this.hono.use('/admin', this.auth.requireAuth())
     this.hono.use('/api/proxy/*', this.auth.requireAuth())
     this.hono.use('/api/deploy/*', this.auth.requireAuth())
+    this.hono.use('/api/notify/*', this.auth.requireAuth())
 
     this.hono.route('/api/proxy', this.proxy.api)
     this.hono.route('/api/deploy', this.deploy.api)
+    this.hono.route('/api/notify', this.notify.api)
 
     const apps = () => this.deploy.appSummaries()
     this.hono.route('/admin/deploy', this.wrapInShell('Apps', this.deploy.pages))
     this.hono.route('/admin/proxy', this.wrapInShell('Proxy Manager', this.proxy.pages))
+    this.hono.route('/admin/notifications', this.wrapInShell('Notifications', this.notify.pages))
     this.hono.route(
       '/admin',
       createAdminRoutes({

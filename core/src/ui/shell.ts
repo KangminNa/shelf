@@ -25,6 +25,7 @@ export function renderShell(opts: ShellOpts): string {
     { label: 'Dashboard', path: '/admin', icon: 'home' as const },
     { label: 'Apps', path: '/admin/deploy', icon: 'package' as const },
     { label: 'Proxy', path: '/admin/proxy', icon: 'globe' as const },
+    { label: 'Notifications', path: '/admin/notifications', icon: 'bell' as const },
     { label: 'System', path: '/admin/system', icon: 'cpu' as const },
     { label: 'Settings', path: '/admin/settings', icon: 'settings' as const },
   ]

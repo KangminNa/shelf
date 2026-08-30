@@ -77,6 +77,13 @@
 - 같은 판정을 관리 앱의 `/hooks`(80/443 프록시 경유)도 쓴다 — 전송만 둘, 판정은 하나
 - 금지: 판정 로직을 스스로 갖는 것
 
+**AppWatcher** — 앱이 살아있는지 주기적으로 보고, **상태가 바뀌는 순간에만** 알린다.
+- 매 순회가 아니라 **전환**에서만 발행한다 (up→down이면 `monitor:app-down`, down→up이면 `monitor:app-recovered`)
+- 첫 관찰은 기준선으로 삼되, **비정상 종료(`crashed`)면 그때도 알린다** — Shelf가 처음 봤을 때 이미 죽어 있으면 아무도 모르게 된다
+- 정상 종료(`stopped`)는 누가 껐다는 뜻이므로 첫 관찰에서 조용히 넘어간다
+- 사용자가 직접 세운 앱은 장애가 아니다 — `deploy:container-stopped`를 듣고 침묵하다가, 다시 시작하면 감시를 재개한다
+- 금지: 알림을 직접 보내는 것(→NotifySystem). 사실만 발행한다.
+
 **SelfDeployer** — Shelf 자신을 형제 컨테이너를 띄워 재빌드한다.
 - 자기 컨테이너를 죽이는 명령을 자기가 실행할 수 없다는 제약을 해결하는 유일한 목적
 
@@ -146,7 +153,7 @@
 | `proxy:release-target` | 요청 | DeployPipeline, DeployController | ProxySystem |
 | `deploy:started` | 통지 | DeployPipeline | — |
 | `deploy:succeeded` | 통지 | DeployPipeline | — |
-| `deploy:failed` | 통지 | DeployPipeline | — |
+| `deploy:failed` | 통지 | DeployPipeline | NotifySystem |
 | `deploy:self-started` | 통지 | SelfDeployer | — |
 | `deploy:project-created` | 통지 | DeployController | — |
 | `deploy:project-deleted` | 통지 | DeployController | — |
@@ -155,7 +162,7 @@
 | `proxy:cert-issued` | 통지 | SslManager (`activate()` — 발급·자체서명·업로드 공통) | ShelfApplication (관리 도메인 HTTPS 강제 재적용) |
 | `proxy:cert-renewed` | 통지 | SslManager | ShelfApplication |
 | `proxy:cert-removed` | 통지 | SslManager | ShelfApplication (강제 해제 — 인증서 없이 잠기지 않게) |
-| `proxy:cert-renewal-failed` | 통지 | SslManager | — |
+| `proxy:cert-renewal-failed` | 통지 | SslManager | NotifySystem |
 
 통지형 구독자가 비어 있는 것은 알림 기능(F-16)이 아직 없기 때문이다. 그 기능은 이 이벤트들을 구독해서 만든다.
 
@@ -200,6 +207,23 @@
 - 읽을 수 없는 값은 추측하지 않고 `null`로 둔다 (화면이 "unknown"이라고 말한다)
 - 컨테이너 안에서도 `/proc`·`os`가 호스트 값을 주는 것에 기대며, 못 읽으면 그대로 null
 - 금지: 화면용 문자열 만들기(→`ui/format.ts`), 컨테이너별 수치(→DockerService)
+
+## system/notify — 문제가 생겼다고 밖에 알린다
+
+**NotifySystem** — 알릴 만한 이벤트를 듣고, 등록된 채널로 내보내고, 보낸 결과를 남긴다.
+- 구독하는 이벤트는 `alerts.ts`에 선언된 것뿐 — 새 알림은 거기에 한 줄 추가하는 것으로 시작한다
+- 배달 실패는 삼키지 않고 기록한다 (화면의 Recent deliveries가 그 기록)
+- 금지: 무엇이 장애인지 판단하는 것(→AppWatcher 등 발행자), 이벤트 없이 스스로 상태를 캐는 것
+
+**ChannelRepository / DeliveryRepository** — 보낼 곳과 보낸 기록. `prune()`이 오래된 배달 기록을 정리한다.
+
+**NotificationChannel 구현체** — 알림 하나를 한 가지 방법으로 실어 나른다.
+- `WebhookChannel` — JSON POST. secret이 있으면 `x-shelf-signature-256`에 HMAC-SHA256 서명을 붙인다. 10초 타임아웃
+- 금지: DB 쓰기, 어떤 이벤트를 보낼지 고르는 것
+
+**NotifyController** — 채널 CRUD와 테스트 발송, 알림 화면. secret은 응답에서 `has_secret`으로만 나간다.
+
+**NotificationsPage** — 채널 목록·발송 이력·언제 알림이 가는지를 보여준다.
 
 ## middleware
 
