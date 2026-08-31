@@ -57,3 +57,37 @@ test('a batched status lookup asks docker nothing when there are no apps', async
   assert.equal((await docker.statuses([])).size, 0)
   assert.equal(called, false)
 })
+
+test('a build path selects a folder inside the repository', async () => {
+  const { DeployPipeline } = await import('../src/system/deploy/pipeline.js')
+  const repo = '/srv/shelf/data/deploy/repos/landing'
+
+  assert.equal(DeployPipeline.buildContext(repo, ''), repo, 'no build path means the repository root')
+  assert.equal(DeployPipeline.buildContext(repo, '   '), repo, 'blank is the same as unset')
+  assert.equal(DeployPipeline.buildContext(repo, 'site'), `${repo}/site`)
+  assert.equal(DeployPipeline.buildContext(repo, 'apps/web'), `${repo}/apps/web`)
+  assert.equal(DeployPipeline.buildContext(repo, './site/'), `${repo}/site`, 'leading ./ and trailing / are tolerated')
+})
+
+test('a build path can never escape the repository', async () => {
+  const { DeployPipeline } = await import('../src/system/deploy/pipeline.js')
+  const repo = '/srv/shelf/data/deploy/repos/landing'
+
+  const escapes = ['..', '../..', 'site/../..', '/etc', '/', '../landing-other', 'a/../../b']
+  for (const attempt of escapes) {
+    assert.throws(
+      () => DeployPipeline.buildContext(repo, attempt),
+      /points outside the repository/,
+      `"${attempt}" must be refused`
+    )
+  }
+})
+
+test('a sibling directory sharing the repository name prefix is still outside', async () => {
+  const { DeployPipeline } = await import('../src/system/deploy/pipeline.js')
+  assert.throws(
+    () => DeployPipeline.buildContext('/repos/app', '../app-evil'),
+    /points outside the repository/,
+    'prefix matching must not let /repos/app-evil pass as inside /repos/app'
+  )
+})

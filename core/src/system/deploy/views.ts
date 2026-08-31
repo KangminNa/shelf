@@ -127,6 +127,11 @@ abstract class DeployPage extends Page {
         this.field('Branch', this.input({ type: 'text', name: 'branch', value: project?.branch || 'main' }))
       ),
       this.field(
+        '빌드 경로 (선택 — 모노레포)',
+        this.input({ type: 'text', name: 'build_path', value: project?.build_path ?? '', placeholder: '비우면 저장소 루트' }),
+        '저장소 하위 폴더에 Dockerfile이 있을 때만 적으세요. 예: site, apps/web'
+      ),
+      this.field(
         `Access token ${project?.git_token ? '(설정됨 — 비우면 유지)' : '(private 저장소, 선택)'}`,
         this.input({
           type: 'password',
@@ -302,6 +307,9 @@ export class ProjectDetailPage extends DeployPage {
       ['Source', this.sourceBadge(project)],
       project.source_type === 'git' ? ['Repository', project.repo_url] : ['Image', el.code({ style: MONO }, project.image)],
       project.source_type === 'git' ? ['Branch', project.branch] : null,
+      project.source_type === 'git' && project.build_path
+        ? ['Build path', el.code({ style: MONO }, project.build_path)]
+        : null,
       ['Container', el.code({ style: MONO }, container)],
       ['Proxy target', proxyTarget ? el.code({ style: MONO }, proxyTarget) : '-'],
       ['Host port', project.port ? `${project.port} (직접 노출)` : '없음 (프록시 전용)'],

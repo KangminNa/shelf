@@ -39,6 +39,7 @@ There is one contract: **a `Dockerfile` at the repo root, and a container that s
 Language, framework and database are entirely the app's business.
 
 - **Git or image** — clone and `docker build`, or pull a published image from Docker Hub or GHCR.
+- **Monorepos** — set a build path like `site` or `apps/web` and Shelf builds from that folder. Paths that leave the repository are refused.
 - **Push to deploy** — Shelf generates the webhook URL and secret; paste them into GitHub. Payloads are HMAC-verified.
 - **History and rollback** — every commit, timestamp, result and full build log is kept; rebuild from an earlier commit.
 - **Domains register themselves** — give an app a domain and the proxy entry appears with it, and disappears when the app is deleted.

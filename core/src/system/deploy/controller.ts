@@ -6,12 +6,13 @@ import type { DeploySystem } from './index.js'
 import { ContainerManager } from './container-manager.js'
 import { ProjectsPage, ProjectDetailPage, DeploymentsPage, type DisplayStatus } from './views.js'
 
-const PROJECT_FIELDS = ['source_type', 'repo_url', 'branch', 'git_token', 'image', 'port', 'container_port', 'env', 'volumes', 'domain', 'auto_deploy'] as const
+const PROJECT_FIELDS = ['source_type', 'repo_url', 'branch', 'git_token', 'build_path', 'image', 'port', 'container_port', 'env', 'volumes', 'domain', 'auto_deploy'] as const
 
 const PATTERNS: Array<[string, RegExp, string]> = [
   ['branch', /^[\w./-]{1,120}$/, 'Invalid branch name'],
   ['repo_url', /^(https?:\/\/|git@|ssh:\/\/|\/|\.\/)[^\s;|&`$<>'"\\]+$/, 'Invalid repository URL'],
   ['image', /^[\w][\w.\-/:@]{0,200}$/, 'Invalid image reference'],
+  ['build_path', /^(?!\/)(?!.*\.\.)[\w.\-/]{1,200}$/, 'Build path must be a folder inside the repository'],
 ]
 
 function validateSource(body: Record<string, any>): void {
@@ -89,6 +90,7 @@ export class DeployController extends Controller {
         repo_url: body.repo_url || '',
         branch: body.branch || 'main',
         git_token: body.git_token || '',
+        build_path: (body.build_path || '').replace(/^\.?\/+|\/+$/g, ''),
         image: body.image || '',
         port: body.port || null,
         container_port: body.container_port || null,

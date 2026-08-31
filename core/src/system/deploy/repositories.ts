@@ -8,6 +8,7 @@ export interface Project {
   repo_url: string
   branch: string
   git_token: string
+  build_path: string
   image: string
   port: number | null
   container_port: number | null

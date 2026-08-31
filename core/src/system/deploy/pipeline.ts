@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process'
 import { existsSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import type { Logger } from '../../services/log.js'
 import type { EventBus } from '../../services/events.js'
 import type { DockerService } from '../docker.js'
@@ -108,8 +108,9 @@ export class DeployPipeline {
     const repoDir = join(this.reposDir, project.name)
     await this.syncRepository(project, repoDir, journal, rollbackCommit)
     await this.recordCommit(deploymentId, repoDir)
-    this.ensureDockerfile(repoDir)
-    await this.buildImage(project, repoDir, journal)
+    const context = DeployPipeline.buildContext(repoDir, project.build_path)
+    this.ensureDockerfile(context, project.build_path)
+    await this.buildImage(project, context, journal)
   }
 
   private async syncRepository(
@@ -147,16 +148,28 @@ export class DeployPipeline {
     this.deployments.update(deploymentId, { commit_hash: commitHash, commit_message: commitMessage })
   }
 
-  private ensureDockerfile(repoDir: string): void {
-    if (!existsSync(join(repoDir, 'Dockerfile'))) {
-      throw new Error('Dockerfile not found in repository root. Every Shelf app needs a Dockerfile.')
+  static buildContext(repoDir: string, buildPath: string): string {
+    const requested = (buildPath || '').trim()
+    if (!requested) return repoDir
+
+    const context = resolve(repoDir, requested)
+    const root = resolve(repoDir)
+    if (context !== root && !context.startsWith(root + sep)) {
+      throw new Error(`Build path "${requested}" points outside the repository.`)
     }
+    return context
   }
 
-  private async buildImage(project: Project, repoDir: string, journal: DeploymentJournal): Promise<void> {
+  private ensureDockerfile(context: string, buildPath: string): void {
+    if (existsSync(join(context, 'Dockerfile'))) return
+    const where = buildPath ? `"${buildPath}"` : 'the repository root'
+    throw new Error(`Dockerfile not found in ${where}. Every Shelf app needs a Dockerfile.`)
+  }
+
+  private async buildImage(project: Project, context: string, journal: DeploymentJournal): Promise<void> {
     const tag = ContainerManager.imageTag(project)
-    journal.command(`docker build -t ${tag} .`)
-    journal.add(await this.docker.build(tag, repoDir))
+    journal.command(`docker build -t ${tag} ${project.build_path || '.'}`)
+    journal.add(await this.docker.build(tag, context))
   }
 
   private async recreateContainer(project: Project, journal: DeploymentJournal): Promise<void> {
