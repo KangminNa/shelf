@@ -114,20 +114,29 @@ After retaking screenshots:
 python3 site/build.py <screenshot directory>   # template.html + screenshots → index.html
 ```
 
-You can also deploy this page on Shelf itself. Compose mounts the repository at `/shelf`, so no GitHub round trip is needed.
+This page is **registered as an app and built once when Shelf starts** — there is nothing to set up.
 
-In **Apps → New app**:
+```
+[shelf] INFO bundled site registered as app "landing"
+[shelf] INFO building bundled site "landing"...
+[shelf] INFO bundled site "landing" is running
+```
 
-| Field | Value |
-|---|---|
-| Git repository URL | `/shelf` |
-| Branch | `main` |
-| Build path | `site` |
-| Container port | `80` |
-| Domain | `www.your-domain` |
+The app is called `landing`, the container listens on `4023`, and a domain in `.env` routes it through the proxy.
 
-Deploy builds from `site/Dockerfile` and the domain registers itself with the proxy.
-It is not created at boot — Shelf does not put its own landing page on your server uninvited.
+```bash
+SHELF_SITE_DOMAIN=www.example.com   # routes www.example.com → shelf-landing:4023
+SHELF_SITE_PORT=4023                # port the container listens on
+SHELF_SITE_NAME=landing             # app name
+SHELF_SITE=off                      # skip registration entirely
+```
+
+How it behaves:
+
+- Registers only when the repository is mounted at `/shelf` (the compose default); otherwise it quietly skips.
+- **If the app already exists it is left alone.** A port or domain you changed in the UI wins.
+- Builds only when no container has ever existed, so restarts don't rebuild.
+- After editing the page, **commit** and press Deploy — Shelf builds from a `git clone`, so uncommitted changes are not picked up.
 
 ---
 

@@ -113,20 +113,29 @@ docker compose exec shelf npm run admin reset     # 계정 전체 삭제 → /se
 python3 site/build.py <스크린샷 디렉터리>   # template.html + 스크린샷 → index.html
 ```
 
-이 페이지를 Shelf 자신으로 배포할 수도 있습니다. compose가 저장소를 `/shelf` 로 마운트하므로 GitHub을 거치지 않아도 됩니다.
+이 페이지는 **Shelf가 뜰 때 앱으로 함께 등록되고 한 번 빌드됩니다.** 따로 만들 필요가 없습니다.
 
-**Apps → New app** 에서:
+```
+[shelf] INFO bundled site registered as app "landing"
+[shelf] INFO building bundled site "landing"...
+[shelf] INFO bundled site "landing" is running
+```
 
-| 칸 | 값 |
-|---|---|
-| Git repository URL | `/shelf` |
-| Branch | `main` |
-| 빌드 경로 | `site` |
-| Container port | `80` |
-| Domain | `www.내도메인` |
+앱 이름은 `landing`, 컨테이너는 `4023`을 듣고, `.env` 에 도메인을 적으면 프록시에 함께 등록됩니다.
 
-Deploy를 누르면 `site/Dockerfile` 로 빌드되고, 도메인은 프록시에 자동 등록됩니다.
-부팅할 때 자동으로 만들어지지는 않습니다 — 남의 서버에 소개 페이지를 멋대로 띄우지 않기 위해서입니다.
+```bash
+SHELF_SITE_DOMAIN=www.example.com   # 적으면 프록시 연결 (www.example.com → shelf-landing:4023)
+SHELF_SITE_PORT=4023                # 컨테이너가 듣는 포트
+SHELF_SITE_NAME=landing             # 앱 이름
+SHELF_SITE=off                      # 등록하지 않음
+```
+
+동작 방식:
+
+- 저장소가 `/shelf` 로 마운트돼 있을 때만 등록합니다 (docker-compose 기본값). 아니면 조용히 넘어갑니다.
+- **이미 앱이 있으면 건드리지 않습니다.** 포트나 도메인을 화면에서 고쳤다면 그 값이 이깁니다.
+- 컨테이너가 한 번도 없었을 때만 빌드합니다. 재시작마다 다시 빌드하지 않습니다.
+- 페이지를 고친 뒤에는 **커밋하고** Deploy를 누르세요 — Shelf는 `git clone` 으로 가져오므로 커밋되지 않은 변경은 반영되지 않습니다.
 
 ---
 
