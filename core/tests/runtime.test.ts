@@ -59,3 +59,14 @@ test('the runtime script handles every declared attribute', () => {
   }
   assert.ok(RUNTIME_SCRIPT.includes('omitEmpty'), 'runtime ignores data-omit-empty')
 })
+
+test('a failed refresh keeps the surrounding page instead of replacing it with the error', () => {
+  const refresh = RUNTIME_SCRIPT.slice(RUNTIME_SCRIPT.indexOf('const refresh'), RUNTIME_SCRIPT.indexOf('const select'))
+  assert.match(refresh, /if \(!fields\.length\) fill\(el, '', err\.message\)/,
+    'only a field-less live element may be overwritten by its own error')
+  assert.doesNotMatch(
+    refresh.slice(refresh.indexOf('catch')),
+    /^\s*fill\(el, '', err\.message\);\s*$/m,
+    'an unconditional fill in the catch would wipe every field it contains'
+  )
+})

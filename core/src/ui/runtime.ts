@@ -214,9 +214,9 @@ export const RUNTIME_SCRIPT = `
   };
 
   const refresh = async (el) => {
+    const fields = el.querySelectorAll('[data-field]');
     try {
       const result = await request('GET', attr(el, 'data-live'));
-      const fields = el.querySelectorAll('[data-field]');
       if (!fields.length) {
         fill(el, pick(result, attr(el, 'data-pick')), attr(el, 'data-empty'));
         return;
@@ -226,7 +226,9 @@ export const RUNTIME_SCRIPT = `
         target.textContent = value === undefined || value === null ? (attr(el, 'data-empty') || '—') : value;
       });
     } catch (err) {
-      fill(el, '', err.message);
+      // A live region that feeds named fields keeps its last known values;
+      // replacing the whole container would wipe the page it lives in.
+      if (!fields.length) fill(el, '', err.message);
     }
   };
 
