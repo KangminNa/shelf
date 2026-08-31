@@ -114,6 +114,21 @@ After retaking screenshots:
 python3 site/build.py <screenshot directory>   # template.html + screenshots → index.html
 ```
 
+You can also deploy this page on Shelf itself. Compose mounts the repository at `/shelf`, so no GitHub round trip is needed.
+
+In **Apps → New app**:
+
+| Field | Value |
+|---|---|
+| Git repository URL | `/shelf` |
+| Branch | `main` |
+| Build path | `site` |
+| Container port | `80` |
+| Domain | `www.your-domain` |
+
+Deploy builds from `site/Dockerfile` and the domain registers itself with the proxy.
+It is not created at boot — Shelf does not put its own landing page on your server uninvited.
+
 ---
 
 ## Change it however you like

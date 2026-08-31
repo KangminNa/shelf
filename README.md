@@ -113,6 +113,21 @@ docker compose exec shelf npm run admin reset     # 계정 전체 삭제 → /se
 python3 site/build.py <스크린샷 디렉터리>   # template.html + 스크린샷 → index.html
 ```
 
+이 페이지를 Shelf 자신으로 배포할 수도 있습니다. compose가 저장소를 `/shelf` 로 마운트하므로 GitHub을 거치지 않아도 됩니다.
+
+**Apps → New app** 에서:
+
+| 칸 | 값 |
+|---|---|
+| Git repository URL | `/shelf` |
+| Branch | `main` |
+| 빌드 경로 | `site` |
+| Container port | `80` |
+| Domain | `www.내도메인` |
+
+Deploy를 누르면 `site/Dockerfile` 로 빌드되고, 도메인은 프록시에 자동 등록됩니다.
+부팅할 때 자동으로 만들어지지는 않습니다 — 남의 서버에 소개 페이지를 멋대로 띄우지 않기 위해서입니다.
+
 ---
 
 ## 마음대로 바꿔 쓰세요
