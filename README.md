@@ -14,7 +14,7 @@
 
 ## 프록시
 
-![프록시 호스트 목록](site/screenshots/proxy.png)
+![프록시 호스트 목록](docs/screenshots/proxy.png)
 
 도메인을 적고 어디로 보낼지 고르면 끝입니다.
 
@@ -26,13 +26,13 @@
 - **접근 로그** — 도메인별 상태코드·응답시간. 기본 14일 보관 후 자동 정리.
 - **외부에 여는 포트는 80·443뿐** — 관리 화면도 프록시 뒤에 있습니다.
 
-![SSL 인증서](site/screenshots/ssl.png)
+![SSL 인증서](docs/screenshots/ssl.png)
 
 ---
 
 ## 앱 배포
 
-![앱 상세](site/screenshots/appdetail.png)
+![앱 상세](docs/screenshots/appdetail.png)
 
 앱의 계약은 하나입니다 — **저장소 루트에 `Dockerfile`이 있고, 컨테이너가 포트 하나로 HTTP를 서빙하면 됩니다.**
 언어도 프레임워크도 DB도 앱이 알아서 하면 됩니다.
@@ -47,14 +47,14 @@
 
 ## 감시와 알림
 
-![알림](site/screenshots/notify.png)
+![알림](docs/screenshots/notify.png)
 
 - **호스트와 앱의 지표** — CPU·로드·메모리·디스크 여유와 앱별 CPU·메모리. 백그라운드에서 표본을 뜨므로 화면이 기다리지 않습니다.
 - **상태가 바뀔 때만 알림** — 앱이 죽으면 한 번, 돌아오면 한 번. 직접 Stop한 앱은 장애로 보지 않습니다.
 - **웹훅으로 발송** — JSON POST. Discord·Slack의 incoming webhook URL도 그대로 씁니다.
   시크릿을 넣으면 `x-shelf-signature-256`에 HMAC-SHA256 서명이 붙고, 보낸 결과가 기록됩니다.
 
-![대시보드](site/screenshots/dashboard.png)
+![대시보드](docs/screenshots/dashboard.png)
 
 ---
 
@@ -104,38 +104,10 @@ docker compose exec shelf npm run admin reset     # 계정 전체 삭제 → /se
 
 ## 소개 페이지
 
-[kangminna.github.io/shelf](https://kangminna.github.io/shelf/) — 이 저장소의 `site/` 를 GitHub Pages 로 올린 것입니다.
+[kangminna.github.io/shelf-site](https://kangminna.github.io/shelf-site/) — 소스는 [KangminNa/shelf-site](https://github.com/KangminNa/shelf-site) 에 있습니다.
 
-`site/index.html` 은 스크린샷까지 data URI 로 품은 **단일 파일**이라 어디에 두든 그대로 열립니다.
-스크린샷을 다시 찍었다면:
-
-```bash
-python3 site/build.py <스크린샷 디렉터리>   # template.html + 스크린샷 → index.html
-```
-
-이 페이지는 **Shelf가 뜰 때 앱으로 함께 등록되고 한 번 빌드됩니다.** 따로 만들 필요가 없습니다.
-
-```
-[shelf] INFO bundled site registered as app "landing"
-[shelf] INFO building bundled site "landing"...
-[shelf] INFO bundled site "landing" is running
-```
-
-앱 이름은 `landing`, 컨테이너는 `4023`을 듣고, `.env` 에 도메인을 적으면 프록시에 함께 등록됩니다.
-
-```bash
-SHELF_SITE_DOMAIN=www.example.com   # 적으면 프록시 연결 (www.example.com → shelf-landing:4023)
-SHELF_SITE_PORT=4023                # 컨테이너가 듣는 포트
-SHELF_SITE_NAME=landing             # 앱 이름
-SHELF_SITE=off                      # 등록하지 않음
-```
-
-동작 방식:
-
-- 저장소가 `/shelf` 로 마운트돼 있을 때만 등록합니다 (docker-compose 기본값). 아니면 조용히 넘어갑니다.
-- **이미 앱이 있으면 건드리지 않습니다.** 포트나 도메인을 화면에서 고쳤다면 그 값이 이깁니다.
-- 컨테이너가 한 번도 없었을 때만 빌드합니다. 재시작마다 다시 빌드하지 않습니다.
-- 페이지를 고친 뒤에는 **커밋하고** Deploy를 누르세요 — Shelf는 `git clone` 으로 가져오므로 커밋되지 않은 변경은 반영되지 않습니다.
+Shelf 위에 올리는 다른 앱과 똑같이 생긴 저장소입니다: 루트에 `Dockerfile`, 컨테이너가 `4023` 하나로 HTTP 서빙.
+그래서 이 소개 페이지 자체가 Shelf로 배포됩니다 — **Apps → New app** 에 그 저장소 주소를 넣고 Deploy 하면 끝입니다.
 
 ---
 

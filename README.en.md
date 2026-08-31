@@ -14,7 +14,7 @@ App deployment sits on top of that. The proxy has to know about your containers 
 
 ## The proxy
 
-![Proxy hosts](site/screenshots/proxy.png)
+![Proxy hosts](docs/screenshots/proxy.png)
 
 Type a domain, choose where it goes. That's the whole interaction.
 
@@ -27,13 +27,13 @@ Type a domain, choose where it goes. That's the whole interaction.
 - **Access logs** — status and duration per domain, kept 14 days by default, pruned automatically.
 - **Only 80 and 443 face the world** — the admin UI sits behind the proxy too.
 
-![SSL certificates](site/screenshots/ssl.png)
+![SSL certificates](docs/screenshots/ssl.png)
 
 ---
 
 ## Deploying apps
 
-![App detail](site/screenshots/appdetail.png)
+![App detail](docs/screenshots/appdetail.png)
 
 There is one contract: **a `Dockerfile` at the repo root, and a container that serves HTTP on a single port.**
 Language, framework and database are entirely the app's business.
@@ -48,14 +48,14 @@ Language, framework and database are entirely the app's business.
 
 ## Watching and alerts
 
-![Notifications](site/screenshots/notify.png)
+![Notifications](docs/screenshots/notify.png)
 
 - **Host and app metrics** — CPU, load, memory, free disk, plus per-app CPU and memory. Sampled in the background, so pages never wait on Docker.
 - **Alerts on change, not on a timer** — one when an app goes down, one when it comes back. An app you stopped on purpose is never an incident.
 - **Delivered by webhook** — JSON over POST; a Discord or Slack incoming webhook URL works as is.
   Add a secret and the body is signed with HMAC-SHA256 in `x-shelf-signature-256`. Every delivery is recorded.
 
-![Dashboard](site/screenshots/dashboard.png)
+![Dashboard](docs/screenshots/dashboard.png)
 
 ---
 
@@ -105,38 +105,10 @@ A minimal example lives in [`examples/hello-app/`](examples/hello-app/).
 
 ## Landing page
 
-[kangminna.github.io/shelf](https://kangminna.github.io/shelf/) — this repository's `site/` folder, published to GitHub Pages.
+[kangminna.github.io/shelf-site](https://kangminna.github.io/shelf-site/) — the source lives in [KangminNa/shelf-site](https://github.com/KangminNa/shelf-site).
 
-`site/index.html` is a **single file** with the screenshots embedded as data URIs, so it opens anywhere.
-After retaking screenshots:
-
-```bash
-python3 site/build.py <screenshot directory>   # template.html + screenshots → index.html
-```
-
-This page is **registered as an app and built once when Shelf starts** — there is nothing to set up.
-
-```
-[shelf] INFO bundled site registered as app "landing"
-[shelf] INFO building bundled site "landing"...
-[shelf] INFO bundled site "landing" is running
-```
-
-The app is called `landing`, the container listens on `4023`, and a domain in `.env` routes it through the proxy.
-
-```bash
-SHELF_SITE_DOMAIN=www.example.com   # routes www.example.com → shelf-landing:4023
-SHELF_SITE_PORT=4023                # port the container listens on
-SHELF_SITE_NAME=landing             # app name
-SHELF_SITE=off                      # skip registration entirely
-```
-
-How it behaves:
-
-- Registers only when the repository is mounted at `/shelf` (the compose default); otherwise it quietly skips.
-- **If the app already exists it is left alone.** A port or domain you changed in the UI wins.
-- Builds only when no container has ever existed, so restarts don't rebuild.
-- After editing the page, **commit** and press Deploy — Shelf builds from a `git clone`, so uncommitted changes are not picked up.
+It is shaped like any other Shelf app: a `Dockerfile` at the root and a container serving HTTP on port `4023`.
+So the landing page is itself deployed by Shelf — paste the repository URL into **Apps → New app** and press Deploy.
 
 ---
 

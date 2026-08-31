@@ -1,6 +1,3 @@
-import { randomBytes } from 'node:crypto'
-import { existsSync } from 'node:fs'
-import { join } from 'node:path'
 import { Hono } from 'hono'
 import { serve } from '@hono/node-server'
 import { EventBus } from '../services/events.js'
@@ -49,7 +46,6 @@ export class ShelfApplication {
 
     this.registerAdminDomain(port)
     this.registerRoutes()
-    this.registerBundledSite().catch((err) => this.log.warn(`bundled site: ${err.message}`))
 
     serve({ fetch: this.hono.fetch, port }, (info) => this.printBanner(info.port))
 
@@ -78,39 +74,6 @@ export class ShelfApplication {
     for (const event of ['proxy:cert-issued', 'proxy:cert-renewed', 'proxy:cert-removed']) {
       this.events.on(event, apply)
     }
-  }
-
-  private async registerBundledSite(): Promise<void> {
-    if (process.env.SHELF_SITE === 'off') return
-
-    const repoDir = process.env.SELF_DEPLOY_DIR || '/shelf'
-    if (!existsSync(join(repoDir, 'site', 'Dockerfile'))) return
-
-    const name = process.env.SHELF_SITE_NAME || 'landing'
-    const existing = this.deploy.projects.findByName(name)
-    const project = existing ?? this.deploy.projects.create({
-      name,
-      source_type: 'git',
-      repo_url: repoDir,
-      branch: process.env.SHELF_SITE_BRANCH || 'main',
-      build_path: 'site',
-      container_port: Number(process.env.SHELF_SITE_PORT || 4023),
-      domain: process.env.SHELF_SITE_DOMAIN || '',
-      port: null,
-      env: '',
-      volumes: '',
-      git_token: '',
-      image: '',
-      webhook_secret: randomBytes(24).toString('hex'),
-      auto_deploy: 0,
-    })
-
-    if (!existing) this.log.info(`bundled site registered as app "${name}"`)
-    if ((await this.deploy.containers.status(project)) !== 'none') return
-
-    this.log.info(`building bundled site "${name}"...`)
-    const result = await this.deploy.pipeline.deploy(project, 'manual')
-    this.log.info(result.ok ? `bundled site "${name}" is running` : `bundled site build failed: ${result.error}`)
   }
 
   private registerRoutes(): void {

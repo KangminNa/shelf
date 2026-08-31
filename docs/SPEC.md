@@ -17,7 +17,6 @@
 |---|---|---|
 | F-1 | Git 저장소를 등록하면 clone → `docker build` → 컨테이너 실행까지 자동 | ✅ |
 | F-73 | 모노레포 지원: 빌드 경로를 지정하면 저장소 하위 폴더에서 빌드 | ✅ |
-| F-74 | 소개 페이지를 부팅 시 앱으로 등록하고 최초 1회 빌드 (`SHELF_SITE=off` 로 해제) | ✅ |
 | F-2 | Docker 이미지(Hub·GHCR·사설)를 pull해서 실행 | ✅ |
 | F-3 | private 저장소를 access token으로 clone (토큰은 로그·API·`.git/config`에 남지 않음) | ✅ |
 | F-4 | 앱 설정 편집: 저장소/브랜치/이미지, 포트, 환경변수, 볼륨, 도메인, auto-deploy | ✅ |
