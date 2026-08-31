@@ -2,7 +2,7 @@
 
 > 서버 한 대의 프록시를 편하게 쓰려고 만들었습니다.
 
-[English](README.en.md) · MIT
+[English](README.en.md) · [소개 페이지](https://kangminna.github.io/shelf/) · MIT
 
 도메인 하나 붙이려고 nginx 설정 파일을 고치고, certbot 크론을 걸고, 포트가 겹치지 않게 표를 그려 관리하는 일 —
 그게 싫어서 만든 도구입니다. Shelf는 **80/443을 물고 있는 리버스 프록시**이고,
@@ -98,6 +98,19 @@ docker compose exec shelf npm run admin reset     # 계정 전체 삭제 → /se
 4. **SSL** — Proxy → SSL에서 그 도메인 인증서를 발급하면 https로 전환됩니다
 
 최소 예제는 [`examples/hello-app/`](examples/hello-app/)에 있습니다.
+
+---
+
+## 소개 페이지
+
+[kangminna.github.io/shelf](https://kangminna.github.io/shelf/) — 이 저장소의 `site/` 를 GitHub Pages 로 올린 것입니다.
+
+`site/index.html` 은 스크린샷까지 data URI 로 품은 **단일 파일**이라 어디에 두든 그대로 열립니다.
+스크린샷을 다시 찍었다면:
+
+```bash
+python3 site/build.py <스크린샷 디렉터리>   # template.html + 스크린샷 → index.html
+```
 
 ---
 

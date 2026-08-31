@@ -1,0 +1,45 @@
+name: Landing page
+
+# site/index.html 이 바뀌면 GitHub Pages 로 올린다.
+# 별도 저장소가 필요 없도록 이 저장소의 site/ 만 골라서 배포한다.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'site/index.html'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # index.html 은 스크린샷까지 data URI 로 품고 있는 단일 파일이라
+      # 이것만 올리면 된다 (template.html·build.py·원본 스크린샷은 제외)
+      - name: Collect the page
+        run: |
+          mkdir -p _site
+          cp site/index.html _site/index.html
+          cp site/index.html _site/404.html
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deploy
+        uses: actions/deploy-pages@v4

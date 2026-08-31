@@ -2,7 +2,7 @@
 
 > Built to make one server's reverse proxy pleasant to live with.
 
-[한국어](README.md) · MIT
+[한국어](README.md) · [Landing page](https://kangminna.github.io/shelf/) · MIT
 
 Editing an nginx config to point one more domain somewhere, wiring a certbot cron, keeping a spreadsheet of which
 port is taken — that's the chore this exists to remove. Shelf is a **reverse proxy that owns 80/443** and lets you
@@ -99,6 +99,19 @@ docker compose exec shelf npm run admin reset     # wipe accounts, reopen /setup
 4. **SSL** — issue a certificate for the domain from Proxy → SSL and it switches to https.
 
 A minimal example lives in [`examples/hello-app/`](examples/hello-app/).
+
+---
+
+## Landing page
+
+[kangminna.github.io/shelf](https://kangminna.github.io/shelf/) — this repository's `site/` folder, published to GitHub Pages.
+
+`site/index.html` is a **single file** with the screenshots embedded as data URIs, so it opens anywhere.
+After retaking screenshots:
+
+```bash
+python3 site/build.py <screenshot directory>   # template.html + screenshots → index.html
+```
 
 ---
 
