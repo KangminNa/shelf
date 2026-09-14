@@ -2,7 +2,7 @@
 
 > 서버 한 대의 프록시를 편하게 쓰려고 만들었습니다.
 
-[English](README.en.md) · [소개 페이지](https://kangminna.github.io/shelf/) · MIT
+[English](README.en.md) · [소개 페이지](https://shelf.nakangmin.duckdns.org/) · MIT
 
 도메인 하나 붙이려고 nginx 설정 파일을 고치고, certbot 크론을 걸고, 포트가 겹치지 않게 표를 그려 관리하는 일 —
 그게 싫어서 만든 도구입니다. Shelf는 **80/443을 물고 있는 리버스 프록시**이고,
