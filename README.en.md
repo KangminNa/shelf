@@ -1,14 +1,32 @@
-# Shelf
+# Naru
 
-> Built to make one server's reverse proxy pleasant to live with.
+> Manage your proxy from a screen like Nginx Proxy Manager — and deploy on push.
 
-[한국어](README.md) · [Landing page](https://kangminna.github.io/shelf/) · MIT
+[한국어](README.md) · [Landing page](https://kangminna.github.io/shelf-site/) · MIT
 
 Editing an nginx config to point one more domain somewhere, wiring a certbot cron, keeping a spreadsheet of which
-port is taken — that's the chore this exists to remove. Shelf is a **reverse proxy that owns 80/443** and lets you
+port is taken — that's the chore this exists to remove. Naru is a **reverse proxy that owns 80/443** and lets you
 manage domains, certificates and upstreams from a screen.
 
 App deployment sits on top of that. The proxy has to know about your containers anyway, so it may as well start them too.
+
+## Why it exists
+
+I used Nginx Proxy Manager a lot. Two things were missing.
+
+- **I wanted it for Caddy.** Caddy gives you automatic HTTPS and HTTP/3 by default, but you drive it from the CLI and config files. I wanted to drive it from a screen, the way NPM does. (v2, which moves the engine to Caddy, is in progress.)
+- **I needed CI/CD too.** NPM only points domains. Naru also builds, deploys and wires up the domain when you push.
+
+## Name: Shelf → Naru
+
+This project used to be called Shelf. Why it changed:
+
+- **The name didn't say what it does.** A shelf holds things; this is a web server that takes requests, routes them to services and deploys them.
+- **The name was taken in the same field.** Dart's web server library [`shelf`](https://pub.dev/packages/shelf) crowds the search results.
+- **It is being rebuilt.** The name changes along with v2, which moves the web server engine to Caddy.
+
+*Naru* (나루) is Korean for a ferry landing — where requests arrive and cross to each service, and new versions dock.
+Names inside the code (repository URL, `shelf-*` containers) change in v2.
 
 ---
 
@@ -39,8 +57,8 @@ There is one contract: **a `Dockerfile` at the repo root, and a container that s
 Language, framework and database are entirely the app's business.
 
 - **Git or image** — clone and `docker build`, or pull a published image from Docker Hub or GHCR.
-- **Monorepos** — set a build path like `site` or `apps/web` and Shelf builds from that folder. Paths that leave the repository are refused.
-- **Push to deploy** — Shelf generates the webhook URL and secret; paste them into GitHub. Payloads are HMAC-verified.
+- **Monorepos** — set a build path like `site` or `apps/web` and Naru builds from that folder. Paths that leave the repository are refused.
+- **Push to deploy** — Naru generates the webhook URL and secret; paste them into GitHub. Payloads are HMAC-verified.
 - **History and rollback** — every commit, timestamp, result and full build log is kept; rebuild from an earlier commit.
 - **Domains register themselves** — give an app a domain and the proxy entry appears with it, and disappears when the app is deleted.
 
@@ -80,7 +98,7 @@ For development:
 ```bash
 npm install
 npm run dev          # http://localhost:9666/admin
-npm test             # 96 tests
+npm test             # 99 tests
 ```
 
 Forgot the password? From a shell on the server:
@@ -107,8 +125,8 @@ A minimal example lives in [`examples/hello-app/`](examples/hello-app/).
 
 [kangminna.github.io/shelf-site](https://kangminna.github.io/shelf-site/) — the source lives in [KangminNa/shelf-site](https://github.com/KangminNa/shelf-site).
 
-It is shaped like any other Shelf app: a `Dockerfile` at the root and a container serving HTTP on port `4023`.
-So the landing page is itself deployed by Shelf — paste the repository URL into **Apps → New app** and press Deploy.
+It is shaped like any other Naru app: a `Dockerfile` at the root and a container serving HTTP on port `4023`.
+So the landing page is itself deployed by Naru — paste the repository URL into **Apps → New app** and press Deploy.
 
 ---
 
@@ -148,7 +166,7 @@ core/src/
 
 ## Running it in the open
 
-- Shelf mounts `/var/run/docker.sock`, which is full control of the host's Docker daemon — so the **admin account is
+- Naru mounts `/var/run/docker.sock`, which is full control of the host's Docker daemon — so the **admin account is
   root-equivalent by design**. Run it on machines you own, and hand out admin credentials only to people you'd trust with the server.
 - Deploying an app runs someone else's code on your machine. Only deploy repositories you trust.
 - Secrets (git tokens, webhook secrets, DNS tokens) are stored under `data/`. Protect that directory — permissions, disk encryption, careful backups.

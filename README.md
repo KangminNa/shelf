@@ -1,14 +1,32 @@
-# Shelf
+# Naru
 
-> 서버 한 대의 프록시를 편하게 쓰려고 만들었습니다.
+> Nginx Proxy Manager처럼 화면에서 프록시를 다루고, push하면 배포까지.
 
 [English](README.en.md) · [소개 페이지](https://shelf.nakangmin.duckdns.org/) · MIT
 
 도메인 하나 붙이려고 nginx 설정 파일을 고치고, certbot 크론을 걸고, 포트가 겹치지 않게 표를 그려 관리하는 일 —
-그게 싫어서 만든 도구입니다. Shelf는 **80/443을 물고 있는 리버스 프록시**이고,
+그게 싫어서 만든 도구입니다. Naru는 **80/443을 물고 있는 리버스 프록시**이고,
 도메인·SSL·업스트림을 화면에서 관리합니다.
 
 앱 배포는 그 위에 얹힌 기능입니다. 프록시가 어차피 컨테이너를 알아야 하니, 이왕이면 컨테이너를 띄우는 것까지 맡긴 것입니다.
+
+## 왜 만들었나
+
+Nginx Proxy Manager를 자주 썼습니다. 두 가지가 아쉬웠습니다.
+
+- **Caddy판이 필요했습니다.** Caddy는 HTTPS 자동 발급·갱신과 HTTP/3가 기본인데, CLI와 설정 파일로만 다룹니다. 그걸 NPM처럼 화면에서 다루고 싶었습니다. (엔진을 Caddy로 바꾸는 v2 진행 중)
+- **CI/CD도 해야 했습니다.** NPM은 도메인만 붙여줍니다. Naru는 push하면 빌드·배포·도메인 연결까지 합니다.
+
+## 이름: Shelf → Naru
+
+예전 이름은 Shelf였습니다. 바꾼 이유:
+
+- **이름이 하는 일을 말해주지 않았습니다.** 선반은 물건을 올려두는 곳인데, 이 도구는 요청을 받아 서비스로 보내고 배포하는 웹서버입니다.
+- **같은 분야에 같은 이름이 있습니다.** Dart의 웹서버 라이브러리 [`shelf`](https://pub.dev/packages/shelf)와 검색이 섞입니다.
+- **다시 만들고 있습니다.** 웹서버 엔진을 Caddy로 바꾸는 v2와 함께 이름도 새로 잡았습니다.
+
+나루는 나루터입니다 — 요청이 도착해 각 서비스로 건너가고, 새 버전이 들어와 정박하는 곳.
+저장소 주소, 컨테이너 이름(`shelf-*`) 같은 코드 속 이름은 v2에서 바뀝니다.
 
 ---
 
@@ -79,7 +97,7 @@ ACME_EMAIL=you@example.com
 ```bash
 npm install
 npm run dev          # http://localhost:9666/admin
-npm test             # 96개
+npm test             # 99개
 ```
 
 계정을 잊었다면 서버 셸에서:
@@ -106,8 +124,8 @@ docker compose exec shelf npm run admin reset     # 계정 전체 삭제 → /se
 
 [kangminna.github.io/shelf-site](https://kangminna.github.io/shelf-site/) — 소스는 [KangminNa/shelf-site](https://github.com/KangminNa/shelf-site) 에 있습니다.
 
-Shelf 위에 올리는 다른 앱과 똑같이 생긴 저장소입니다: 루트에 `Dockerfile`, 컨테이너가 `4023` 하나로 HTTP 서빙.
-그래서 이 소개 페이지 자체가 Shelf로 배포됩니다 — **Apps → New app** 에 그 저장소 주소를 넣고 Deploy 하면 끝입니다.
+Naru 위에 올리는 다른 앱과 똑같이 생긴 저장소입니다: 루트에 `Dockerfile`, 컨테이너가 `4023` 하나로 HTTP 서빙.
+그래서 이 소개 페이지 자체가 Naru로 배포됩니다 — **Apps → New app** 에 그 저장소 주소를 넣고 Deploy 하면 끝입니다.
 
 ---
 
@@ -146,7 +164,7 @@ core/src/
 
 ## 운영할 때 알아둘 것
 
-- Shelf는 `/var/run/docker.sock`을 마운트합니다. 호스트 Docker를 전부 제어할 수 있다는 뜻이고, 따라서 **관리자 계정은 설계상 root와 동급**입니다.
+- Naru는 `/var/run/docker.sock`을 마운트합니다. 호스트 Docker를 전부 제어할 수 있다는 뜻이고, 따라서 **관리자 계정은 설계상 root와 동급**입니다.
   본인 서버에서만 쓰고, 서버를 맡길 만한 사람에게만 계정을 주세요.
 - 앱을 배포한다는 건 남의 코드를 내 서버에서 실행한다는 뜻입니다. 믿는 저장소만 올리세요.
 - 시크릿(Git 토큰, 웹훅 시크릿, DNS 토큰)은 `data/`에 저장됩니다. 그 디렉터리를 보호하세요 — 권한, 디스크 암호화, 백업 관리.
