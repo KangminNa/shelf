@@ -1,0 +1,56 @@
+{{define "root"}}{{template "app" .}}{{end}}
+{{define "title"}}{{.Data.Card.Name}}{{end}}
+{{define "content"}}
+{{$s := .Data.Service}}{{$c := .Data.Card}}
+<a class="back" href="/">← {{t "service.back"}}</a>
+<div class="detail-head">
+  <span class="avatar big {{$c.Color}}">{{$c.Initial}}</span>
+  <div>
+    <h1>{{$s.Name}}</h1>
+    <div class="sub"><span>{{t $c.KindKey}}</span>{{with $c.Domain}}<span>·</span><a class="ext" href="http://{{.}}" target="_blank" rel="noopener">{{.}} ↗</a>{{end}}</div>
+  </div>
+</div>
+
+<div class="stack narrow">
+<section class="section">
+  <h2>{{t "service.state"}}</h2>
+  <p class="big-state"><span class="dot {{$c.StateClass}}"></span>{{t $c.StateKey}}{{with $c.Detail}} <span class="muted small">{{.}}</span>{{end}}</p>
+  <dl class="facts">
+    <dt>{{t "service.target"}}</dt><dd>{{with .Data.Target}}<code>{{.}}</code>{{else}}—{{end}}</dd>
+    {{if $s.HasContainer}}
+    <dt>{{t "service.container"}}</dt><dd><code>{{$s.Container}}</code></dd>
+    <dt>{{t "service.port"}}</dt><dd>{{if $s.Port}}{{$s.Port}}{{else}}—{{end}}</dd>
+    {{end}}
+  </dl>
+</section>
+
+<section class="section">
+  <h2>{{t "service.addresses"}}</h2>
+  {{if $s.Domains}}
+  <ul class="rows">
+    {{range $s.Domains}}
+    <li><a class="ext" href="http://{{.Domain}}" target="_blank" rel="noopener">{{.Domain}} ↗</a>
+      <span class="spacer"></span>
+      {{if .HTTPS}}<span class="chip on">{{t "service.https"}}</span>{{else}}<span class="chip">{{t "service.httponly"}}</span>{{end}}
+      {{if .HSTS}}<span class="chip on">{{t "service.hsts"}}</span>{{end}}</li>
+    {{end}}
+  </ul>
+  {{else}}<p class="desc">{{t "service.noaddress"}}</p>{{end}}
+</section>
+
+{{if $s.Source}}
+<section class="section">
+  <h2>{{t "service.source"}}</h2>
+  <dl class="facts">
+    <dt>{{t $c.KindKey}}</dt><dd><code>{{$s.Source}}</code></dd>
+    {{if eq (print $s.Kind) "repo"}}
+    <dt>{{t "service.branch"}}</dt><dd><code>{{$s.Branch}}</code></dd>
+    {{with $s.BuildPath}}<dt>{{t "service.buildpath"}}</dt><dd><code>{{.}}</code></dd>{{end}}
+    {{end}}
+  </dl>
+</section>
+{{end}}
+
+<p class="muted small">{{t "service.readonly"}}</p>
+</div>
+{{end}}

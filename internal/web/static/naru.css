@@ -119,8 +119,10 @@ h2 { margin: 0; font-size: 16px; font-weight: 600; }
 .server-title { display: inline-flex; align-items: center; gap: 8px; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .dot.ok { background: var(--ok); box-shadow: 0 0 0 3px var(--ok-soft); }
-.meter { display: inline-block; width: 56px; height: 5px; border-radius: 3px; background: var(--line-2); vertical-align: middle; margin-left: 8px; overflow: hidden; }
-.meter i { display: block; height: 100%; background: var(--accent); }
+.meter { appearance: none; -webkit-appearance: none; width: 56px; height: 5px; border: 0; border-radius: 3px; background: var(--line-2); vertical-align: middle; margin-left: 8px; overflow: hidden; }
+.meter::-webkit-progress-bar { background: var(--line-2); border-radius: 3px; }
+.meter::-webkit-progress-value { background: var(--accent); border-radius: 3px; }
+.meter::-moz-progress-bar { background: var(--accent); border-radius: 3px; }
 .code { margin: 12px 0; background: var(--term); color: var(--term-text); border-radius: 12px; padding: 12px 14px; font-family: var(--mono); font-size: 13px; overflow-x: auto; white-space: pre-wrap; word-break: break-all; }
 
 /* 로그인 전 — 가운데 카드 */
@@ -143,3 +145,51 @@ body.center { min-height: 100vh; display: grid; place-items: center; padding: 24
   .card { padding: 22px; }
   .hero h1 { font-size: 25px; }
 }
+
+/* 서비스 카드 */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 290px), 1fr)); gap: 16px; }
+.svc { display: flex; flex-direction: column; gap: 16px; padding: 20px; background: var(--card); border: 1px solid var(--line); border-radius: 18px; box-shadow: var(--shadow); transition: transform .18s ease; }
+.svc:hover { transform: translateY(-2px); }
+.svc-top { display: flex; align-items: center; gap: 12px; }
+.svc-names { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.svc-names b { font-size: 16px; font-weight: 600; }
+.svc-names small { color: var(--text-3); font-size: 12.5px; }
+.svc-domain { color: var(--text-2); font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.svc-foot { display: flex; gap: 6px; font-size: 13px; color: var(--text-3); padding-top: 12px; border-top: 1px solid var(--line); overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.state { font-weight: 500; color: var(--text-2); }
+.state.ok { color: var(--ok); }
+.state.warn { color: var(--warn); }
+.state.bad { color: var(--bad); }
+.avatar { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 17px; flex: none; }
+.avatar.big { width: 58px; height: 58px; border-radius: 16px; font-size: 24px; }
+.dot.warn { background: var(--warn); box-shadow: 0 0 0 3px var(--warn-soft); }
+.dot.bad { background: var(--bad); box-shadow: 0 0 0 3px var(--bad-soft); }
+.dot.muted { background: var(--text-3); }
+.notice.bad { background: var(--bad-soft); border: 1px solid color-mix(in srgb, var(--bad) 22%, transparent); }
+.notice.bad .notice-icon { background: var(--bad); }
+.notice .why { display: block; margin-top: 6px; font-size: 12px; color: var(--text-3); overflow-wrap: anywhere; }
+.server.slim { margin-top: 10px; padding: 12px 20px; }
+
+/* 서비스 상세 */
+.back { display: inline-block; color: var(--text-3); font-size: 14px; margin: 6px 0 16px; }
+.back:hover { color: var(--text); }
+.detail-head { display: flex; gap: 16px; align-items: center; margin-bottom: 22px; }
+.detail-head h1 { margin: 0; }
+.sub { display: flex; gap: 8px; flex-wrap: wrap; color: var(--text-2); font-size: 14.5px; }
+.ext { color: var(--accent); font-weight: 500; }
+.ext:hover { text-decoration: underline; }
+.big-state { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 600; margin: 12px 0 0; }
+.rows { list-style: none; margin: 12px 0 0; padding: 0; }
+.rows li { display: flex; align-items: center; gap: 8px; padding: 11px 0; border-top: 1px solid var(--line); }
+.rows li:first-child { border-top: 0; }
+.chip { padding: 3px 9px; border-radius: 999px; background: var(--soft); color: var(--text-2); font-size: 12.5px; font-weight: 500; }
+.chip.on { background: var(--accent-soft); color: var(--accent); }
+
+/* 서비스 색 — 이름마다 늘 같은 색 */
+.c0 { background: linear-gradient(135deg, #7c66dc, #b29cff); }
+.c1 { background: linear-gradient(135deg, #12a594, #62d5c6); }
+.c2 { background: linear-gradient(135deg, #d6409f, #f38fd2); }
+.c3 { background: linear-gradient(135deg, #0b8af0, #6cc4ff); }
+.c4 { background: linear-gradient(135deg, #f76b15, #ffa057); }
+.c5 { background: linear-gradient(135deg, #30a46c, #7ce2a8); }
+.c6 { background: linear-gradient(135deg, #5a6372, #9aa4b3); }

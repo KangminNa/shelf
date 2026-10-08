@@ -4,6 +4,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"embed"
 	"fmt"
 	"html/template"
@@ -16,9 +17,23 @@ import (
 
 	"github.com/KangminNa/naru/internal/auth"
 	"github.com/KangminNa/naru/internal/dnscheck"
+	"github.com/KangminNa/naru/internal/docker"
+	"github.com/KangminNa/naru/internal/engine"
 	"github.com/KangminNa/naru/internal/hostinfo"
+	"github.com/KangminNa/naru/internal/service"
 	"github.com/KangminNa/naru/internal/store"
 )
+
+// ContainerLister는 컨테이너 상태를 읽는다 (Docker). 테스트에서 바꿔 끼운다.
+type ContainerLister interface {
+	Containers(ctx context.Context) (map[string]docker.Container, error)
+}
+
+// EngineView는 웹서버 엔진의 상태를 보여주고, 설정이 바뀌었음을 알린다.
+type EngineView interface {
+	Status() engine.Status
+	Kick()
+}
 
 //go:embed templates/*.html
 var templateFS embed.FS
@@ -32,11 +47,14 @@ const (
 	defaultLang   = "en"
 )
 
-var pageNames = []string{"setup_token", "setup_account", "setup_domain", "setup_https", "login", "home", "settings", "notfound"}
+var pageNames = []string{"setup_token", "setup_account", "setup_domain", "setup_https", "setup_done", "login", "home", "service", "settings", "notfound"}
 
 type Deps struct {
-	Store   *store.Store
-	Auth    *auth.Service
+	Store      *store.Store
+	Auth       *auth.Service
+	Services   *service.Repo
+	Containers ContainerLister
+	Engine     EngineView
 	Host    *hostinfo.Sampler
 	Lookup  dnscheck.Resolver
 	Log     *slog.Logger
@@ -93,6 +111,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /logout", s.logout)
 
 	s.mux.HandleFunc("GET /{$}", s.home)
+	s.mux.HandleFunc("GET /services/{id}", s.servicePage)
 	s.mux.HandleFunc("GET /settings", s.settingsPage)
 	s.mux.HandleFunc("POST /settings/password", s.changePassword)
 	s.mux.HandleFunc("POST /settings/domain", s.changeDomain)
@@ -142,17 +161,8 @@ func funcsFor(lang string) template.FuncMap {
 		},
 		"pct": func(v float64) string { return fmt.Sprintf("%.0f%%", v) },
 		"bytes": humanBytes,
-		"width": func(v float64) template.CSS { return template.CSS(fmt.Sprintf("%.0f%%", clamp(v))) },
-		"ratio": func(part, whole uint64) template.CSS {
-			if whole == 0 {
-				return "0%"
-			}
-			return template.CSS(fmt.Sprintf("%.0f%%", clamp(float64(part)/float64(whole)*100)))
-		},
 	}
 }
-
-func clamp(v float64) float64 { return max(0, min(100, v)) }
 
 func humanBytes(n uint64) string {
 	const unit = 1024

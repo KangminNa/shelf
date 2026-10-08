@@ -1,0 +1,7 @@
+{{define "root"}}{{template "card" .}}{{end}}
+{{define "title"}}{{t "setup.done.heading"}}{{end}}
+{{define "content"}}
+<h1>{{t "setup.done.heading"}}</h1>
+<p class="lede">{{t "setup.done.body" .Data}}</p>
+<p><a class="btn primary wide" href="http://{{.Data}}/login">{{t "setup.done.go" .Data}}</a></p>
+{{end}}

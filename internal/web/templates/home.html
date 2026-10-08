@@ -4,10 +4,22 @@
 <div class="hero">
   <div>
     <h1>{{t "home.heading"}}</h1>
-    <p>{{t "home.empty.sub"}}</p>
+    <p>{{if .Data.Services}}{{t "home.count" (len .Data.Services)}}{{else}}{{t "home.empty.sub"}}{{end}}</p>
   </div>
 </div>
 
+{{if not .Data.Engine.Connected}}
+<div class="notice bad">
+  <span class="notice-icon">!</span>
+  <div class="notice-text"><b>{{t "engine.down.title"}}</b><span>{{t "engine.down.body"}}</span>{{with .Data.Engine.LastError}}<code class="why">{{.}}</code>{{end}}</div>
+</div>
+{{end}}
+{{if .Data.DockerDown}}
+<div class="notice bad">
+  <span class="notice-icon">!</span>
+  <div class="notice-text"><b>{{t "docker.down.title"}}</b><span>{{t "docker.down.body"}}</span></div>
+</div>
+{{end}}
 {{if not .Data.AdminDomain}}
 <div class="notice warn">
   <span class="notice-icon">!</span>
@@ -16,18 +28,38 @@
 </div>
 {{end}}
 
+{{if .Data.Services}}
+<div class="grid">
+  {{range .Data.Services}}
+  <a class="svc" href="/services/{{.ID}}">
+    <div class="svc-top">
+      <span class="avatar {{.Color}}">{{.Initial}}</span>
+      <div class="svc-names"><b>{{.Name}}</b><small>{{t .KindKey}}</small></div>
+      <span class="dot {{.StateClass}}" title="{{t .StateKey}}"></span>
+    </div>
+    <div class="svc-domain">{{if .Domain}}{{.Domain}}{{else}}<span class="muted">{{t "home.noaddress"}}</span>{{end}}</div>
+    <div class="svc-foot"><span class="state {{.StateClass}}">{{t .StateKey}}</span>{{with .Detail}}<span>· {{.}}</span>{{end}}</div>
+  </a>
+  {{end}}
+</div>
+{{else}}
 <div class="empty">
   <b>{{t "home.empty.title"}}</b>
   <span>{{t "home.empty.body"}}</span>
 </div>
+{{end}}
 
 {{with .Data.Host}}
 <div class="server">
   <span class="server-title"><span class="dot ok"></span><b>{{t "home.server"}}</b></span>
-  <span>CPU <b>{{if .HasCPU}}{{pct .CPUPercent}}{{else}}—{{end}}</b>{{if .HasCPU}}<span class="meter"><i style="width:{{width .CPUPercent}}"></i></span>{{end}}</span>
-  <span>{{t "home.memory"}} <b>{{if .HasMem}}{{bytes .MemUsed}}{{else}}—{{end}}</b>{{if .HasMem}} / {{bytes .MemTotal}}<span class="meter"><i style="width:{{ratio .MemUsed .MemTotal}}"></i></span>{{end}}</span>
+  <span>CPU <b>{{if .HasCPU}}{{pct .CPUPercent}}{{else}}—{{end}}</b>{{if .HasCPU}}<progress class="meter" max="100" value="{{printf "%.0f" .CPUPercent}}"></progress>{{end}}</span>
+  <span>{{t "home.memory"}} <b>{{if .HasMem}}{{bytes .MemUsed}}{{else}}—{{end}}</b>{{if .HasMem}} / {{bytes .MemTotal}}<progress class="meter" max="{{.MemTotal}}" value="{{.MemUsed}}"></progress>{{end}}</span>
   <span>{{t "home.disk"}} <b>{{if .HasDisk}}{{bytes .DiskFree}}{{else}}—{{end}}</b> {{if .HasDisk}}{{t "home.free"}}{{end}}</span>
   <span class="muted">{{t "home.cores" .Cores}}{{if .HasLoad}} · {{t "home.load" (printf "%.2f" .Load1)}}{{end}}</span>
 </div>
 {{end}}
+<div class="server slim">
+  <span class="server-title"><span class="dot {{if .Data.Engine.Connected}}ok{{else}}bad{{end}}"></span><b>{{t "home.engine"}}</b></span>
+  <span>{{if .Data.Engine.Connected}}{{t "home.engine.ok"}}{{else}}{{t "home.engine.down"}}{{end}}</span>
+</div>
 {{end}}

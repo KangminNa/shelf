@@ -2,13 +2,13 @@ package web
 
 import (
 	"errors"
+	"net"
 	"net/http"
 	"net/mail"
 	"strings"
 
 	"github.com/KangminNa/naru/internal/auth"
 	"github.com/KangminNa/naru/internal/dnscheck"
-	"github.com/KangminNa/naru/internal/hostinfo"
 	"github.com/KangminNa/naru/internal/store"
 )
 
@@ -144,6 +144,7 @@ func (s *Server) setupDomain(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusInternalServerError, "setup_domain", view{Err: "err.internal", Data: setupData{Step: 2, Domain: domain}})
 		return
 	}
+	s.changed()
 	redirect(w, r, "/setup/https")
 }
 
@@ -177,7 +178,21 @@ func (s *Server) setupHTTPS(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusInternalServerError, "setup_https", view{Err: "err.internal", Data: setupData{Step: 3, Domain: s.adminDomain()}})
 		return
 	}
+	s.changed()
+	// 설정이 끝나면 IP로 들어오던 길은 닫힌다. 다른 주소로 들어와 있었다면 관리 주소로 안내한다.
+	if domain := s.adminDomain(); domain != "" && !sameHost(r.Host, domain) {
+		s.render(w, r, http.StatusOK, "setup_done", view{Data: domain})
+		return
+	}
 	redirect(w, r, "/?ok=setup")
+}
+
+// sameHost는 요청 Host(포트 포함일 수 있음)가 domain인가.
+func sameHost(host, domain string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	return strings.EqualFold(host, domain)
 }
 
 func validEmail(v string) bool {
@@ -229,26 +244,8 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	redirect(w, r, "/login")
 }
 
-// ── 홈 ────────────────────────────────────
-
-type homeData struct {
-	AdminDomain string
-	Host        hostinfo.Snapshot
-}
-
 // 리다이렉트 뒤에 보여줄 알림. 쿼리에서 받는 값은 이 목록으로만 바꾼다.
 var okKeys = map[string]string{"setup": "ok.setup", "password": "ok.password", "domain": "ok.domain"}
-
-func (s *Server) home(w http.ResponseWriter, r *http.Request) {
-	u, _, ok := s.gate(w, r)
-	if !ok {
-		return
-	}
-	s.render(w, r, http.StatusOK, "home", view{
-		Nav: "home", User: &u, OK: okKeys[r.URL.Query().Get("ok")],
-		Data: homeData{AdminDomain: s.adminDomain(), Host: s.d.Host.Snapshot()},
-	})
-}
 
 // ── 설정 ───────────────────────────────────
 
@@ -355,6 +352,7 @@ func (s *Server) changeDomain(w http.ResponseWriter, r *http.Request) {
 		fail(http.StatusInternalServerError, "err.internal")
 		return
 	}
+	s.changed()
 	s.d.Log.Info("admin address changed", "domain", domain, "by", u.Username)
 	redirect(w, r, "/settings?ok=domain#domain")
 }

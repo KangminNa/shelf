@@ -22,7 +22,9 @@ const (
 	KeyAdminDomain = "admin_domain" // 관리 화면 주소
 	KeyACMEEmail   = "acme_email"   // HTTPS 인증서 연락처
 	KeySetupDone   = "setup_done"   // 첫 실행 마법사를 끝냈는가
-	KeyV1Imported  = "v1_imported"  // v1 데이터를 옮겼는가 (한 번만)
+	KeyV1Imported  = "v1_imported"  // v1 계정·관리 도메인을 옮겼는가 (한 번만)
+	// v1 앱·프록시 호스트를 서비스로 옮겼는가. M1에서 계정만 옮긴 설치도 다시 볼 수 있게 따로 둔다.
+	KeyV1ImportedServices = "v1_imported_services"
 )
 
 type Store struct {

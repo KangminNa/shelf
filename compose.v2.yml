@@ -1,15 +1,48 @@
 # v2를 로컬에서 띄워 보는 용도. 운영 서버는 M7(전환)까지 docker-compose.yml(v1) 그대로다.
 #   docker compose -f compose.v2.yml up -d --build
-#   docker compose -f compose.v2.yml logs naru   ← 첫 설정 주소가 여기 찍힌다
+#   docker compose -f compose.v2.yml logs naru | grep setup   ← 첫 설정 주소
+#   http://localhost:8088/setup?token=...                    ← 웹서버(Caddy)를 거쳐 들어간다
 services:
+  # 웹서버 엔진. 설정은 Naru가 관리 소켓으로 통째로 밀어넣는다 — 이 컨테이너에 설정 파일을 두지 않는다.
+  caddy:
+    image: caddy:2
+    container_name: naru-caddy        # shelf- 로 시작하면 안 된다 (v1이 앱으로 오해한다)
+    restart: unless-stopped
+    command: caddy run --resume --config /etc/caddy/bootstrap.json
+    ports:
+      # 운영에서는 "80:80", "443:443", "443:443/udp"
+      - "127.0.0.1:8088:80"
+      - "127.0.0.1:8443:443"
+    volumes:
+      - caddy-admin:/run/caddy                       # 관리 소켓 — Caddy와 Naru만
+      - ./caddy/bootstrap.json:/etc/caddy/bootstrap.json:ro
+      - ./data-v2/caddy/data:/data                   # 인증서
+      - ./data-v2/caddy/config:/config               # 마지막 설정(autosave) — 재시작해도 이어서
+    extra_hosts:
+      - "host.docker.internal:host-gateway"          # "이 서버"에서 도는 것(NAS 등)에 닿는 길
+    networks: [apps]
+
   naru:
     build:
       context: .
       dockerfile: Dockerfile.v2
     container_name: naru
     restart: unless-stopped
+    environment:
+      - NARU_TLS=internal                            # 로컬: 공개 CA에 요청하지 않는다
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8080:8080"                        # 웹서버를 거치지 않고 들어가는 뒷문 (로컬 전용)
     volumes:
-      # v1 데이터의 "복사본"을 넣어 두면 첫 실행 때 계정과 관리 도메인을 옮겨 온다
+      # v1 데이터의 "복사본"을 넣어 두면 첫 실행 때 계정·앱·프록시 호스트를 옮겨 온다
       - ./data-v2:/data
+      - caddy-admin:/run/caddy
+      - /var/run/docker.sock:/var/run/docker.sock    # 컨테이너 상태 — 관리자는 설계상 root와 같다
+    networks: [apps]
+
+volumes:
+  caddy-admin:
+
+# 앱 컨테이너와 웹서버가 함께 있는 네트워크. v1 서버에서 옮길 때는 NARU_NETWORK=shelf-net
+networks:
+  apps:
+    name: ${NARU_NETWORK:-naru-net}

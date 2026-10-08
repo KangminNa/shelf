@@ -13,7 +13,10 @@ import (
 
 	"github.com/KangminNa/naru/internal/auth"
 	"github.com/KangminNa/naru/internal/dnscheck"
+	"github.com/KangminNa/naru/internal/docker"
+	"github.com/KangminNa/naru/internal/engine"
 	"github.com/KangminNa/naru/internal/hostinfo"
+	"github.com/KangminNa/naru/internal/service"
 	"github.com/KangminNa/naru/internal/store"
 	"github.com/KangminNa/naru/internal/v1import"
 	"github.com/KangminNa/naru/internal/web"
@@ -21,22 +24,30 @@ import (
 
 // Config는 환경 변수에서 읽는다. 모두 비워 둬도 돈다 — 나머지는 첫 설정 화면에서 정한다.
 type Config struct {
-	Listen      string // NARU_LISTEN, 기본 :8080
-	DataDir     string // NARU_DATA_DIR, 기본 ./data
-	ProcDir     string // NARU_PROC_DIR, 기본 /proc (컨테이너에서 호스트의 /proc를 붙일 때)
-	AdminDomain string // ADMIN_DOMAIN — 있으면 화면 설정보다 우선
-	ACMEEmail   string // ACME_EMAIL — 있으면 화면 설정보다 우선
-	Version     string
+	Listen       string // NARU_LISTEN, 기본 :8080
+	DataDir      string // NARU_DATA_DIR, 기본 ./data
+	ProcDir      string // NARU_PROC_DIR, 기본 /proc
+	DockerSocket string // NARU_DOCKER_SOCKET, 기본 /var/run/docker.sock
+	CaddySocket  string // NARU_CADDY_ADMIN — 웹서버(Caddy) 관리 소켓, 기본 /run/caddy/admin.sock
+	SelfUpstream string // NARU_SELF_UPSTREAM — 웹서버가 관리 화면에 닿는 주소, 기본 naru:8080
+	InternalTLS  bool   // NARU_TLS=internal — 개발용. 공개 CA 대신 내부 CA로 인증서
+	AdminDomain  string // ADMIN_DOMAIN — 있으면 화면 설정보다 우선
+	ACMEEmail    string // ACME_EMAIL — 있으면 화면 설정보다 우선
+	Version      string
 }
 
 func ConfigFromEnv(version string) Config {
 	return Config{
-		Listen:      envOr("NARU_LISTEN", ":8080"),
-		DataDir:     envOr("NARU_DATA_DIR", "./data"),
-		ProcDir:     envOr("NARU_PROC_DIR", "/proc"),
-		AdminDomain: dnscheck.Normalize(os.Getenv("ADMIN_DOMAIN")),
-		ACMEEmail:   os.Getenv("ACME_EMAIL"),
-		Version:     version,
+		Listen:       envOr("NARU_LISTEN", ":8080"),
+		DataDir:      envOr("NARU_DATA_DIR", "./data"),
+		ProcDir:      envOr("NARU_PROC_DIR", "/proc"),
+		DockerSocket: envOr("NARU_DOCKER_SOCKET", "/var/run/docker.sock"),
+		CaddySocket:  envOr("NARU_CADDY_ADMIN", "/run/caddy/admin.sock"),
+		SelfUpstream: envOr("NARU_SELF_UPSTREAM", "naru:8080"),
+		InternalTLS:  os.Getenv("NARU_TLS") == "internal",
+		AdminDomain:  dnscheck.Normalize(os.Getenv("ADMIN_DOMAIN")),
+		ACMEEmail:    os.Getenv("ACME_EMAIL"),
+		Version:      version,
 	}
 }
 
@@ -48,12 +59,12 @@ func envOr(key, fallback string) string {
 }
 
 type App struct {
-	cfg   Config
-	log   *slog.Logger
-	Store *store.Store
-	Auth  *auth.Service
-	host  *hostinfo.Sampler
-	web   *web.Server
+	cfg      Config
+	log      *slog.Logger
+	Store    *store.Store
+	Auth     *auth.Service
+	Services *service.Repo
+	Engine   *engine.Engine
 }
 
 // Open은 데이터를 열고 v1 데이터를 옮긴다. 화면은 아직 띄우지 않는다 (복구 명령도 이걸 쓴다).
@@ -70,34 +81,80 @@ func Open(cfg Config, log *slog.Logger) (*App, error) {
 		st.Close()
 		return nil, err
 	}
-	a := &App{cfg: cfg, log: log, Store: st, Auth: accounts}
+	a := &App{cfg: cfg, log: log, Store: st, Auth: accounts, Services: service.NewRepo(st.DB)}
 
-	report, err := v1import.Run(cfg.DataDir, st, accounts)
-	if err != nil {
-		// v1 데이터를 못 읽어도 v2는 뜬다 — 다음 실행에서 다시 시도한다.
-		log.Error("v1 import failed — will retry next start", "err", err)
-	} else if report.Found {
-		log.Info("imported from v1", "accounts", report.Users, "admin_domain", report.AdminDomain)
+	// v1 데이터를 못 읽어도 v2는 뜬다 — 다음 실행에서 다시 시도한다.
+	if r, err := v1import.Run(cfg.DataDir, st, accounts); err != nil {
+		log.Error("v1 import (accounts) failed — will retry next start", "err", err)
+	} else if r.Found {
+		log.Info("imported from v1", "accounts", r.Users, "admin_domain", r.AdminDomain)
+	}
+	if r, err := v1import.RunServices(cfg.DataDir, st, a.Services); err != nil {
+		log.Error("v1 import (services) failed — will retry next start", "err", err)
+	} else if !r.Skipped && (r.Apps+r.External) > 0 {
+		log.Info("imported v1 apps and proxy hosts as services", "apps", r.Apps, "external", r.External, "domains", r.Domains)
 	}
 	return a, nil
 }
 
 func (a *App) Close() error { return a.Store.Close() }
 
-// Run은 ctx가 끝날 때까지 화면을 띄운다.
+// Plan은 DB를 웹서버 설정 계획으로 바꾼다.
+func (a *App) Plan(context.Context) (engine.Plan, error) {
+	services, err := a.Services.List()
+	if err != nil {
+		return engine.Plan{}, err
+	}
+	domain := a.cfg.AdminDomain
+	if domain == "" {
+		domain, _ = a.Store.Setting(store.KeyAdminDomain)
+	}
+	email := a.cfg.ACMEEmail
+	if email == "" {
+		email, _ = a.Store.Setting(store.KeyACMEEmail)
+	}
+	_, setupDone := a.Store.Setting(store.KeySetupDone)
+
+	p := engine.Plan{
+		AdminSocket:   a.cfg.CaddySocket,
+		AdminUpstream: a.cfg.SelfUpstream,
+		// 첫 설정이 끝나기 전이나 관리 주소가 없을 때는 IP로 들어와도 관리 화면에 닿아야 한다.
+		OpenFallback: !setupDone || domain == "",
+		ACMEEmail:    email,
+		InternalTLS:  a.cfg.InternalTLS,
+	}
+	if domain != "" {
+		p.AdminHosts, p.AdminHTTPS = []string{domain}, true
+	}
+	for _, s := range services {
+		for _, d := range s.Domains {
+			if d.Domain == domain {
+				continue // 관리 주소가 우선
+			}
+			p.Sites = append(p.Sites, engine.Site{Hosts: []string{d.Domain}, Upstream: s.Target(), HTTPS: d.HTTPS, HSTS: d.HSTS})
+		}
+	}
+	return p, nil
+}
+
+// Run은 ctx가 끝날 때까지 화면과 엔진 맞추기를 띄운다.
 func (a *App) Run(ctx context.Context) error {
-	a.host = hostinfo.NewSampler(a.cfg.ProcDir, a.cfg.DataDir)
-	go a.host.Run(ctx, 5*time.Second)
+	host := hostinfo.NewSampler(a.cfg.ProcDir, a.cfg.DataDir)
+	go host.Run(ctx, 5*time.Second)
+
+	a.Engine = engine.New(engine.NewAdmin(a.cfg.CaddySocket), a.Plan, a.log)
+	go a.Engine.Run(ctx)
 
 	srv, err := web.New(web.Deps{
-		Store: a.Store, Auth: a.Auth, Host: a.host, Lookup: dnscheck.System, Log: a.log,
+		Store: a.Store, Auth: a.Auth, Services: a.Services,
+		Containers: docker.New(a.cfg.DockerSocket), Engine: a.Engine,
+		Host: host, Lookup: dnscheck.System, Log: a.log,
 		DataDir: a.cfg.DataDir, Version: a.cfg.Version,
 		EnvAdminDomain: a.cfg.AdminDomain, EnvACMEEmail: a.cfg.ACMEEmail,
 	})
 	if err != nil {
 		return err
 	}
-	a.web = srv
 
 	httpServer := &http.Server{
 		Addr:              a.cfg.Listen,
@@ -111,7 +168,7 @@ func (a *App) Run(ctx context.Context) error {
 	errc := make(chan error, 1)
 	go func() { errc <- httpServer.ListenAndServe() }()
 
-	a.log.Info("naru started", "version", a.cfg.Version, "listen", a.cfg.Listen, "data", a.cfg.DataDir)
+	a.log.Info("naru started", "version", a.cfg.Version, "listen", a.cfg.Listen, "data", a.cfg.DataDir, "web_server", a.cfg.CaddySocket)
 	if a.Auth.NeedsSetup() {
 		a.printSetupLink()
 	}

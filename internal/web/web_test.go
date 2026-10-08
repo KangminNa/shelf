@@ -14,16 +14,42 @@ import (
 	"testing"
 
 	"github.com/KangminNa/naru/internal/auth"
+	"github.com/KangminNa/naru/internal/docker"
+	"github.com/KangminNa/naru/internal/engine"
 	"github.com/KangminNa/naru/internal/hostinfo"
+	"github.com/KangminNa/naru/internal/service"
 	"github.com/KangminNa/naru/internal/store"
 )
 
+type fakeContainers struct {
+	all  map[string]docker.Container
+	down bool
+}
+
+func (f *fakeContainers) Containers(context.Context) (map[string]docker.Container, error) {
+	if f.down {
+		return nil, io.ErrUnexpectedEOF
+	}
+	return f.all, nil
+}
+
+type fakeEngine struct {
+	status engine.Status
+	kicks  int
+}
+
+func (f *fakeEngine) Status() engine.Status { return f.status }
+func (f *fakeEngine) Kick()                 { f.kicks++ }
+
 type harness struct {
-	t      *testing.T
-	srv    *httptest.Server
-	client *http.Client
-	auth   *auth.Service
-	store  *store.Store
+	t          *testing.T
+	srv        *httptest.Server
+	client     *http.Client
+	auth       *auth.Service
+	store      *store.Store
+	services   *service.Repo
+	containers *fakeContainers
+	engine     *fakeEngine
 }
 
 // newHarness는 실제 화면 서버를 띄운다. DNS는 naru.example.com → 198.51.100.24 로 고정한다.
@@ -45,8 +71,12 @@ func newHarness(t *testing.T, envDomain string) *harness {
 		}
 		return nil, &url.Error{Op: "lookup", URL: host}
 	}
+	repo := service.NewRepo(st.DB)
+	fc := &fakeContainers{all: map[string]docker.Container{}}
+	fe := &fakeEngine{status: engine.Status{Connected: true}}
 	s, err := New(Deps{
-		Store: st, Auth: a, Host: hostinfo.NewSampler(dir, dir), Lookup: lookup,
+		Store: st, Auth: a, Services: repo, Containers: fc, Engine: fe,
+		Host: hostinfo.NewSampler(dir, dir), Lookup: lookup,
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DataDir: dir, Version: "test",
 		EnvAdminDomain: envDomain,
 	})
@@ -57,7 +87,7 @@ func newHarness(t *testing.T, envDomain string) *harness {
 	t.Cleanup(ts.Close)
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return &harness{t: t, srv: ts, client: client, auth: a, store: st}
+	return &harness{t: t, srv: ts, client: client, auth: a, store: st, services: repo, containers: fc, engine: fe}
 }
 
 func (h *harness) get(path string) (int, string, string) {
@@ -156,8 +186,12 @@ func TestWizardFromAccountToHome(t *testing.T) {
 	if code, _, _ := h.post("/setup/https", url.Values{"email": {"not-an-email"}, "action": {"save"}}); code != http.StatusBadRequest {
 		t.Fatal("a malformed email is refused")
 	}
-	if code, loc, _ := h.post("/setup/https", url.Values{"email": {"me@example.com"}, "action": {"save"}}); code != http.StatusSeeOther || loc != "/?ok=setup" {
-		t.Fatalf("finishing goes home: %d %q", code, loc)
+	// 테스트 서버는 127.0.0.1로 들어와 있으니 관리 주소로 가라고 안내한다
+	if code, _, body := h.post("/setup/https", url.Values{"email": {"me@example.com"}, "action": {"save"}}); code != http.StatusOK || !strings.Contains(body, "http://naru.example.com/login") {
+		t.Fatalf("finishing points to the admin address: %d", code)
+	}
+	if v, _ := h.store.Setting(store.KeyACMEEmail); v != "me@example.com" {
+		t.Fatal("the email is saved")
 	}
 	code, _, body = h.get("/?ok=setup")
 	if code != http.StatusOK || !strings.Contains(body, "설정을 마쳤어요") || strings.Contains(body, "관리 화면 주소가 아직 없어요") {
@@ -317,6 +351,104 @@ func TestMessagesAreComplete(t *testing.T) {
 	for _, key := range okKeys {
 		if _, ok := messages["ko"][key]; !ok {
 			t.Errorf("flash key %q has no message", key)
+		}
+	}
+}
+
+// signedIn은 설정을 마치고 로그인한 상태로 만든다.
+func (h *harness) signedIn() {
+	h.t.Helper()
+	h.createAccount()
+	h.store.SetSetting(store.KeySetupDone, "1")
+	h.store.SetSetting(store.KeyAdminDomain, "naru.example.com")
+}
+
+func TestHomeListsServicesWithTheirState(t *testing.T) {
+	h := newHarness(t, "")
+	h.signedIn()
+	blog, _ := h.services.Create(service.Service{Name: "blog", Kind: service.KindRepo, Container: "shelf-blog", Port: 3000}, service.Secrets{})
+	h.services.AddDomain(blog, service.Domain{Domain: "blog.example.com", HTTPS: true})
+	h.services.Create(service.Service{Name: "api", Kind: service.KindImage, Container: "naru-api", Port: 8080}, service.Secrets{})
+	h.services.Create(service.Service{Name: "nas", Kind: service.KindExternal, Upstream: "host.docker.internal:5000"}, service.Secrets{})
+	h.containers.all["shelf-blog"] = docker.Container{Name: "shelf-blog", State: docker.Running, Status: "Up 3 hours"}
+
+	_, _, body := h.get("/")
+	for _, want := range []string{"blog.example.com", "실행 중", "Up 3 hours", "컨테이너 없음", "주소만 연결", "/services/1", "3개를 이 서버에서"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("home is missing %q", want)
+		}
+	}
+	if strings.Contains(body, "Docker에 연결하지 못했어요") || strings.Contains(body, "웹서버에 연결하지 못했어요") {
+		t.Error("no trouble notices while everything is reachable")
+	}
+}
+
+func TestHomeSaysWhenDockerOrTheWebServerIsDown(t *testing.T) {
+	h := newHarness(t, "")
+	h.signedIn()
+	h.services.Create(service.Service{Name: "blog", Kind: service.KindRepo, Container: "shelf-blog", Port: 3000}, service.Secrets{})
+	h.containers.down = true
+	h.engine.status = engine.Status{LastError: "caddy: dial unix /run/caddy/admin.sock: connect: no such file"}
+	_, _, body := h.get("/")
+	for _, want := range []string{"Docker에 연결하지 못했어요", "웹서버에 연결하지 못했어요", "admin.sock", "확인 불가"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("home is missing %q", want)
+		}
+	}
+}
+
+func TestServicePage(t *testing.T) {
+	h := newHarness(t, "")
+	h.signedIn()
+	id, _ := h.services.Create(service.Service{Name: "landing", Kind: service.KindRepo, Source: "https://github.com/me/landing", Container: "shelf-landing", Port: 4023, BuildPath: "site"}, service.Secrets{GitToken: "ghp_secret", WebhookSecret: "whsec_secret"})
+	h.services.AddDomain(id, service.Domain{Domain: "www.example.com", HTTPS: true, HSTS: true})
+	h.containers.all["shelf-landing"] = docker.Container{State: docker.Restarting, Status: "Restarting (1) 3 seconds ago"}
+
+	code, _, body := h.get("/services/1")
+	if code != http.StatusOK {
+		t.Fatalf("got %d", code)
+	}
+	for _, want := range []string{"landing", "shelf-landing:4023", "www.example.com", "HSTS", "계속 다시 시작됨", "https://github.com/me/landing", "site"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("service page is missing %q", want)
+		}
+	}
+	for _, secret := range []string{"ghp_secret", "whsec_secret"} {
+		if strings.Contains(body, secret) {
+			t.Fatalf("secrets never reach the screen: %q", secret)
+		}
+	}
+	for _, p := range []string{"/services/99", "/services/abc"} {
+		if code, _, _ := h.get(p); code != http.StatusNotFound {
+			t.Errorf("%s: got %d", p, code)
+		}
+	}
+}
+
+func TestAdminAddressChangesReachTheEngine(t *testing.T) {
+	h := newHarness(t, "")
+	h.createAccount()
+	h.post("/setup/domain", url.Values{"domain": {"naru.example.com"}, "action": {"save"}})
+	if h.engine.kicks != 1 {
+		t.Fatalf("saving the admin address tells the engine, kicks=%d", h.engine.kicks)
+	}
+	// IP나 다른 주소로 들어와 있었다면, 설정을 마치면 관리 주소로 안내한다
+	code, _, body := h.post("/setup/https", url.Values{"action": {"skip"}})
+	if code != http.StatusOK || !strings.Contains(body, "http://naru.example.com/login") {
+		t.Fatalf("finishing from another host points to the admin address: %d", code)
+	}
+	if h.engine.kicks != 2 {
+		t.Fatal("finishing setup closes the IP fallback — the engine must know")
+	}
+}
+
+// CSP가 인라인 style을 막으므로 템플릿에 style 속성이 있으면 화면이 조용히 깨진다.
+func TestTemplatesHaveNoInlineStyles(t *testing.T) {
+	entries, _ := templateFS.ReadDir("templates")
+	for _, e := range entries {
+		body, _ := templateFS.ReadFile("templates/" + e.Name())
+		if strings.Contains(string(body), "style=") {
+			t.Errorf("%s has an inline style attribute — CSP blocks it; use a class", e.Name())
 		}
 	}
 }
