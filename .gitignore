@@ -32,3 +32,6 @@ coverage/
 # Temp
 tmp/
 .tmp/
+
+# v2 로컬 실험용 데이터
+data-v2/

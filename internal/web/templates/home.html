@@ -1,0 +1,33 @@
+{{define "root"}}{{template "app" .}}{{end}}
+{{define "title"}}{{t "nav.services"}}{{end}}
+{{define "content"}}
+<div class="hero">
+  <div>
+    <h1>{{t "home.heading"}}</h1>
+    <p>{{t "home.empty.sub"}}</p>
+  </div>
+</div>
+
+{{if not .Data.AdminDomain}}
+<div class="notice warn">
+  <span class="notice-icon">!</span>
+  <div class="notice-text"><b>{{t "home.nodomain.title"}}</b><span>{{t "home.nodomain.body"}}</span></div>
+  <a class="btn small" href="/settings#domain">{{t "home.nodomain.action"}}</a>
+</div>
+{{end}}
+
+<div class="empty">
+  <b>{{t "home.empty.title"}}</b>
+  <span>{{t "home.empty.body"}}</span>
+</div>
+
+{{with .Data.Host}}
+<div class="server">
+  <span class="server-title"><span class="dot ok"></span><b>{{t "home.server"}}</b></span>
+  <span>CPU <b>{{if .HasCPU}}{{pct .CPUPercent}}{{else}}—{{end}}</b>{{if .HasCPU}}<span class="meter"><i style="width:{{width .CPUPercent}}"></i></span>{{end}}</span>
+  <span>{{t "home.memory"}} <b>{{if .HasMem}}{{bytes .MemUsed}}{{else}}—{{end}}</b>{{if .HasMem}} / {{bytes .MemTotal}}<span class="meter"><i style="width:{{ratio .MemUsed .MemTotal}}"></i></span>{{end}}</span>
+  <span>{{t "home.disk"}} <b>{{if .HasDisk}}{{bytes .DiskFree}}{{else}}—{{end}}</b> {{if .HasDisk}}{{t "home.free"}}{{end}}</span>
+  <span class="muted">{{t "home.cores" .Cores}}{{if .HasLoad}} · {{t "home.load" (printf "%.2f" .Load1)}}{{end}}</span>
+</div>
+{{end}}
+{{end}}

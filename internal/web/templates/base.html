@@ -1,0 +1,62 @@
+{{define "head"}}<!doctype html>
+<html lang="{{.Lang}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{template "title" .}} · Naru</title>
+<link rel="stylesheet" href="/static/naru.css?v={{.Version}}">
+<link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+</head>{{end}}
+
+{{define "logo"}}<span class="logo-mark"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/></svg></span>{{end}}
+
+{{define "lang"}}<div class="lang" role="group" aria-label="{{t "nav.language"}}">
+  <a href="/lang/ko?back={{.Path}}" {{if eq .Lang "ko"}}aria-current="true"{{end}}>KO</a>
+  <a href="/lang/en?back={{.Path}}" {{if eq .Lang "en"}}aria-current="true"{{end}}>EN</a>
+</div>{{end}}
+
+{{/* 로그인한 뒤의 화면 */}}
+{{define "app"}}{{template "head" .}}
+<body>
+<header class="top">
+  <div class="top-in">
+    <a class="logo" href="/">{{template "logo"}}<span class="word">Naru</span></a>
+    <nav class="menu">
+      <a href="/" {{if eq .Nav "home"}}aria-current="page"{{end}}>{{t "nav.services"}}</a>
+      <a href="/settings" {{if eq .Nav "settings"}}aria-current="page"{{end}}>{{t "nav.settings"}}</a>
+    </nav>
+    <span class="spacer"></span>
+    {{template "lang" .}}
+    <form method="post" action="/logout"><button class="btn quiet small" type="submit">{{t "nav.logout"}}</button></form>
+  </div>
+</header>
+<main class="page">
+{{if .OK}}<p class="flash ok" role="status">{{t .OK}}</p>{{end}}
+{{template "content" .}}
+</main>
+</body>
+</html>{{end}}
+
+{{/* 로그인 전 화면 — 가운데 카드 하나 */}}
+{{define "card"}}{{template "head" .}}
+<body class="center">
+<div class="card-wrap">
+  <div class="card-top">
+    <span class="logo">{{template "logo"}}<span class="word">Naru</span></span>
+    <span class="spacer"></span>
+    {{template "lang" .}}
+  </div>
+  <div class="card">
+  {{template "content" .}}
+  </div>
+</div>
+</body>
+</html>{{end}}
+
+{{define "error"}}{{if .Err}}<p class="flash bad" role="alert">{{t .Err}}</p>{{end}}{{end}}
+
+{{define "steps"}}<ol class="steps">
+  <li {{if eq .Data.Step 1}}aria-current="step"{{end}} {{if gt .Data.Step 1}}class="done"{{end}}><b>1</b>{{t "setup.step.account"}}</li>
+  <li {{if eq .Data.Step 2}}aria-current="step"{{end}} {{if gt .Data.Step 2}}class="done"{{end}}><b>2</b>{{t "setup.step.domain"}}</li>
+  <li {{if eq .Data.Step 3}}aria-current="step"{{end}}><b>3</b>{{t "setup.step.https"}}</li>
+</ol>{{end}}

@@ -1,0 +1,19 @@
+# Naru v2 — Go로 만든 관제 서버. 빌드도 컨테이너 안에서 한다 (로컬에 Go가 없어도 된다).
+FROM golang:1.27-alpine AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd ./cmd
+COPY internal ./internal
+ARG VERSION=2.0.0-dev
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/naru ./cmd/naru
+
+FROM alpine:3
+RUN apk add --no-cache ca-certificates tzdata
+COPY --from=build /out/naru /usr/local/bin/naru
+ENV NARU_DATA_DIR=/data NARU_LISTEN=:8080
+VOLUME /data
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
+  CMD wget -qO- http://127.0.0.1:8080/health || exit 1
+ENTRYPOINT ["naru"]

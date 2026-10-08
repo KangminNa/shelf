@@ -1,0 +1,17 @@
+{{define "root"}}{{template "card" .}}{{end}}
+{{define "title"}}{{t "setup.title"}}{{end}}
+{{define "content"}}
+{{template "steps" .}}
+<h1>{{t "setup.https.heading"}}</h1>
+<p class="lede">{{if .Data.Domain}}{{t "setup.https.body" .Data.Domain}}{{else}}{{t "setup.https.nodomain"}}{{end}}</p>
+{{template "error" .}}
+<form method="post" action="/setup/https" class="form">
+  <label class="field"><span>{{t "field.email"}}</span>
+    <input class="input" type="email" name="email" value="{{.Data.Email}}" placeholder="you@example.com" autocomplete="email" autofocus>
+    <small>{{t "setup.https.hint"}}</small></label>
+  <div class="row-actions">
+    <button class="btn primary" type="submit" name="action" value="save">{{t "setup.https.finish"}}</button>
+    <button class="btn quiet later" type="submit" name="action" value="skip" formnovalidate>{{t "setup.https.skip"}}</button>
+  </div>
+</form>
+{{end}}

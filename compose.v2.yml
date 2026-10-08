@@ -1,0 +1,15 @@
+# v2를 로컬에서 띄워 보는 용도. 운영 서버는 M7(전환)까지 docker-compose.yml(v1) 그대로다.
+#   docker compose -f compose.v2.yml up -d --build
+#   docker compose -f compose.v2.yml logs naru   ← 첫 설정 주소가 여기 찍힌다
+services:
+  naru:
+    build:
+      context: .
+      dockerfile: Dockerfile.v2
+    container_name: naru
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      # v1 데이터의 "복사본"을 넣어 두면 첫 실행 때 계정과 관리 도메인을 옮겨 온다
+      - ./data-v2:/data

@@ -1,0 +1,8 @@
+{{define "root"}}{{template "card" .}}{{end}}
+{{define "title"}}{{t "setup.title"}}{{end}}
+{{define "content"}}
+<h1>{{t "setup.token.heading"}}</h1>
+<p class="lede">{{t "setup.token.body"}}</p>
+<pre class="code">docker compose logs naru | grep setup</pre>
+<p class="muted">{{t "setup.token.why"}}</p>
+{{end}}
