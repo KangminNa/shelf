@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/KangminNa/naru/internal/auth"
+	"github.com/KangminNa/naru/internal/deploy"
 	"github.com/KangminNa/naru/internal/dnscheck"
 	"github.com/KangminNa/naru/internal/docker"
 	"github.com/KangminNa/naru/internal/engine"
@@ -47,19 +48,21 @@ const (
 	defaultLang   = "en"
 )
 
-var pageNames = []string{"setup_token", "setup_account", "setup_domain", "setup_https", "setup_done", "login", "home", "service", "settings", "notfound"}
+var pageNames = []string{"setup_token", "setup_account", "setup_domain", "setup_https", "setup_done", "login", "home", "service", "new_service", "deploy", "settings", "notfound"}
 
 type Deps struct {
-	Store      *store.Store
-	Auth       *auth.Service
-	Services   *service.Repo
-	Containers ContainerLister
-	Engine     EngineView
-	Host    *hostinfo.Sampler
-	Lookup  dnscheck.Resolver
-	Log     *slog.Logger
-	DataDir string
-	Version string
+	Store       *store.Store
+	Auth        *auth.Service
+	Services    *service.Repo
+	Containers  ContainerLister
+	Engine      EngineView
+	Deployer    Deployer
+	Deployments *deploy.Store
+	Host        *hostinfo.Sampler
+	Lookup      dnscheck.Resolver
+	Log         *slog.Logger
+	DataDir     string
+	Version     string
 	// 환경 변수로 정해진 값은 화면보다 우선한다 (파일로 설정하고 싶은 사람을 위해).
 	EnvAdminDomain string
 	EnvACMEEmail   string
@@ -111,7 +114,19 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /logout", s.logout)
 
 	s.mux.HandleFunc("GET /{$}", s.home)
+	s.mux.HandleFunc("GET /services/new", s.newServicePage)
+	s.mux.HandleFunc("POST /services/new", s.createService)
 	s.mux.HandleFunc("GET /services/{id}", s.servicePage)
+	s.mux.HandleFunc("POST /services/{id}/deploy", s.deployNow)
+	s.mux.HandleFunc("POST /services/{id}/rollback/{did}", s.rollback)
+	s.mux.HandleFunc("POST /services/{id}/stop", s.stopService)
+	s.mux.HandleFunc("POST /services/{id}/start", s.startService)
+	s.mux.HandleFunc("POST /services/{id}/settings", s.saveSettings)
+	s.mux.HandleFunc("POST /services/{id}/domains", s.addDomain)
+	s.mux.HandleFunc("POST /services/{id}/domains/{did}/delete", s.removeDomain)
+	s.mux.HandleFunc("POST /services/{id}/delete", s.deleteService)
+	s.mux.HandleFunc("GET /services/{id}/deploys/{did}", s.deployPage)
+	s.mux.HandleFunc("POST /hooks/{id}", s.webhook)
 	s.mux.HandleFunc("GET /settings", s.settingsPage)
 	s.mux.HandleFunc("POST /settings/password", s.changePassword)
 	s.mux.HandleFunc("POST /settings/domain", s.changeDomain)
@@ -127,8 +142,14 @@ type view struct {
 	Lang, Path, Nav, Version string
 	User                     *auth.User
 	Err, OK                  string // 문구 키
+	Refresh                  int    // 0이 아니면 그 초마다 다시 그린다 (진행 중인 배포)
 	Data                     any
 }
+
+type authUser = auth.User
+
+func normalizeDomain(d string) string { return dnscheck.Normalize(d) }
+func validDomain(d string) bool       { return dnscheck.Valid(d) }
 
 func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, page string, v view) {
 	v.Lang = langOf(r)
@@ -160,6 +181,18 @@ func funcsFor(lang string) template.FuncMap {
 			return msg
 		},
 		"pct": func(v float64) string { return fmt.Sprintf("%.0f%%", v) },
+		"ago": func(t time.Time) string { return ago(lang, t) },
+		"dur": func(d time.Duration) string { return d.String() },
+		"trigger": func(t string) string {
+			if strings.HasPrefix(t, "v1") {
+				return "v1"
+			}
+			switch t {
+			case "manual", "webhook", "create", "rollback":
+				return t
+			}
+			return "manual"
+		},
 		"bytes": humanBytes,
 	}
 }
@@ -342,4 +375,25 @@ func sameOrigin(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// ago는 "3분 전" 같은 상대 시간이다.
+func ago(lang string, t time.Time) string {
+	d := time.Since(t)
+	n := 0
+	unit := ""
+	switch {
+	case d < time.Minute:
+		return map[string]string{"ko": "방금", "en": "just now"}[lang]
+	case d < time.Hour:
+		n, unit = int(d.Minutes()), "m"
+	case d < 24*time.Hour:
+		n, unit = int(d.Hours()), "h"
+	default:
+		n, unit = int(d.Hours()/24), "d"
+	}
+	if lang == "ko" {
+		return fmt.Sprintf("%d%s 전", n, map[string]string{"m": "분", "h": "시간", "d": "일"}[unit])
+	}
+	return fmt.Sprintf("%d%s ago", n, unit)
 }

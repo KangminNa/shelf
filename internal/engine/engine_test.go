@@ -33,6 +33,7 @@ var fixtures = map[string]Plan{
 			{Hosts: []string{"nas.example.com"}, Upstream: "host.docker.internal:5000"},
 			{Hosts: []string{"router.example.com"}, Upstream: "https://192.168.0.1:443", HTTPS: true},
 			{Hosts: []string{"broken.example.com"}, Upstream: ""},
+			{Hosts: []string{"static.example.com"}, Root: "/srv/sites/landing/12", HTTPS: true},
 		},
 	},
 	"internal-tls": {
@@ -69,16 +70,20 @@ type decoded struct {
 	Apps  struct {
 		HTTP struct {
 			Servers map[string]struct {
-				Listen          []string
-				AutomaticHTTPS  struct{ DisableRedirects bool `json:"disable_redirects"` } `json:"automatic_https"`
-				Routes          []struct {
+				Listen         []string
+				AutomaticHTTPS struct {
+					DisableRedirects bool `json:"disable_redirects"`
+				} `json:"automatic_https"`
+				Routes []struct {
 					Match  []struct{ Host []string }
 					Handle []map[string]any
 				}
 			}
 		}
 		TLS *struct {
-			Automation struct{ Policies []struct{ Issuers []map[string]any } }
+			Automation struct {
+				Policies []struct{ Issuers []map[string]any }
+			}
 		}
 	}
 }

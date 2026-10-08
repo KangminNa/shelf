@@ -21,6 +21,10 @@
               "handle": [
                 {
                   "handler": "reverse_proxy",
+                  "load_balancing": {
+                    "try_duration": "5s",
+                    "try_interval": "250ms"
+                  },
                   "upstreams": [
                     {
                       "dial": "naru:8080"
@@ -41,6 +45,10 @@
               "handle": [
                 {
                   "handler": "reverse_proxy",
+                  "load_balancing": {
+                    "try_duration": "5s",
+                    "try_interval": "250ms"
+                  },
                   "upstreams": [
                     {
                       "dial": "shelf-blog:3000"
@@ -83,6 +91,10 @@
               "handle": [
                 {
                   "handler": "reverse_proxy",
+                  "load_balancing": {
+                    "try_duration": "5s",
+                    "try_interval": "250ms"
+                  },
                   "upstreams": [
                     {
                       "dial": "host.docker.internal:5000"
@@ -103,6 +115,10 @@
               "handle": [
                 {
                   "handler": "reverse_proxy",
+                  "load_balancing": {
+                    "try_duration": "5s",
+                    "try_interval": "250ms"
+                  },
                   "transport": {
                     "protocol": "http",
                     "tls": {}
@@ -120,6 +136,22 @@
               "match": [
                 {
                   "host": [
+                    "static.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "file_server",
+                  "root": "/srv/sites/landing/12"
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "match": [
+                {
+                  "host": [
                     "www.example.com"
                   ]
                 }
@@ -127,6 +159,10 @@
               "handle": [
                 {
                   "handler": "reverse_proxy",
+                  "load_balancing": {
+                    "try_duration": "5s",
+                    "try_interval": "250ms"
+                  },
                   "upstreams": [
                     {
                       "dial": "shelf-landing:4023"
@@ -171,6 +207,10 @@
               "handle": [
                 {
                   "handler": "reverse_proxy",
+                  "load_balancing": {
+                    "try_duration": "5s",
+                    "try_interval": "250ms"
+                  },
                   "upstreams": [
                     {
                       "dial": "naru:8080"
@@ -191,6 +231,10 @@
               "handle": [
                 {
                   "handler": "reverse_proxy",
+                  "load_balancing": {
+                    "try_duration": "5s",
+                    "try_interval": "250ms"
+                  },
                   "upstreams": [
                     {
                       "dial": "shelf-blog:3000"
@@ -211,6 +255,10 @@
               "handle": [
                 {
                   "handler": "reverse_proxy",
+                  "load_balancing": {
+                    "try_duration": "5s",
+                    "try_interval": "250ms"
+                  },
                   "transport": {
                     "protocol": "http",
                     "tls": {}
@@ -220,6 +268,22 @@
                       "dial": "192.168.0.1:443"
                     }
                   ]
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "match": [
+                {
+                  "host": [
+                    "static.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "file_server",
+                  "root": "/srv/sites/landing/12"
                 }
               ],
               "terminal": true
@@ -245,6 +309,10 @@
                 },
                 {
                   "handler": "reverse_proxy",
+                  "load_balancing": {
+                    "try_duration": "5s",
+                    "try_interval": "250ms"
+                  },
                   "upstreams": [
                     {
                       "dial": "shelf-landing:4023"

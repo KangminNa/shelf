@@ -47,6 +47,11 @@ func TestAppsAndHostsBecomeServices(t *testing.T) {
 	run(t, dir, "deploy.db", v1Projects,
 		`INSERT INTO projects (id, name, repo_url, webhook_secret, container_port, build_path, env, git_token) VALUES (3, 'blog', 'https://github.com/me/blog', 'whsec', 3000, '', 'A=1', 'ghp_x')`,
 		`INSERT INTO projects (id, name, repo_url, webhook_secret, source_type, image, container_port, auto_deploy) VALUES (6, 'api', '', 'whsec2', 'image', 'ghcr.io/me/api:latest', 8080, 0)`,
+		`CREATE TABLE deployments (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, commit_hash TEXT DEFAULT '', commit_message TEXT DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'pending', trigger_type TEXT NOT NULL DEFAULT 'manual', log TEXT DEFAULT '', duration_ms INTEGER DEFAULT 0, created_at INTEGER)`,
+		`INSERT INTO deployments (project_id, commit_hash, commit_message, status, trigger_type, log, duration_ms, created_at) VALUES (3, 'abc1234', 'first', 'success', 'webhook', 'built', 38000, 1790000000)`,
+		`INSERT INTO deployments (project_id, status, created_at) VALUES (3, 'failed', 1790000100)`,
+		`INSERT INTO deployments (project_id, status, created_at) VALUES (99, 'success', 1790000200)`,
 	)
 	run(t, dir, "proxy.db", v1Hosts,
 		`INSERT INTO proxy_hosts (domain, target_host, target_port, ssl_enabled, hsts_enabled, description) VALUES ('blog.example.com', 'shelf-blog', 3000, 1, 1, 'Auto-created by app blog')`,
@@ -61,7 +66,7 @@ func TestAppsAndHostsBecomeServices(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Apps != 2 || r.External != 2 || r.Domains != 3 {
+	if r.Apps != 2 || r.External != 2 || r.Domains != 3 || r.History != 2 {
 		t.Fatalf("%+v", r)
 	}
 

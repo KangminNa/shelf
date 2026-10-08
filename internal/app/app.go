@@ -8,10 +8,12 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"time"
 
 	"github.com/KangminNa/naru/internal/auth"
+	"github.com/KangminNa/naru/internal/deploy"
 	"github.com/KangminNa/naru/internal/dnscheck"
 	"github.com/KangminNa/naru/internal/docker"
 	"github.com/KangminNa/naru/internal/engine"
@@ -31,6 +33,8 @@ type Config struct {
 	CaddySocket  string // NARU_CADDY_ADMIN — 웹서버(Caddy) 관리 소켓, 기본 /run/caddy/admin.sock
 	SelfUpstream string // NARU_SELF_UPSTREAM — 웹서버가 관리 화면에 닿는 주소, 기본 naru:8080
 	InternalTLS  bool   // NARU_TLS=internal — 개발용. 공개 CA 대신 내부 CA로 인증서
+	Network      string // NARU_NETWORK — 앱 컨테이너와 웹서버가 함께 있는 네트워크, 기본 naru-net
+	CaddySites   string // NARU_CADDY_SITES — 웹서버 컨테이너에서 본 정적 사이트 폴더, 기본 /srv/sites
 	AdminDomain  string // ADMIN_DOMAIN — 있으면 화면 설정보다 우선
 	ACMEEmail    string // ACME_EMAIL — 있으면 화면 설정보다 우선
 	Version      string
@@ -45,6 +49,8 @@ func ConfigFromEnv(version string) Config {
 		CaddySocket:  envOr("NARU_CADDY_ADMIN", "/run/caddy/admin.sock"),
 		SelfUpstream: envOr("NARU_SELF_UPSTREAM", "naru:8080"),
 		InternalTLS:  os.Getenv("NARU_TLS") == "internal",
+		Network:      envOr("NARU_NETWORK", "naru-net"),
+		CaddySites:   envOr("NARU_CADDY_SITES", "/srv/sites"),
 		AdminDomain:  dnscheck.Normalize(os.Getenv("ADMIN_DOMAIN")),
 		ACMEEmail:    os.Getenv("ACME_EMAIL"),
 		Version:      version,
@@ -131,7 +137,11 @@ func (a *App) Plan(context.Context) (engine.Plan, error) {
 			if d.Domain == domain {
 				continue // 관리 주소가 우선
 			}
-			p.Sites = append(p.Sites, engine.Site{Hosts: []string{d.Domain}, Upstream: s.Target(), HTTPS: d.HTTPS, HSTS: d.HSTS})
+			site := engine.Site{Hosts: []string{d.Domain}, Upstream: s.Target(), HTTPS: d.HTTPS, HSTS: d.HSTS}
+			if s.Kind == service.KindStatic && s.Release != "" {
+				site.Root = path.Join(a.cfg.CaddySites, s.Name, s.Release)
+			}
+			p.Sites = append(p.Sites, site)
 		}
 	}
 	return p, nil
@@ -145,9 +155,22 @@ func (a *App) Run(ctx context.Context) error {
 	a.Engine = engine.New(engine.NewAdmin(a.cfg.CaddySocket), a.Plan, a.log)
 	go a.Engine.Run(ctx)
 
+	dockerClient := docker.New(a.cfg.DockerSocket)
+	history := deploy.NewStore(a.Store.DB)
+	if n, err := history.Interrupted("— Naru가 다시 시작되면서 중단됐어요 / interrupted by a Naru restart —"); err == nil && n > 0 {
+		a.log.Warn("closed deploys interrupted by a restart", "count", n)
+	}
+	deployer := deploy.New(deploy.Config{
+		WorkDir:  filepath.Join(a.cfg.DataDir, "work"),
+		SitesDir: filepath.Join(a.cfg.DataDir, "sites"),
+		Network:  a.cfg.Network,
+	}, a.Services, history, dockerClient, a.Engine.Kick, a.log)
+	deployer.Bind(ctx)
+	os.RemoveAll(filepath.Join(a.cfg.DataDir, "work")) // 지난 실행이 남긴 clone
+
 	srv, err := web.New(web.Deps{
 		Store: a.Store, Auth: a.Auth, Services: a.Services,
-		Containers: docker.New(a.cfg.DockerSocket), Engine: a.Engine,
+		Containers: dockerClient, Engine: a.Engine, Deployer: deployer, Deployments: history,
 		Host: host, Lookup: dnscheck.System, Log: a.log,
 		DataDir: a.cfg.DataDir, Version: a.cfg.Version,
 		EnvAdminDomain: a.cfg.AdminDomain, EnvACMEEmail: a.cfg.ACMEEmail,

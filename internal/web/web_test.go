@@ -2,6 +2,10 @@ package web
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -14,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/KangminNa/naru/internal/auth"
+	"github.com/KangminNa/naru/internal/deploy"
 	"github.com/KangminNa/naru/internal/docker"
 	"github.com/KangminNa/naru/internal/engine"
 	"github.com/KangminNa/naru/internal/hostinfo"
@@ -33,6 +38,35 @@ func (f *fakeContainers) Containers(context.Context) (map[string]docker.Containe
 	return f.all, nil
 }
 
+type fakeDeployer struct {
+	calls    []string
+	busy     bool
+	store    *deploy.Store
+	services *service.Repo
+}
+
+func (f *fakeDeployer) Deploy(id int64, trigger string) (int64, error) {
+	if f.busy {
+		return 0, deploy.ErrBusy
+	}
+	f.calls = append(f.calls, fmt.Sprintf("deploy %d %s", id, trigger))
+	return f.store.Begin(id, trigger)
+}
+func (f *fakeDeployer) Rollback(id, from int64) (int64, error) {
+	f.calls = append(f.calls, fmt.Sprintf("rollback %d %d", id, from))
+	return f.store.Begin(id, "rollback")
+}
+func (f *fakeDeployer) Stop(_ context.Context, id int64) error {
+	f.calls = append(f.calls, fmt.Sprintf("stop %d", id))
+	return f.services.SetStopped(id, true)
+}
+func (f *fakeDeployer) Start(_ context.Context, id int64) error {
+	f.calls = append(f.calls, fmt.Sprintf("start %d", id))
+	return f.services.SetStopped(id, false)
+}
+func (f *fakeDeployer) Delete(_ context.Context, id int64) error { return f.services.Delete(id) }
+func (f *fakeDeployer) Running(int64) bool                       { return f.busy }
+
 type fakeEngine struct {
 	status engine.Status
 	kicks  int
@@ -50,6 +84,8 @@ type harness struct {
 	services   *service.Repo
 	containers *fakeContainers
 	engine     *fakeEngine
+	deployer   *fakeDeployer
+	history    *deploy.Store
 }
 
 // newHarness는 실제 화면 서버를 띄운다. DNS는 naru.example.com → 198.51.100.24 로 고정한다.
@@ -74,8 +110,10 @@ func newHarness(t *testing.T, envDomain string) *harness {
 	repo := service.NewRepo(st.DB)
 	fc := &fakeContainers{all: map[string]docker.Container{}}
 	fe := &fakeEngine{status: engine.Status{Connected: true}}
+	history := deploy.NewStore(st.DB)
+	fd := &fakeDeployer{store: history, services: repo}
 	s, err := New(Deps{
-		Store: st, Auth: a, Services: repo, Containers: fc, Engine: fe,
+		Store: st, Auth: a, Services: repo, Containers: fc, Engine: fe, Deployer: fd, Deployments: history,
 		Host: hostinfo.NewSampler(dir, dir), Lookup: lookup,
 		Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DataDir: dir, Version: "test",
 		EnvAdminDomain: envDomain,
@@ -87,7 +125,7 @@ func newHarness(t *testing.T, envDomain string) *harness {
 	t.Cleanup(ts.Close)
 	jar, _ := cookiejar.New(nil)
 	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return &harness{t: t, srv: ts, client: client, auth: a, store: st, services: repo, containers: fc, engine: fe}
+	return &harness{t: t, srv: ts, client: client, auth: a, store: st, services: repo, containers: fc, engine: fe, deployer: fd, history: history}
 }
 
 func (h *harness) get(path string) (int, string, string) {
@@ -408,15 +446,13 @@ func TestServicePage(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("got %d", code)
 	}
-	for _, want := range []string{"landing", "shelf-landing:4023", "www.example.com", "HSTS", "계속 다시 시작됨", "https://github.com/me/landing", "site"} {
+	for _, want := range []string{"landing", "shelf-landing:4023", "www.example.com", "HSTS", "계속 다시 시작됨", "https://github.com/me/landing", "site", "https://naru.example.com/hooks/1"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("service page is missing %q", want)
 		}
 	}
-	for _, secret := range []string{"ghp_secret", "whsec_secret"} {
-		if strings.Contains(body, secret) {
-			t.Fatalf("secrets never reach the screen: %q", secret)
-		}
+	if strings.Contains(body, "ghp_secret") {
+		t.Fatal("the git token never reaches the screen")
 	}
 	for _, p := range []string{"/services/99", "/services/abc"} {
 		if code, _, _ := h.get(p); code != http.StatusNotFound {
@@ -450,5 +486,211 @@ func TestTemplatesHaveNoInlineStyles(t *testing.T) {
 		if strings.Contains(string(body), "style=") {
 			t.Errorf("%s has an inline style attribute — CSP blocks it; use a class", e.Name())
 		}
+	}
+}
+
+func TestCreatingAServiceStartsItsFirstDeploy(t *testing.T) {
+	h := newHarness(t, "")
+	h.signedIn()
+	code, loc, _ := h.post("/services/new", url.Values{"kind": {"image"}, "source": {"traefik/whoami"}, "domain": {"Who.Example.com"}})
+	if code != http.StatusSeeOther || !strings.HasPrefix(loc, "/services/1/deploys/") {
+		t.Fatalf("%d %q", code, loc)
+	}
+	s, _ := h.services.Get(1)
+	if s.Name != "who" || s.Kind != service.KindImage || s.PrimaryDomain() != "who.example.com" || !s.AutoDeploy {
+		t.Fatalf("the name comes from the domain: %+v", s)
+	}
+	if len(h.deployer.calls) != 1 || h.deployer.calls[0] != "deploy 1 create" || h.engine.kicks == 0 {
+		t.Fatalf("%v kicks=%d", h.deployer.calls, h.engine.kicks)
+	}
+	sec, _ := h.services.Secrets(1)
+	if len(sec.WebhookSecret) < 32 {
+		t.Fatal("every service gets its own webhook secret")
+	}
+
+	// 외부 연결은 배포가 없다
+	code, loc, _ = h.post("/services/new", url.Values{"kind": {"external"}, "upstream": {"localhost:5000"}, "domain": {"nas.example.com"}})
+	if code != http.StatusSeeOther || loc != "/services/2" {
+		t.Fatalf("%d %q", code, loc)
+	}
+	nas, _ := h.services.Get(2)
+	if nas.Target() != "host.docker.internal:5000" || nas.Name != "nas" {
+		t.Fatalf("localhost means this server: %+v", nas)
+	}
+}
+
+func TestCreateServiceValidation(t *testing.T) {
+	h := newHarness(t, "")
+	h.signedIn()
+	h.services.Create(service.Service{Name: "taken", Kind: service.KindExternal, Upstream: "x:1"}, service.Secrets{})
+	h.services.AddDomain(1, service.Domain{Domain: "used.example.com"})
+	cases := []struct {
+		form url.Values
+		want string
+	}{
+		{url.Values{"kind": {"repo"}, "source": {"file:///etc"}}, "https://"},
+		{url.Values{"kind": {"repo"}, "source": {"https://github.com/me/x"}, "branch": {"--upload-pack=x"}}, "브랜치"},
+		{url.Values{"kind": {"repo"}, "source": {"https://github.com/me/x"}, "build_path": {"../../etc"}}, ".."},
+		{url.Values{"kind": {"image"}, "source": {"bad image"}}, "이미지 이름"},
+		{url.Values{"kind": {"external"}, "upstream": {"nope"}}, "주소:포트"},
+		{url.Values{"kind": {"image"}, "source": {"a/b"}, "domain": {"used.example.com"}}, "이미 쓰는"},
+		{url.Values{"kind": {"image"}, "source": {"a/b"}, "domain": {"naru.example.com"}}, "관리 화면"},
+		{url.Values{"kind": {"image"}, "source": {"a/b"}, "name": {"taken"}}, "이미 있는 이름"},
+		{url.Values{"kind": {"image"}, "source": {"a/b"}, "name": {"Bad_Name"}}, "영문 소문자"},
+		{url.Values{"kind": {"image"}, "source": {"a/b"}, "env": {"not an env line"}}, "KEY=value"},
+		{url.Values{"kind": {"image"}, "source": {"a/b"}, "volumes": {"relative:/data"}}, "서버경로"},
+		{url.Values{"kind": {"nonsense"}}, "종류"},
+	}
+	for _, c := range cases {
+		code, _, body := h.post("/services/new", c.form)
+		if code != http.StatusBadRequest || !strings.Contains(body, c.want) {
+			t.Errorf("%v: %d, want message containing %q", c.form, code, c.want)
+		}
+	}
+	if len(h.deployer.calls) != 0 {
+		t.Fatal("nothing deploys after a refused form")
+	}
+}
+
+func TestSuggestName(t *testing.T) {
+	cases := map[string]serviceForm{
+		"blog":   {Kind: "repo", Source: "https://github.com/me/Blog.git"},
+		"api":    {Kind: "image", Source: "ghcr.io/me/api:latest"},
+		"www":    {Kind: "static", Source: "https://github.com/me/site", Domain: "www.example.com"},
+		"router": {Kind: "external", Upstream: "https://router.lan:443"},
+	}
+	for want, f := range cases {
+		if got := suggestName(f); got != want {
+			t.Errorf("%+v → %q, want %q", f, got, want)
+		}
+	}
+}
+
+func sign(secret string, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	mac.Write(body)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
+}
+
+func (h *harness) hook(id int64, body string, headers map[string]string) (int, string) {
+	h.t.Helper()
+	req, _ := http.NewRequest("POST", fmt.Sprintf("%s/hooks/%d", h.srv.URL, id), strings.NewReader(body))
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	defer res.Body.Close()
+	b, _ := io.ReadAll(res.Body)
+	return res.StatusCode, string(b)
+}
+
+func TestWebhooks(t *testing.T) {
+	h := newHarness(t, "")
+	id, _ := h.services.Create(service.Service{Name: "blog", Kind: service.KindRepo, Source: "https://github.com/me/blog", Branch: "main", AutoDeploy: true}, service.Secrets{WebhookSecret: "s3cret"})
+	push := `{"ref":"refs/heads/main"}`
+
+	if code, _ := h.hook(id, push, nil); code != http.StatusUnauthorized {
+		t.Fatalf("unsigned → 401, got %d", code)
+	}
+	if code, _ := h.hook(id, push, map[string]string{"X-Hub-Signature-256": sign("wrong", []byte(push))}); code != http.StatusUnauthorized {
+		t.Fatal("wrong secret → 401")
+	}
+	if code, _ := h.hook(id, `{"ref":"refs/heads/evil"}`, map[string]string{"X-Hub-Signature-256": sign("s3cret", []byte(push))}); code != http.StatusUnauthorized {
+		t.Fatal("a signature for another body does not count")
+	}
+	if code, _ := h.hook(id, "{}", map[string]string{"X-GitHub-Event": "ping", "X-Hub-Signature-256": sign("s3cret", []byte("{}"))}); code != http.StatusOK {
+		t.Fatal("ping → pong")
+	}
+	other := `{"ref":"refs/heads/feature"}`
+	if code, body := h.hook(id, other, map[string]string{"X-Hub-Signature-256": sign("s3cret", []byte(other))}); code != http.StatusOK || !strings.Contains(body, "ignored") {
+		t.Fatalf("other branches are acknowledged and ignored: %d %s", code, body)
+	}
+	if len(h.deployer.calls) != 0 {
+		t.Fatal("nothing deployed yet")
+	}
+	if code, body := h.hook(id, push, map[string]string{"X-Hub-Signature-256": sign("s3cret", []byte(push))}); code != http.StatusAccepted || !strings.Contains(body, "deploying") {
+		t.Fatalf("a signed push to main deploys: %d %s", code, body)
+	}
+	if code, _ := h.hook(id, push, map[string]string{"X-Gitlab-Token": "s3cret"}); code != http.StatusAccepted {
+		t.Fatal("GitLab token works too")
+	}
+	h.deployer.busy = true
+	if code, body := h.hook(id, push, map[string]string{"X-Gitlab-Token": "s3cret"}); code != http.StatusAccepted || !strings.Contains(body, "another will follow") {
+		t.Fatalf("pushes during a deploy are queued: %s", body)
+	}
+	s, _ := h.services.Get(id)
+	if s.HookAt == 0 || s.HookResult != "queued" {
+		t.Fatalf("the last receipt is recorded: %+v", s)
+	}
+	if code, _ := h.hook(999, push, nil); code != http.StatusNotFound {
+		t.Fatal("unknown service → 404")
+	}
+	big := strings.Repeat("x", maxHookBody+10)
+	if code, _ := h.hook(id, big, map[string]string{"X-Gitlab-Token": "s3cret"}); code != http.StatusRequestEntityTooLarge {
+		t.Fatal("bodies are limited")
+	}
+}
+
+func TestSettingsDomainsAndDelete(t *testing.T) {
+	h := newHarness(t, "")
+	h.signedIn()
+	id, _ := h.services.Create(service.Service{Name: "api", Kind: service.KindImage, Source: "me/api", Container: "naru-api", Port: 3000}, service.Secrets{Env: "A=1"})
+
+	kicks := h.engine.kicks
+	code, loc, _ := h.post(fmt.Sprintf("/services/%d/settings", id), url.Values{"source": {"me/api"}, "port": {"8080"}, "env": {"A=1"}, "auto_deploy": {"1"}})
+	if code != http.StatusSeeOther || !strings.Contains(loc, "ok=saved") {
+		t.Fatalf("%d %q", code, loc)
+	}
+	if s, _ := h.services.Get(id); s.Port != 8080 || h.engine.kicks == kicks {
+		t.Fatal("a port change reaches the web server right away")
+	}
+	if _, loc, _ := h.post(fmt.Sprintf("/services/%d/settings", id), url.Values{"source": {"me/api"}, "port": {"8080"}, "env": {"A=2"}}); !strings.Contains(loc, "ok=redeploy") {
+		t.Fatal("env changes say a redeploy is needed")
+	}
+
+	h.post(fmt.Sprintf("/services/%d/domains", id), url.Values{"domain": {"api.example.com"}, "https": {"1"}})
+	if s, _ := h.services.Get(id); s.PrimaryDomain() != "api.example.com" {
+		t.Fatal("domain added")
+	}
+	if code, _, _ := h.post(fmt.Sprintf("/services/%d/domains", id), url.Values{"domain": {"naru.example.com"}}); code != http.StatusBadRequest {
+		t.Fatal("the admin address cannot be taken")
+	}
+	s, _ := h.services.Get(id)
+	h.post(fmt.Sprintf("/services/%d/domains/%d/delete", id, s.Domains[0].ID), nil)
+	if s, _ := h.services.Get(id); len(s.Domains) != 0 {
+		t.Fatal("domain removed")
+	}
+
+	if code, _, _ := h.post(fmt.Sprintf("/services/%d/delete", id), url.Values{"confirm": {"nope"}}); code != http.StatusBadRequest {
+		t.Fatal("deleting needs the name")
+	}
+	if _, loc, _ := h.post(fmt.Sprintf("/services/%d/delete", id), url.Values{"confirm": {"api"}}); loc != "/?ok=deleted" {
+		t.Fatalf("deleted → home, got %q", loc)
+	}
+}
+
+func TestDeployPageShowsStepsAndRefreshesWhileRunning(t *testing.T) {
+	h := newHarness(t, "")
+	h.signedIn()
+	id, _ := h.services.Create(service.Service{Name: "app", Kind: service.KindImage, Source: "me/app"}, service.Secrets{})
+	did, _ := h.history.Begin(id, "manual")
+	h.history.SaveLog(did, "\n▶ 이미지 받기 / pulling the image\nok\n▶ 새 컨테이너 시작 / starting the new container\n")
+
+	_, _, body := h.get(fmt.Sprintf("/services/%d/deploys/%d", id, did))
+	for _, want := range []string{"이미지 받기", "새 컨테이너 시작", `http-equiv="refresh"`, "진행 중", `class="doing"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("deploy page is missing %q", want)
+		}
+	}
+	h.history.Finish(deploy.Deployment{ID: did, Status: deploy.Success, Log: "▶ 이미지 받기 / pulling\n"})
+	_, _, body = h.get(fmt.Sprintf("/services/%d/deploys/%d", id, did))
+	if strings.Contains(body, `http-equiv="refresh"`) {
+		t.Fatal("a finished deploy stops refreshing")
+	}
+	if code, _, _ := h.get(fmt.Sprintf("/services/%d/deploys/999", id)); code != http.StatusNotFound {
+		t.Fatal("unknown deploy → 404")
 	}
 }

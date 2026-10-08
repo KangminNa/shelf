@@ -8,7 +8,9 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/KangminNa/naru/internal/deploy"
 	"github.com/KangminNa/naru/internal/service"
 	"github.com/KangminNa/naru/internal/store"
 )
@@ -19,6 +21,7 @@ type ServicesReport struct {
 	Apps     int // 앱 → repo·image 서비스
 	External int // 직접 만든 프록시 호스트 → external 서비스
 	Domains  int
+	History  int // 옮긴 배포 기록
 }
 
 // RunServices는 v1 앱(deploy.db)과 프록시 호스트(proxy.db)를 서비스로 옮긴다. 처음 한 번만.
@@ -47,6 +50,14 @@ func RunServices(dataDir string, st *store.Store, repo *service.Repo) (ServicesR
 			}
 			byContainer[a.svc.Container] = id
 			r.Apps++
+		}
+		if db, ok, err := open(filepath.Join(dataDir, "deploy.db")); err == nil && ok {
+			n, err := importHistory(db, deploy.NewStore(st.DB))
+			db.Close()
+			if err != nil {
+				return r, fmt.Errorf("deploy history: %w", err)
+			}
+			r.History = n
 		}
 	}
 
@@ -79,6 +90,56 @@ func RunServices(dataDir string, st *store.Store, repo *service.Repo) (ServicesR
 		}
 	}
 	return r, st.SetSetting(store.KeyV1ImportedServices, "1")
+}
+
+// importHistory는 v1 배포 기록을 옮긴다. 로그는 끝부분만 남긴다 — 실패 원인은 대개 끝에 있다.
+func importHistory(db *sql.DB, history *deploy.Store) (int, error) {
+	cols, err := columnsOf(db, "deployments")
+	if err != nil || !cols["project_id"] {
+		return 0, err
+	}
+	rows, err := db.Query(`SELECT project_id, status, trigger_type, commit_hash, commit_message, log, created_at, duration_ms FROM deployments ORDER BY id`)
+	if err != nil {
+		return 0, err
+	}
+	type row struct {
+		project                         int64
+		status, trigger, hash, msg, log string
+		created, durationMs             int64
+	}
+	var all []row
+	for rows.Next() {
+		var x row
+		var hash, msg, log sql.NullString
+		if err := rows.Scan(&x.project, &x.status, &x.trigger, &hash, &msg, &log, &x.created, &x.durationMs); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		x.hash, x.msg, x.log = hash.String, msg.String, log.String
+		all = append(all, x)
+	}
+	rows.Close()
+	n := 0
+	for _, x := range all {
+		status := deploy.Failed
+		if x.status == "success" {
+			status = deploy.Success
+		}
+		logTail := x.log
+		if len(logTail) > 64<<10 {
+			logTail = "…\n" + logTail[len(logTail)-64<<10:]
+		}
+		started := time.Unix(x.created, 0)
+		err := history.Import(deploy.Deployment{
+			ServiceID: x.project, Status: status, Trigger: "v1:" + x.trigger, Commit: x.hash, Message: x.msg, Log: logTail,
+			StartedAt: started, FinishedAt: started.Add(time.Duration(x.durationMs) * time.Millisecond),
+		})
+		if err != nil {
+			continue // 지워진 앱의 기록 — 옮길 곳이 없다
+		}
+		n++
+	}
+	return n, nil
 }
 
 type v1App struct {

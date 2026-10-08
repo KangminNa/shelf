@@ -245,7 +245,11 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 }
 
 // 리다이렉트 뒤에 보여줄 알림. 쿼리에서 받는 값은 이 목록으로만 바꾼다.
-var okKeys = map[string]string{"setup": "ok.setup", "password": "ok.password", "domain": "ok.domain"}
+var okKeys = map[string]string{
+	"setup": "ok.setup", "password": "ok.password", "domain": "ok.domain",
+	"queued": "ok.queued", "saved": "ok.saved", "redeploy": "ok.redeploy", "stopped": "ok.stopped", "started": "ok.started",
+	"domain-added": "ok.domainadded", "domain-removed": "ok.domainremoved", "deleted": "ok.deleted",
+}
 
 // ── 설정 ───────────────────────────────────
 

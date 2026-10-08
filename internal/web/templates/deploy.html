@@ -1,0 +1,33 @@
+{{define "root"}}{{template "app" .}}{{end}}
+{{define "title"}}#{{.Data.Deployment.ID}} · {{.Data.Service.Name}}{{end}}
+{{define "content"}}
+{{$d := .Data.Deployment}}
+<a class="back" href="/services/{{.Data.Service.ID}}">← {{.Data.Service.Name}}</a>
+<div class="detail-head">
+  <div>
+    <h1>{{t "deploy.heading" $d.ID}}</h1>
+    <div class="sub">
+      <span class="pill {{$d.Status}}">{{t (print "deploy.status." $d.Status)}}</span>
+      <span>{{t (print "deploy.trigger." (trigger $d.Trigger))}}</span>
+      {{with $d.ShortCommit}}<span>·</span><code>{{.}}</code>{{end}}
+      {{with $d.Message}}<span>{{.}}</span>{{end}}
+      <span>·</span><span>{{dur $d.Duration}}</span>
+    </div>
+  </div>
+</div>
+
+<div class="stack narrow">
+  {{if .Data.Steps}}
+  <ol class="progress">
+    {{range .Data.Steps}}<li class="{{.State}}"><span class="mark"></span>{{.Label}}</li>{{end}}
+  </ol>
+  {{end}}
+  {{if eq (print $d.Status) "success"}}
+    {{with .Data.Service.PrimaryDomain}}<p><a class="btn primary" href="http://{{.}}" target="_blank" rel="noopener">{{t "deploy.open" .}} ↗</a></p>{{end}}
+  {{end}}
+  <section class="section">
+    <h2>{{t "deploy.log"}}</h2>
+    <pre class="code log">{{if $d.Log}}{{$d.Log}}{{else}}…{{end}}</pre>
+  </section>
+</div>
+{{end}}

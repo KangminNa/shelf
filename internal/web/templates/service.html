@@ -1,7 +1,7 @@
 {{define "root"}}{{template "app" .}}{{end}}
 {{define "title"}}{{.Data.Card.Name}}{{end}}
 {{define "content"}}
-{{$s := .Data.Service}}{{$c := .Data.Card}}
+{{$s := .Data.Service}}{{$c := .Data.Card}}{{$id := $s.ID}}
 <a class="back" href="/">← {{t "service.back"}}</a>
 <div class="detail-head">
   <span class="avatar big {{$c.Color}}">{{$c.Initial}}</span>
@@ -9,7 +9,26 @@
     <h1>{{$s.Name}}</h1>
     <div class="sub"><span>{{t $c.KindKey}}</span>{{with $c.Domain}}<span>·</span><a class="ext" href="http://{{.}}" target="_blank" rel="noopener">{{.}} ↗</a>{{end}}</div>
   </div>
+  <div class="head-actions">
+    {{if $s.HasContainer}}
+      {{if $s.Stopped}}
+      <form method="post" action="/services/{{$id}}/start"><button class="btn" type="submit">{{t "service.start"}}</button></form>
+      {{else}}
+      <form method="post" action="/services/{{$id}}/stop"><button class="btn" type="submit">{{t "service.stop"}}</button></form>
+      {{end}}
+    {{end}}
+    {{if $s.Deployable}}
+    <form method="post" action="/services/{{$id}}/deploy"><button class="btn primary" type="submit">{{t "service.deploy"}}</button></form>
+    {{end}}
+  </div>
 </div>
+
+{{if .Data.Running}}
+<div class="notice warn"><span class="notice-icon">…</span>
+  <div class="notice-text"><b>{{t "service.deploying"}}</b></div>
+  {{with .Data.Latest}}<a class="btn small" href="/services/{{$id}}/deploys/{{.ID}}">{{t "service.watch"}}</a>{{end}}
+</div>
+{{end}}
 
 <div class="stack narrow">
 <section class="section">
@@ -18,39 +37,118 @@
   <dl class="facts">
     <dt>{{t "service.target"}}</dt><dd>{{with .Data.Target}}<code>{{.}}</code>{{else}}—{{end}}</dd>
     {{if $s.HasContainer}}
-    <dt>{{t "service.container"}}</dt><dd><code>{{$s.Container}}</code></dd>
-    <dt>{{t "service.port"}}</dt><dd>{{if $s.Port}}{{$s.Port}}{{else}}—{{end}}</dd>
+    <dt>{{t "service.container"}}</dt><dd><code>{{$s.CurrentContainer}}</code></dd>
     {{end}}
   </dl>
 </section>
 
-<section class="section">
+{{if $s.Deployable}}
+<section class="section" id="deploys">
+  <h2>{{t "service.deploys"}}</h2>
+  {{if .Data.Deploys}}
+  <ul class="rows deploys">
+    {{range .Data.Deploys}}
+    <li>
+      <a class="dep-main" href="/services/{{$id}}/deploys/{{.ID}}">
+        <span class="pill {{.Status}}">{{t (print "deploy.status." .Status)}}</span>
+        <span class="muted small">{{ago .StartedAt}}</span>
+        {{with .ShortCommit}}<code>{{.}}</code>{{end}}
+        <span class="dep-msg">{{.Message}}</span>
+      </a>
+      {{if eq .ID $.Data.LiveID}}<span class="chip on">{{t "service.live"}}</span>
+      {{else if eq (print .Status) "success"}}
+      <form method="post" action="/services/{{$id}}/rollback/{{.ID}}"><button class="btn small quiet" type="submit">{{t "service.rollback"}}</button></form>
+      {{end}}
+    </li>
+    {{end}}
+  </ul>
+  {{else}}<p class="desc">{{t "service.nodeploys"}}</p>{{end}}
+</section>
+
+<section class="section" id="webhook">
+  <h2>{{t "service.webhook"}}</h2>
+  <p class="desc">{{if $s.AutoDeploy}}{{t "service.webhook.desc"}}{{else}}{{t "service.webhook.off"}}{{end}}</p>
+  {{if .Data.WebhookURL}}
+  <dl class="facts">
+    <dt>Payload URL</dt><dd><code>{{.Data.WebhookURL}}</code></dd>
+    <dt>Content type</dt><dd><code>application/json</code></dd>
+    <dt>Secret</dt><dd><details class="reveal"><summary>{{t "service.reveal"}}</summary><code>{{.Data.WebhookSecret}}</code></details></dd>
+    <dt>{{t "service.hook.last"}}</dt><dd>{{if $s.HookAt}}{{ago .Data.HookTime}} · {{$s.HookResult}}{{else}}<span class="muted">{{t "service.hook.never"}}</span>{{end}}</dd>
+  </dl>
+  {{else}}<p class="flash bad">{{t "service.webhook.nodomain"}}</p>{{end}}
+</section>
+{{end}}
+
+<section class="section" id="domains">
   <h2>{{t "service.addresses"}}</h2>
+  {{if eq .Data.Form "domain"}}{{template "error" .}}{{end}}
   {{if $s.Domains}}
   <ul class="rows">
     {{range $s.Domains}}
     <li><a class="ext" href="http://{{.Domain}}" target="_blank" rel="noopener">{{.Domain}} ↗</a>
       <span class="spacer"></span>
       {{if .HTTPS}}<span class="chip on">{{t "service.https"}}</span>{{else}}<span class="chip">{{t "service.httponly"}}</span>{{end}}
-      {{if .HSTS}}<span class="chip on">{{t "service.hsts"}}</span>{{end}}</li>
+      {{if .HSTS}}<span class="chip on">{{t "service.hsts"}}</span>{{end}}
+      <form method="post" action="/services/{{$id}}/domains/{{.ID}}/delete"><button class="btn small quiet" type="submit" aria-label="{{t "service.domain.remove"}} {{.Domain}}">✕</button></form>
+    </li>
     {{end}}
   </ul>
   {{else}}<p class="desc">{{t "service.noaddress"}}</p>{{end}}
+  <form method="post" action="/services/{{$id}}/domains" class="inline-form">
+    <input class="input mono" name="domain" placeholder="app.example.com" aria-label="{{t "field.domain"}}">
+    <label class="check-label"><input type="checkbox" name="https" value="1" checked> HTTPS</label>
+    <button class="btn" type="submit">{{t "service.domain.add"}}</button>
+  </form>
 </section>
 
-{{if $s.Source}}
-<section class="section">
-  <h2>{{t "service.source"}}</h2>
-  <dl class="facts">
-    <dt>{{t $c.KindKey}}</dt><dd><code>{{$s.Source}}</code></dd>
-    {{if eq (print $s.Kind) "repo"}}
-    <dt>{{t "service.branch"}}</dt><dd><code>{{$s.Branch}}</code></dd>
-    {{with $s.BuildPath}}<dt>{{t "service.buildpath"}}</dt><dd><code>{{.}}</code></dd>{{end}}
+<section class="section" id="settings">
+  <h2>{{t "service.settings"}}</h2>
+  {{if eq .Data.Form "settings"}}{{template "error" .}}{{end}}
+  {{$f := .Data.Settings}}
+  <form method="post" action="/services/{{$id}}/settings" class="form">
+    {{if eq (print $s.Kind) "repo" "static"}}
+    <label class="field"><span>{{t "field.repo"}}</span><input class="input mono" name="source" value="{{$f.Source}}" required></label>
+    <label class="field"><span>{{t "service.branch"}}</span><input class="input mono" name="branch" value="{{$f.Branch}}" placeholder="main"></label>
+    <label class="field"><span>{{t "field.token"}}</span>
+      <input class="input mono" type="password" name="token" autocomplete="off" placeholder="{{if .Data.HasToken}}{{t "service.token.kept"}}{{else}}github_pat_…{{end}}">
+      {{if .Data.HasToken}}<label class="check-label"><input type="checkbox" name="clear_token" value="1"> {{t "service.token.clear"}}</label>{{end}}</label>
     {{end}}
-  </dl>
+    {{if eq (print $s.Kind) "repo"}}
+    <label class="field"><span>{{t "service.buildpath"}}</span><input class="input mono" name="build_path" value="{{$f.BuildPath}}"></label>
+    {{end}}
+    {{if eq (print $s.Kind) "image"}}
+    <label class="field"><span>{{t "field.image"}}</span><input class="input mono" name="source" value="{{$f.Source}}" required></label>
+    {{end}}
+    {{if eq (print $s.Kind) "static"}}
+    <label class="field"><span>{{t "field.folder"}}</span><input class="input mono" name="folder" value="{{$f.Folder}}"></label>
+    {{end}}
+    {{if eq (print $s.Kind) "external"}}
+    <label class="field"><span>{{t "field.upstream"}}</span><input class="input mono" name="upstream" value="{{$f.Upstream}}" required></label>
+    {{end}}
+    {{if $s.HasContainer}}
+    <label class="field"><span>{{t "service.port"}}</span><input class="input mono" name="port" value="{{if $f.Port}}{{$f.Port}}{{end}}" inputmode="numeric">
+      <small>{{t "service.port.hint"}}</small></label>
+    <details class="more"><summary>{{t "field.env"}} · {{t "field.volumes"}}</summary><div class="form">
+      <label class="field"><span>{{t "field.env"}}</span><textarea class="input mono" name="env" rows="4">{{$f.Env}}</textarea></label>
+      <label class="field"><span>{{t "field.volumes"}}</span><textarea class="input mono" name="volumes" rows="2">{{$f.Volumes}}</textarea></label>
+    </div></details>
+    {{end}}
+    {{if $s.Deployable}}
+    <label class="check-label"><input type="checkbox" name="auto_deploy" value="1" {{if $f.AutoDeploy}}checked{{end}}> {{t "service.autodeploy"}}</label>
+    {{end}}
+    <div><button class="btn primary" type="submit">{{t "common.save"}}</button></div>
+  </form>
 </section>
-{{end}}
 
-<p class="muted small">{{t "service.readonly"}}</p>
+<section class="section danger" id="delete">
+  <h2>{{t "service.delete"}}</h2>
+  <p class="desc">{{t "service.delete.desc"}}</p>
+  {{if eq .Data.Form "delete"}}{{template "error" .}}{{end}}
+  <form method="post" action="/services/{{$id}}/delete" class="inline-form">
+    <input class="input mono" name="confirm" placeholder="{{$s.Name}}" aria-label="{{t "service.delete.confirm" $s.Name}}" autocomplete="off">
+    <button class="btn danger" type="submit">{{t "service.delete.button"}}</button>
+  </form>
+  <small class="muted">{{t "service.delete.confirm" $s.Name}}</small>
+</section>
 </div>
 {{end}}

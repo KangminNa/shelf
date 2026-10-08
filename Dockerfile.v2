@@ -9,7 +9,8 @@ ARG VERSION=2.0.0-dev
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=${VERSION}" -o /out/naru ./cmd/naru
 
 FROM alpine:3
-RUN apk add --no-cache ca-certificates tzdata
+# git: 저장소를 가져온다 (토큰은 명령줄·설정 파일에 남기지 않는다)
+RUN apk add --no-cache ca-certificates tzdata git
 COPY --from=build /out/naru /usr/local/bin/naru
 ENV NARU_DATA_DIR=/data NARU_LISTEN=:8080
 VOLUME /data

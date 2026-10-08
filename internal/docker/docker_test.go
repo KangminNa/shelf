@@ -61,3 +61,43 @@ func TestUnreachableDocker(t *testing.T) {
 		t.Fatal("a missing socket is an error")
 	}
 }
+
+func TestSplitRef(t *testing.T) {
+	cases := map[string][2]string{
+		"traefik/whoami":       {"traefik/whoami", "latest"},
+		"ghcr.io/me/api:v1":    {"ghcr.io/me/api", "v1"},
+		"localhost:5000/app":   {"localhost:5000/app", "latest"},
+		"localhost:5000/app:2": {"localhost:5000/app", "2"},
+		"nginx@sha256:abc":     {"nginx@sha256:abc", ""},
+	}
+	for in, want := range cases {
+		if n, tag := splitRef(in); n != want[0] || tag != want[1] {
+			t.Errorf("%s → %s %s", in, n, tag)
+		}
+	}
+}
+
+func TestFollowReportsErrorsAndImageID(t *testing.T) {
+	var log strings.Builder
+	id, err := follow(strings.NewReader(`{"stream":"Step 1/2 : FROM alpine\n"}{"aux":{"ID":"sha256:abc"}}{"stream":"Successfully built\n"}`), &log)
+	if err != nil || id != "sha256:abc" || !strings.Contains(log.String(), "Step 1/2") {
+		t.Fatalf("%q %v %q", id, err, log.String())
+	}
+	if _, err := follow(strings.NewReader(`{"stream":"RUN false\n"}{"error":"The command '/bin/sh -c false' returned a non-zero code: 1"}`), &log); err == nil || !strings.Contains(err.Error(), "non-zero") {
+		t.Fatalf("build errors surface: %v", err)
+	}
+}
+
+func TestDemuxStripsFrameHeaders(t *testing.T) {
+	frame := func(stream byte, s string) []byte {
+		h := []byte{stream, 0, 0, 0, 0, 0, 0, byte(len(s))}
+		return append(h, s...)
+	}
+	raw := append(frame(1, "listening on :3000\n"), frame(2, "warn: x\n")...)
+	if got := demux(raw); got != "listening on :3000\nwarn: x\n" {
+		t.Fatalf("%q", got)
+	}
+	if got := demux([]byte("tty output\n")); got != "tty output\n" {
+		t.Fatalf("tty logs pass through: %q", got)
+	}
+}

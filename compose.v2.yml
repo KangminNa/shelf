@@ -18,6 +18,7 @@ services:
       - ./caddy/bootstrap.json:/etc/caddy/bootstrap.json:ro
       - ./data-v2/caddy/data:/data                   # 인증서
       - ./data-v2/caddy/config:/config               # 마지막 설정(autosave) — 재시작해도 이어서
+      - ./data-v2/sites:/srv/sites:ro                # 정적 사이트 — Naru가 올리고 웹서버는 읽기만
     extra_hosts:
       - "host.docker.internal:host-gateway"          # "이 서버"에서 도는 것(NAS 등)에 닿는 길
     networks: [apps]
@@ -30,6 +31,7 @@ services:
     restart: unless-stopped
     environment:
       - NARU_TLS=internal                            # 로컬: 공개 CA에 요청하지 않는다
+      - NARU_NETWORK=${NARU_NETWORK:-naru-net}       # 앱 컨테이너를 붙일 네트워크 (아래 apps와 같아야 한다)
     ports:
       - "127.0.0.1:8080:8080"                        # 웹서버를 거치지 않고 들어가는 뒷문 (로컬 전용)
     volumes:

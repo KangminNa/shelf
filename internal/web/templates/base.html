@@ -6,6 +6,7 @@
 <title>{{template "title" .}} · Naru</title>
 <link rel="stylesheet" href="/static/naru.css?v={{.Version}}">
 <link rel="icon" href="/static/icon.svg" type="image/svg+xml">
+{{if .Refresh}}<meta http-equiv="refresh" content="{{.Refresh}}">{{end}}
 </head>{{end}}
 
 {{define "logo"}}<span class="logo-mark"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h10"/></svg></span>{{end}}

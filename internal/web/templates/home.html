@@ -1,11 +1,12 @@
 {{define "root"}}{{template "app" .}}{{end}}
 {{define "title"}}{{t "nav.services"}}{{end}}
 {{define "content"}}
-<div class="hero">
+<div class="hero row">
   <div>
     <h1>{{t "home.heading"}}</h1>
     <p>{{if .Data.Services}}{{t "home.count" (len .Data.Services)}}{{else}}{{t "home.empty.sub"}}{{end}}</p>
   </div>
+  <a class="btn primary" href="/services/new">+ {{t "home.new"}}</a>
 </div>
 
 {{if not .Data.Engine.Connected}}
@@ -43,10 +44,10 @@
   {{end}}
 </div>
 {{else}}
-<div class="empty">
+<a class="empty" href="/services/new">
   <b>{{t "home.empty.title"}}</b>
   <span>{{t "home.empty.body"}}</span>
-</div>
+</a>
 {{end}}
 
 {{with .Data.Host}}

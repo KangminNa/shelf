@@ -2,11 +2,8 @@ package web
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
 	"unicode"
 
@@ -47,19 +44,24 @@ func initialOf(name string) string {
 }
 
 // cardFor는 서비스와 (있다면) 컨테이너 상태로 카드를 만든다. containers가 nil이면 Docker를 읽지 못한 것이다.
-func cardFor(s service.Service, containers map[string]docker.Container) card {
+func cardForService(s service.Service, containers map[string]docker.Container) card {
 	c := card{ID: s.ID, Name: s.Name, Initial: initialOf(s.Name), Color: colorFor(s.Name), KindKey: "kind." + string(s.Kind), Domain: s.PrimaryDomain()}
 	switch {
 	case s.Kind == service.KindExternal:
 		c.StateKey, c.StateClass = "state.routed", "muted"
+	case s.Kind == service.KindStatic && s.Release == "":
+		c.StateKey, c.StateClass = "state.notdeployed", "muted"
 	case s.Kind == service.KindStatic:
 		c.StateKey, c.StateClass = "state.static", "ok"
 	case containers == nil:
 		c.StateKey, c.StateClass = "state.unknown", "muted"
 	default:
-		ct, ok := containers[s.Container]
+		ct, ok := containers[s.CurrentContainer()]
 		if !ok {
 			c.StateKey, c.StateClass = "state.missing", "bad"
+			if s.Instance == "" && s.Container == "" {
+				c.StateKey, c.StateClass = "state.notdeployed", "muted"
+			}
 			break
 		}
 		c.Detail = ct.Status
@@ -69,7 +71,10 @@ func cardFor(s service.Service, containers map[string]docker.Container) card {
 		case docker.Restarting, docker.Dead:
 			c.StateKey, c.StateClass = "state.restarting", "bad"
 		case docker.Exited:
-			c.StateKey, c.StateClass = "state.stopped", "warn"
+			c.StateKey, c.StateClass = "state.crashed", "bad"
+			if s.Stopped {
+				c.StateKey, c.StateClass = "state.stopped", "muted"
+			}
 		case docker.Paused:
 			c.StateKey, c.StateClass = "state.paused", "warn"
 		default:
@@ -133,7 +138,7 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 		d.DockerDown = containers == nil
 	}
 	for _, sv := range services {
-		d.Services = append(d.Services, cardFor(sv, containers))
+		d.Services = append(d.Services, cardForService(sv, containers))
 	}
 	s.render(w, r, http.StatusOK, "home", view{Nav: "home", User: &u, OK: okKeys[r.URL.Query().Get("ok")], Data: d})
 }
@@ -145,41 +150,4 @@ func hasContainers(all []service.Service) bool {
 		}
 	}
 	return false
-}
-
-// ── 서비스 하나 ──────────────────────────────
-
-type serviceData struct {
-	Service service.Service
-	Card    card
-	Target  string
-}
-
-func (s *Server) servicePage(w http.ResponseWriter, r *http.Request) {
-	u, _, ok := s.gate(w, r)
-	if !ok {
-		return
-	}
-	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
-	if err != nil {
-		s.render(w, r, http.StatusNotFound, "notfound", view{})
-		return
-	}
-	sv, err := s.d.Services.Get(id)
-	if errors.Is(err, service.ErrNotFound) {
-		s.render(w, r, http.StatusNotFound, "notfound", view{})
-		return
-	}
-	if err != nil {
-		s.d.Log.Error("get service", "id", id, "err", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
-		return
-	}
-	var containers map[string]docker.Container
-	if sv.HasContainer() {
-		containers = s.containers(r.Context())
-	}
-	s.render(w, r, http.StatusOK, "service", view{Nav: "home", User: &u, Data: serviceData{
-		Service: sv, Card: cardFor(sv, containers), Target: strings.TrimSpace(sv.Target()),
-	}})
 }

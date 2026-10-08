@@ -1,0 +1,83 @@
+{{define "root"}}{{template "app" .}}{{end}}
+{{define "title"}}{{t "new.heading"}}{{end}}
+{{define "content"}}
+{{$f := .Data.Form}}
+<a class="back" href="/">← {{t "service.back"}}</a>
+<div class="hero"><div><h1>{{t "new.heading"}}</h1><p>{{t "new.sub"}}</p></div></div>
+
+<div class="kinds">
+  {{range .Data.Kinds}}
+  <a class="kind{{if eq . $f.Kind}} on{{end}}" href="/services/new?kind={{.}}">
+    <b>{{t (print "kind." .)}}{{if eq . "static"}} <span class="new-tag">NEW</span>{{end}}</b>
+    <span>{{t (print "kind." . ".desc")}}</span>
+  </a>
+  {{end}}
+</div>
+
+{{if $f.Kind}}
+<section class="section narrow-form">
+  {{template "error" .}}
+  <form method="post" action="/services/new" class="form">
+    <input type="hidden" name="kind" value="{{$f.Kind}}">
+
+    {{if eq $f.Kind "repo" "static"}}
+    <label class="field"><span>{{t "field.repo"}}</span>
+      <input class="input mono" name="source" value="{{$f.Source}}" placeholder="https://github.com/me/app" required autofocus>
+      <small>{{if eq $f.Kind "repo"}}{{t "new.repo.hint"}}{{else}}{{t "new.static.hint"}}{{end}}</small></label>
+    {{end}}
+    {{if eq $f.Kind "image"}}
+    <label class="field"><span>{{t "field.image"}}</span>
+      <input class="input mono" name="source" value="{{$f.Source}}" placeholder="ghcr.io/me/app:latest" required autofocus>
+      <small>{{t "new.image.hint"}}</small></label>
+    {{end}}
+    {{if eq $f.Kind "external"}}
+    <label class="field"><span>{{t "field.upstream"}}</span>
+      <input class="input mono" name="upstream" value="{{$f.Upstream}}" placeholder="192.168.0.20:5000" required autofocus>
+      <small>{{t "new.external.hint"}}</small></label>
+    {{end}}
+    {{if eq $f.Kind "static"}}
+    <label class="field"><span>{{t "field.folder"}}</span>
+      <input class="input mono" name="folder" value="{{$f.Folder}}" placeholder="dist">
+      <small>{{t "new.folder.hint"}}</small></label>
+    {{end}}
+
+    <label class="field"><span>{{t "field.domain"}}</span>
+      <input class="input mono" name="domain" value="{{$f.Domain}}" placeholder="app.example.com">
+      <small>{{t "new.domain.hint"}}</small></label>
+
+    <details class="more">
+      <summary>{{t "new.more"}}</summary>
+      <div class="form">
+        <label class="field"><span>{{t "field.name"}}</span>
+          <input class="input mono" name="name" value="{{$f.Name}}" placeholder="{{t "new.name.placeholder"}}">
+          <small>{{t "new.name.hint"}}</small></label>
+        {{if eq $f.Kind "repo" "static"}}
+        <label class="field"><span>{{t "service.branch"}}</span>
+          <input class="input mono" name="branch" value="{{$f.Branch}}" placeholder="main"></label>
+        <label class="field"><span>{{t "field.token"}}</span>
+          <input class="input mono" type="password" name="token" autocomplete="off" placeholder="github_pat_…">
+          <small>{{t "new.token.hint"}}</small></label>
+        {{end}}
+        {{if eq $f.Kind "repo"}}
+        <label class="field"><span>{{t "service.buildpath"}}</span>
+          <input class="input mono" name="build_path" value="{{$f.BuildPath}}" placeholder="apps/web">
+          <small>{{t "new.buildpath.hint"}}</small></label>
+        {{end}}
+        {{if eq $f.Kind "repo" "image"}}
+        <label class="field"><span>{{t "service.port"}}</span>
+          <input class="input mono" name="port" value="{{if $f.Port}}{{$f.Port}}{{end}}" inputmode="numeric" placeholder="3000">
+          <small>{{t "new.port.hint"}}</small></label>
+        <label class="field"><span>{{t "field.env"}}</span>
+          <textarea class="input mono" name="env" rows="3" placeholder="NODE_ENV=production">{{$f.Env}}</textarea></label>
+        <label class="field"><span>{{t "field.volumes"}}</span>
+          <textarea class="input mono" name="volumes" rows="2" placeholder="/srv/app-data:/data">{{$f.Volumes}}</textarea>
+          <small>{{t "new.volumes.hint"}}</small></label>
+        {{end}}
+      </div>
+    </details>
+
+    <div class="row-actions"><button class="btn primary" type="submit">{{if eq $f.Kind "external"}}{{t "new.connect"}}{{else}}{{t "new.launch"}}{{end}}</button></div>
+  </form>
+</section>
+{{end}}
+{{end}}

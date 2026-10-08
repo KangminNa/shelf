@@ -14,6 +14,7 @@ import (
 type Site struct {
 	Hosts    []string
 	Upstream string // "host:port". "https://host:port"면 TLS로 붙는다. 비어 있으면 502
+	Root     string // 정적 사이트: 웹서버가 이 폴더의 파일을 직접 서빙한다 (Upstream 대신)
 	HTTPS    bool   // 인증서를 받아 443에서도 서빙
 	HSTS     bool
 }
@@ -116,7 +117,7 @@ func Render(p Plan) ([]byte, error) {
 		plain.Routes = append(plain.Routes, hostRoute(p.AdminHosts, proxyTo(p.AdminUpstream)))
 	}
 	for _, s := range sites {
-		plain.Routes = append(plain.Routes, hostRoute(s.Hosts, proxyTo(s.Upstream)))
+		plain.Routes = append(plain.Routes, hostRoute(s.Hosts, serve(s)))
 	}
 	if p.OpenFallback {
 		plain.Routes = append(plain.Routes, route{Handle: []handler{proxyTo(p.AdminUpstream)}})
@@ -139,7 +140,7 @@ func Render(p Plan) ([]byte, error) {
 		if s.HSTS {
 			hs = append(hs, handler{"handler": "headers", "response": map[string]any{"set": map[string][]string{"Strict-Transport-Security": {hstsValue}}}})
 		}
-		secure.Routes = append(secure.Routes, hostRoute(s.Hosts, append(hs, proxyTo(s.Upstream))...))
+		secure.Routes = append(secure.Routes, hostRoute(s.Hosts, append(hs, serve(s))...))
 	}
 	if len(secure.Routes) > 0 {
 		secure.Routes = append(secure.Routes, route{Handle: []handler{notFound()}})
@@ -165,7 +166,17 @@ func hostRoute(hosts []string, handlers ...handler) route {
 	return route{Match: []match{{Host: lower}}, Handle: handlers, Terminal: true}
 }
 
+// serve는 사이트 하나를 어떻게 응답할지다 — 파일을 직접, 아니면 연결 대상으로.
+func serve(s Site) handler {
+	if s.Root != "" {
+		return handler{"handler": "file_server", "root": s.Root}
+	}
+	return proxyTo(s.Upstream)
+}
+
 // proxyTo는 upstream으로 보낸다. Host 헤더는 Caddy가 원래 값을 그대로 넘긴다.
+// 배포 중 새 컨테이너와 옛 컨테이너가 같은 이름으로 잠깐 함께 있다 — 연결이 거절되면 몇 초 동안 다시 시도해
+// 응답하는 쪽으로 간다 (그래서 배포가 끊기지 않는다).
 func proxyTo(upstream string) handler {
 	if upstream == "" {
 		return handler{"handler": "static_response", "status_code": 502,
@@ -178,6 +189,7 @@ func proxyTo(upstream string) handler {
 		h["transport"] = map[string]any{"protocol": "http", "tls": map[string]any{}}
 	}
 	h["upstreams"] = []map[string]string{{"dial": upstream}}
+	h["load_balancing"] = map[string]any{"try_duration": "5s", "try_interval": "250ms"}
 	return h
 }
 
