@@ -71,7 +71,7 @@ sleep 5; sudo docker logs naru-rehearsal 2>&1 | grep -E 'imported from v1|not im
 ```bash
 sleep 10
 domains=$(sudo docker run --rm -v /home/ubuntu/project/naru/rehearsal-data:/d alpine \
-  sh -c "apk add -q sqlite >/dev/null && sqlite3 /d/naru.db 'SELECT domain FROM domains ORDER BY domain'")
+  sh -c "apk add -q sqlite >/dev/null && sqlite3 -readonly /d/naru.db 'SELECT domain FROM domains ORDER BY domain'")
 for d in $domains; do
   v1=$(curl -s -o /dev/null -w '%{http_code}' --resolve "$d:80:127.0.0.1" "http://$d/")/$(curl -sk -o /dev/null -w '%{http_code}' --resolve "$d:443:127.0.0.1" "https://$d/")
   v2=$(curl -s -o /dev/null -w '%{http_code}' --resolve "$d:18080:127.0.0.1" "http://$d:18080/")/$(curl -sk -o /dev/null -w '%{http_code}' --resolve "$d:18443:127.0.0.1" "https://$d:18443/")
@@ -110,7 +110,7 @@ sleep 5; sudo docker logs naru 2>&1 | grep -E 'imported from v1|not imported|con
 
 ```bash
 domains=$(sudo docker run --rm -v /home/ubuntu/project/naru/data:/d alpine \
-  sh -c "apk add -q sqlite >/dev/null && sqlite3 /d/naru.db 'SELECT domain FROM domains ORDER BY domain'")
+  sh -c "apk add -q sqlite >/dev/null && sqlite3 -readonly /d/naru.db 'SELECT domain FROM domains ORDER BY domain'")
 for d in $domains; do
   echo "$d  http: $(curl -s -o /dev/null -w '%{http_code}' --resolve "$d:80:127.0.0.1" "http://$d/")  https: $(curl -s -o /dev/null -w '%{http_code}' --resolve "$d:443:127.0.0.1" "https://$d/")"
 done
