@@ -5,11 +5,13 @@
 | 경로 | 무엇 |
 |---|---|
 | `/home/ubuntu/project/shelf` | v1 — 컨테이너 `shelf`가 80/443을 잡고 있다. 데이터는 `data/` |
-| `/home/ubuntu/project/naru` | v2 — 이 저장소의 `v2` 브랜치. 운영 구성은 `deploy/docker/` |
+| `/home/ubuntu/project/naru` | v2 — 이 저장소(`KangminNa/Naru`)의 `v2` 브랜치. 운영 구성은 `deploy/docker/` |
+
+`ubuntu` 사용자는 `docker` 그룹에 없다 — Docker 명령은 모두 `sudo`로 한다 (그룹에 넣지 않는다: 그룹은 root와 같다).
 
 지키는 것
 
-- **v1 데이터 폴더에는 쓰지 않는다.** v2는 복사본을 쓴다. 언제든 `docker start shelf`로 돌아갈 수 있어야 한다.
+- **v1 데이터 폴더에는 쓰지 않는다.** v2는 복사본을 쓴다. 언제든 `sudo docker start shelf`로 돌아갈 수 있어야 한다.
 - **앱 컨테이너(`shelf-*`)는 다시 시작하지 않는다.** v2가 이름 그대로 넘겨받는다.
 - **80/443은 한 번에 하나만.** 넘길 때는 "v1 멈춤 → v2 켬", 되돌릴 때는 "v2 멈춤 → v1 켬".
 - 지우는 것은 이름으로만 한다 (`docker volume prune` 같은 것은 쓰지 않는다).
@@ -23,9 +25,9 @@
 ## 1. 조사 — 읽기만
 
 ```bash
-uname -m; docker version --format '{{.Server.Version}}'; df -h /home; free -h
-docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
-docker network inspect shelf-net --format '{{range .Containers}}{{.Name}} {{end}}'
+uname -m; sudo docker version --format '{{.Server.Version}}'; df -h /home; free -h
+sudo docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+sudo docker network inspect shelf-net --format '{{range .Containers}}{{.Name}} {{end}}'
 sudo ss -ltnp | grep -E ':(80|443|8080|18080|18081|18443) '
 sudo ls -la /home/ubuntu/project/shelf/data
 grep -E '^(ADMIN_DOMAIN|ACME_EMAIL)=' /home/ubuntu/project/shelf/.env
@@ -39,13 +41,15 @@ grep -E '^(ADMIN_DOMAIN|ACME_EMAIL)=' /home/ubuntu/project/shelf/.env
 
 ```bash
 cd /home/ubuntu/project
-docker tag "$(docker inspect shelf --format '{{.Image}}')" shelf:v1-final   # 되돌릴 이미지를 이름으로 붙잡아 둔다
+sudo docker tag "$(sudo docker inspect shelf --format '{{.Image}}')" shelf:v1-final   # 되돌릴 이미지를 이름으로 붙잡아 둔다
 sudo tar czf "shelf-data-$(date +%F).tgz" -C shelf data                   # v1 데이터 백업
-git clone -b v2 https://github.com/KangminNa/shelf.git naru
+git clone -b v2 https://github.com/KangminNa/Naru.git naru
 cd naru/deploy/docker
-cp env.example .env && chmod 600 .env
-# .env: ACME_EMAIL·ADMIN_DOMAIN은 v1 .env 값 그대로, NARU_NETWORK=shelf-net
-docker compose build                                                       # 이미지를 미리 만든다
+# .env — ACME_EMAIL·ADMIN_DOMAIN은 v1 .env에서 그대로 옮긴다 (값을 손으로 옮겨 적지 않는다)
+grep -vE '^(ACME_EMAIL|ADMIN_DOMAIN|NARU_NETWORK)=' env.example > .env && chmod 600 .env
+grep -E '^(ADMIN_DOMAIN|ACME_EMAIL)=' /home/ubuntu/project/shelf/.env >> .env
+echo 'NARU_NETWORK=shelf-net' >> .env
+sudo docker compose build                                                       # 이미지를 미리 만든다 (ARM에서 몇 분)
 ```
 
 ## 3. 그림자 실행 — 중단 없음
@@ -57,8 +61,8 @@ v2를 **127.0.0.1의 다른 포트**(18080/18443)와 **내부 인증서**로 띄
 cd /home/ubuntu/project/naru
 sudo mkdir -m 700 rehearsal-data
 sudo cp -p ../shelf/data/auth.db* ../shelf/data/proxy.db* ../shelf/data/deploy.db* rehearsal-data/
-cd deploy/docker && docker compose -f rehearsal.yml up -d
-sleep 5; docker logs naru-rehearsal 2>&1 | grep -E 'imported from v1|not imported|config applied'
+cd deploy/docker && sudo docker compose -f rehearsal.yml up -d
+sleep 5; sudo docker logs naru-rehearsal 2>&1 | grep -E 'imported from v1|not imported|config applied'
 ```
 
 `not imported` 줄을 하나씩 읽는다 — 빠지는 것이 괜찮은지 정한다.
@@ -66,7 +70,7 @@ sleep 5; docker logs naru-rehearsal 2>&1 | grep -E 'imported from v1|not importe
 
 ```bash
 sleep 10
-domains=$(docker run --rm -v /home/ubuntu/project/naru/rehearsal-data:/d alpine \
+domains=$(sudo docker run --rm -v /home/ubuntu/project/naru/rehearsal-data:/d alpine \
   sh -c "apk add -q sqlite >/dev/null && sqlite3 /d/naru.db 'SELECT domain FROM domains ORDER BY domain'")
 for d in $domains; do
   v1=$(curl -s -o /dev/null -w '%{http_code}' --resolve "$d:80:127.0.0.1" "http://$d/")/$(curl -sk -o /dev/null -w '%{http_code}' --resolve "$d:443:127.0.0.1" "https://$d/")
@@ -85,7 +89,7 @@ done
 
 ```bash
 cd /home/ubuntu/project/naru/deploy/docker
-docker compose -f rehearsal.yml down -v
+sudo docker compose -f rehearsal.yml down -v
 sudo rm -rf /home/ubuntu/project/naru/rehearsal-data
 ```
 
@@ -95,17 +99,17 @@ v1을 멈춘 **뒤에** 데이터를 복사한다 — 멈춘 DB라야 복사본�
 
 ```bash
 cd /home/ubuntu/project/naru
-docker stop shelf                                         # ── 여기서부터 중단
+sudo docker stop shelf                                         # ── 여기서부터 중단
 sudo mkdir -p -m 700 data
 sudo cp -p ../shelf/data/auth.db* ../shelf/data/proxy.db* ../shelf/data/deploy.db* ../shelf/data/notify.db* data/
-cd deploy/docker && docker compose up -d                  # ── v2가 80/443을 잡는다
-sleep 5; docker logs naru 2>&1 | grep -E 'imported from v1|not imported|config applied'
+cd deploy/docker && sudo docker compose up -d                  # ── v2가 80/443을 잡는다
+sleep 5; sudo docker logs naru 2>&1 | grep -E 'imported from v1|not imported|config applied'
 ```
 
 확인
 
 ```bash
-domains=$(docker run --rm -v /home/ubuntu/project/naru/data:/d alpine \
+domains=$(sudo docker run --rm -v /home/ubuntu/project/naru/data:/d alpine \
   sh -c "apk add -q sqlite >/dev/null && sqlite3 /d/naru.db 'SELECT domain FROM domains ORDER BY domain'")
 for d in $domains; do
   echo "$d  http: $(curl -s -o /dev/null -w '%{http_code}' --resolve "$d:80:127.0.0.1" "http://$d/")  https: $(curl -s -o /dev/null -w '%{http_code}' --resolve "$d:443:127.0.0.1" "https://$d/")"
@@ -120,18 +124,18 @@ done
 
 ```bash
 cd /home/ubuntu/project/naru/deploy/docker
-docker compose stop && docker start shelf                 # v1로
+sudo docker compose stop && sudo docker start shelf                 # v1로
 curl -s -o /dev/null -w '%{http_code}\n' https://<관리 주소>/login
-docker stop shelf && docker compose start                 # 다시 v2로
+sudo docker stop shelf && sudo docker compose start                 # 다시 v2로
 ```
 
-v2는 마지막 설정과 받아 둔 인증서로 바로 이어서 뜬다. 서버가 재부팅돼도 멈춰 둔 `shelf`는 다시 뜨지 않는다 (`docker stop`한 컨테이너는
-`unless-stopped`여도 멈춘 채로 있다) — v1 폴더에서 `docker compose up`을 하지 않는 한 80/443을 다투지 않는다.
+v2는 마지막 설정과 받아 둔 인증서로 바로 이어서 뜬다. 서버가 재부팅돼도 멈춰 둔 `shelf`는 다시 뜨지 않는다 (`sudo docker stop`한 컨테이너는
+`unless-stopped`여도 멈춘 채로 있다) — v1 폴더에서 `sudo docker compose up`을 하지 않는 한 80/443을 다투지 않는다.
 
 ## 되돌리기 — 실제로 필요할 때
 
 ```bash
-cd /home/ubuntu/project/naru/deploy/docker && docker compose stop && docker start shelf
+cd /home/ubuntu/project/naru/deploy/docker && sudo docker compose stop && sudo docker start shelf
 ```
 
 v2로 넘어온 뒤 생긴 변화(새 배포·설정·새로 만든 `naru-*` 컨테이너)는 v1에 없다. v1은 넘어가기 직전 모습으로 돈다.
@@ -139,8 +143,8 @@ v2로 넘어온 뒤 생긴 변화(새 배포·설정·새로 만든 `naru-*` 컨
 ## 6. 정리 — 7일 뒤, 문제가 없으면
 
 ```bash
-docker rm shelf                   # 멈춰 둔 v1 컨테이너
-docker rmi shelf:v1-final         # 되돌릴 이미지
+sudo docker rm shelf                   # 멈춰 둔 v1 컨테이너
+sudo docker rmi shelf:v1-final         # 되돌릴 이미지
 ```
 
 - GitHub의 Naru 저장소에서 `/hooks/self` 웹훅을 지운다 (v2에는 스스로 업데이트하는 기능이 없다).
@@ -149,5 +153,5 @@ docker rmi shelf:v1-final         # 되돌릴 이미지
 ## Naru 업데이트
 
 ```bash
-cd /home/ubuntu/project/naru && git pull && cd deploy/docker && docker compose up -d --build
+cd /home/ubuntu/project/naru && git pull && cd deploy/docker && sudo docker compose up -d --build
 ```
