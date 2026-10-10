@@ -1,37 +1,17 @@
-# Dependencies
-node_modules/
-
-# Build output
-dist/
-*.js.map
-
-# Runtime data (DB files, uploads)
+# 실행 데이터 (DB · 인증서 · 비밀). 저장소에 올리지 않는다
 data/
+data-v2/
 
-# Environment & secrets
+# 환경 변수 — 비밀이 들어갈 수 있다
 .env
 .env.*
-!.env.example
 
-# OS files
+# OS · 편집기
 .DS_Store
 Thumbs.db
+.vscode/
+.idea/
 
-# IDE (keep .vscode/settings & tasks, ignore personal state)
-.vscode/*.log
-.vscode/.ropeproject
-
-# Logs
-*.log
-logs/
-
-# Coverage & test
-coverage/
-.nyc_output/
-
-# Temp
+# 임시
 tmp/
-.tmp/
-
-# v2 로컬 실험용 데이터
-data-v2/
+*.log

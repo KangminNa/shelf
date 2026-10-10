@@ -1,7 +1,10 @@
 # 웹서버 엔진을 Caddy로 — 설계
 
 상태: **제안** · 2026-10-03
-읽기 전에: [SPEC](../SPEC.md) · [OBJECTS](../OBJECTS.md) · [Caddy 사용성 분석](caddy-usability.md)
+관련: [Caddy 사용성 분석](caddy-usability.md) · [v2 객체 설계](v2-objects.md)
+
+> v1(Node) 시절에 쓴 설계다. 코드 위치(`core/src/…`)와 단계(P0~P4)는 v1 기준이고, v2 구현은 [객체 설계](v2-objects.md)를 따른다.
+> 이 문서에서 지금도 유효한 것은 **불변식(§4)과 인증서(§5)** 다.
 
 ---
 

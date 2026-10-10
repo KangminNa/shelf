@@ -2,10 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "shelf-dev",
-      "runtimeExecutable": "npx",
-      "runtimeArgs": ["tsx", "watch", "core/src/index.ts"],
-      "port": 9666
+      "name": "naru",
+      "runtimeExecutable": "docker",
+      "runtimeArgs": ["compose", "up", "--build"],
+      "port": 8080
     }
   ]
 }
