@@ -260,3 +260,12 @@ details.reveal code { display: block; margin-top: 6px; overflow-wrap: anywhere; 
   .top .lang { display: none; }
   .menu a { padding: 6px 8px; }
 }
+
+/* 로그 */
+.code.logs { max-height: 70vh; font-size: 12.5px; line-height: 1.55; }
+.code.logs .ts { color: var(--term-dim, #8a8f98); }
+.code.logs .tag { display: inline-block; min-width: 2.6em; padding: 0 4px; border-radius: 4px; font-size: 11px; text-align: center; background: rgba(255,255,255,.08); }
+.code.logs .tag.stderr { background: rgba(255,107,112,.22); }
+.code.logs .tag.req { background: rgba(76,195,138,.18); }
+.code.logs .st { font-weight: 600; }
+.code.logs .st[class*="s4"], .code.logs .st[class*="s5"] { color: #ff6b70; }

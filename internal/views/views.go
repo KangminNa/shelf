@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -25,6 +26,8 @@ type Parts struct {
 	Certs      contract.CertificateReader
 	Clock      contract.Clock
 	Web        contract.WebSettingsStore
+	AppLogs    contract.ContainerLogReader
+	Access     contract.AccessLogReader
 	HTTPSPort  int // 바깥에서 본 HTTPS 포트 — 443이 아니면 웹훅 주소에 붙인다 (로컬 개발)
 }
 
@@ -182,6 +185,49 @@ func (v serviceViewer) webView(ctx context.Context, s model.Service) (model.WebS
 		}
 	}
 	return out, nil
+}
+
+// logLines만큼 로그 화면에 보여준다.
+const logLines = 200
+
+// Logs는 앱 출력과 받은 요청을 시간순으로 합친다. 한쪽을 못 읽어도 다른 쪽은 보여준다.
+func (v serviceViewer) Logs(ctx context.Context, id model.ServiceID, f model.LogFilter) (model.LogsView, error) {
+	s, err := v.p.Services.Get(ctx, id)
+	if err != nil {
+		return model.LogsView{}, err
+	}
+	tools, ok := v.p.Kinds.Find(s.Kind)
+	if !ok {
+		return model.LogsView{}, model.ErrNotFound
+	}
+	view := model.LogsView{Service: s, Filter: f, HasApp: tools.Destination.Find(s).Container, HasRequests: len(s.Domains) > 0}
+	var lines []model.LogLine
+	if view.HasApp && f != model.LogsRequests && s.Live.CurrentContainer() != "" {
+		lctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		app, err := v.p.AppLogs.Recent(lctx, s.Live.CurrentContainer(), logLines)
+		cancel()
+		if err != nil {
+			view.AppError = err.Error()
+		}
+		lines = append(lines, app...)
+	}
+	if view.HasRequests && f != model.LogsApp {
+		var hosts []string
+		for _, d := range s.Domains {
+			hosts = append(hosts, d.Domain.String())
+		}
+		reqs, err := v.p.Access.Recent(ctx, hosts, logLines)
+		if err != nil {
+			view.RequestError = err.Error()
+		}
+		lines = append(lines, reqs...)
+	}
+	sort.SliceStable(lines, func(i, j int) bool { return lines[i].At.Before(lines[j].At) })
+	if len(lines) > logLines {
+		lines = lines[len(lines)-logLines:]
+	}
+	view.Lines = lines
+	return view, nil
 }
 
 func (v serviceViewer) Deployment(ctx context.Context, id model.ServiceID, did model.DeploymentID) (model.DeploymentView, error) {

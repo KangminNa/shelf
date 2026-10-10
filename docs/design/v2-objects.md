@@ -143,7 +143,7 @@
 
 | 인터페이스 | 하는 일 | 구현 |
 |---|---|---|
-| `ServiceViewer` | 화면에 보여줄 서비스 모습(홈 카드·상세·배포 기록)을 모은다. 비밀은 담지 않는다 | `serviceViewer` |
+| `ServiceViewer` | 화면에 보여줄 서비스 모습(홈 카드·상세·배포 기록·로그)을 모은다. 비밀은 담지 않는다. 로그는 앱 출력과 받은 요청을 시간순으로 합친다 (M6-2) | `serviceViewer` |
 | `ServerStats` | 서버의 CPU·메모리·디스크를 알려준다 | `stats.ProcSampler` |
 
 ### I. 웹서버 설정 정하기 — `websettings` (M5)
@@ -170,6 +170,8 @@
 | `ContainerRemover` | 컨테이너를 없앤다 | `docker.Containers` |
 | `ContainerSwitch` | 컨테이너를 멈추고 켠다 | `docker.Containers` |
 | `ContainerWatcher` | 컨테이너 상태·로그, 이 서비스의 컨테이너 목록을 본다 | `docker.Containers` |
+| `ContainerLogReader` | 컨테이너가 찍은 최근 줄을 시각·stdout/stderr와 함께 읽는다 | `docker.Containers` |
+| `AccessLogReader` | 웹서버가 남긴 요청 기록 파일에서 그 주소들의 최근 요청을 읽는다 (파일 끝 4MB만) | `caddy.AccessLogFile` |
 | `AlertSender` | 알림 하나를 그 주소의 형식으로 보낸다 (10초 제한, 응답 본문은 읽고 버린다) | `httppost.AlertPoster` |
 | `SnippetCompiler` | 고급 칸의 Caddyfile 지시어를 웹서버 형식으로 바꾼다 — 그 사이트의 경로 처리만 꺼내고 나머지는 "적용되지 않음"으로 알린다 | `caddy.AdaptCompiler` (Caddy 관리 API `/adapt`) |
 | `CodeDownloader` | 저장소 코드를 내려받는다 (토큰은 인자·설정 파일에 남기지 않는다) | `git.Downloader` |
@@ -341,6 +343,16 @@ Naru가 막 켜졌을 때 이미 멈춰 있던 것은 알리지 않고 기준으
 | `AlertChannel` · `ChannelID` | 알림 주소 — 이름, 주소, 시크릿. **`web`·`cli`는 이 타입을 쓸 수 없다** (주소가 비밀) |
 | `AlertURL` · `ChannelInput` · `ChannelView` | http(s) 주소 값 · 화면에서 받은 것 · 화면에 보일 것(가린 주소, 형식, 시크릿이 있는지) |
 | `Delivery` | 보낸 결과 하나 — 주소 이름, 사건, 제목, 성공 여부, 이유, 시각 |
+
+### 로그 (M6-2)
+
+| 이름 | 무엇 |
+|---|---|
+| `LogLine` · `LogSource` | 로그 한 줄 — 시각, 앱/요청, 앱이면 stdout/stderr와 글자, 요청이면 메서드·경로·상태·걸린 시간 |
+| `LogFilter` · `LogsView` | 전체·앱·요청 중 무엇을 볼지 · 서비스 로그 화면 (읽지 못한 쪽은 이유와 함께) |
+
+**접근 로그에 남기지 않는 것:** 관리 주소와 주소 없이 들어온 요청(웹훅의 `?secret=`, 첫 설정의 `?token=`) — 서비스 주소만 남긴다 (`skip_unmapped_hosts`).
+`Authorization`·`Cookie`는 Caddy가 `REDACTED`로 남긴다 (실측). 앱 주소의 쿼리 문자열은 그대로 남는다 — 내 서버의 로그다.
 
 ### 화면에 보여줄 모습 (`ServiceViewer`가 모은다)
 
@@ -729,6 +741,7 @@ type ServiceViewer interface {
 	Home(ctx context.Context) (model.HomeView, error)
 	Detail(ctx context.Context, id model.ServiceID) (model.ServiceView, error)
 	Deployment(ctx context.Context, id model.ServiceID, d model.DeploymentID) (model.DeploymentView, error)
+	Logs(ctx context.Context, id model.ServiceID, f model.LogFilter) (model.LogsView, error) // 앱 출력과 요청을 시간순으로
 }
 
 // ServerStats는 서버의 CPU·메모리·디스크를 알려준다.
@@ -808,6 +821,16 @@ type SiteFiles interface {
 	RemoveSite(site model.ServiceName) error
 }
 
+// ContainerLogReader는 컨테이너가 찍은 최근 n줄을 시각과 함께 읽는다.
+type ContainerLogReader interface {
+	Recent(ctx context.Context, container string, n int) ([]model.LogLine, error)
+}
+
+// AccessLogReader는 웹서버가 남긴 요청 기록에서 그 주소들의 최근 n개를 읽는다. 아직 기록이 없으면 빈 목록.
+type AccessLogReader interface {
+	Recent(ctx context.Context, hosts []string, n int) ([]model.LogLine, error)
+}
+
 // AlertSender는 알림 하나를 그 주소의 형식(Discord·Slack·일반 JSON)으로 보낸다. 오래 걸리면 끊는다.
 type AlertSender interface {
 	Send(ctx context.Context, ch model.AlertChannel, a model.Alert) error
@@ -877,7 +900,7 @@ type RandomTokens interface {
 | `hookReceiver` | ServiceReader · SecretStore · SignatureChecker(차례로) · BranchFilter · Deployer · HookLogStore · Clock |
 | `siteMapBuilder` | ServiceReader · KindLookup · AdminDomainSetting · CertEmailSetting · SetupProgress · CertificateReader · Clock · WebSettingsStore · ContainerWatcher |
 | `webServerSync` | SiteMapBuilder · ConfigWriter · ConfigSender(`AdminSocketGuard`로 감싼 것) · EventSubscriber |
-| `serviceViewer` | ServiceReader · SecretStore · DeployHistoryReader · ContainerWatcher · KindLookup · AdminDomainSetting · Deployer · CertificateReader · Clock · WebSettingsStore |
+| `serviceViewer` | ServiceReader · SecretStore · DeployHistoryReader · ContainerWatcher · KindLookup · AdminDomainSetting · Deployer · CertificateReader · Clock · WebSettingsStore · ContainerLogReader · AccessLogReader |
 | `webSettingsEditor` | ServiceReader · WebSettingsStore · SnippetCompiler · LoginHasher · WebServerSync |
 | `healthWatcher` | ServiceReader · KindLookup · ContainerWatcher · PortChecker · Deployer · WebServerSync · CertificateReader · AdminDomainSetting · Clock · EventPublisher |
 | `alerts` | ChannelStore · DeliveryLog · AlertSender · ServiceReader · EventSubscriber · Clock |

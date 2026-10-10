@@ -96,7 +96,15 @@ func (d *fakeDocker) One(_ context.Context, name string) (model.ContainerState, 
 	return d.states[name], nil
 }
 
-func (d *fakeDocker) Logs(context.Context, string, int) (string, error)              { return "", nil }
+func (d *fakeDocker) Logs(context.Context, string, int) (string, error) { return "", nil }
+
+// Recent는 앱 출력인 척한다.
+func (d *fakeDocker) Recent(_ context.Context, name string, n int) ([]model.LogLine, error) {
+	return []model.LogLine{
+		{At: time.Date(2026, 10, 10, 12, 0, 1, 0, time.UTC), Source: model.LogApp, Stream: "stdout", Text: name + " listening on :80"},
+		{At: time.Date(2026, 10, 10, 12, 0, 3, 0, time.UTC), Source: model.LogApp, Stream: "stderr", Text: "warn: <script>alert(1)</script>"},
+	}, nil
+}
 func (d *fakeDocker) BelongingTo(context.Context, model.ServiceID) ([]string, error) { return nil, nil }
 
 func (d *fakeDocker) Answers(context.Context, string, model.Port) error {
@@ -241,7 +249,7 @@ func newHarnessWith(t *testing.T, o harnessOpts) *harness {
 	}
 	a, err := OpenWith(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), Outside{
 		Builder: fakeRegistry{}, Puller: fakeRegistry{}, Images: fakeImages{},
-		Starter: h.docker, Remover: h.docker, Switch: h.docker, Watcher: h.docker, Ports: h.docker,
+		Starter: h.docker, Remover: h.docker, Switch: h.docker, Watcher: h.docker, Ports: h.docker, AppLogs: h.docker,
 		Code: fakeGit{}, DNS: netcheck.NewDNS(lookup), Stats: fakeStats{}, Sender: h.caddy, Certs: h.certs, Snippet: fakeSnippet{},
 		Clock: system.Clock{}, Random: system.Random{}, ReadyTimeout: 5 * time.Second, WatchEvery: o.watchEvery,
 	})
@@ -1164,6 +1172,50 @@ func TestAFailedDeployIsReported(t *testing.T) {
 	if m := rcv.waitFor(t, "deploy.failed"); m["service"] != "app" || m["level"] != "problem" {
 		t.Fatalf("%v", m)
 	}
+}
+
+// ── 로그 (M6-2) ─────────────────────────────
+
+func TestLogsPageMixesAppOutputAndRequests(t *testing.T) {
+	h := newHarness(t, "")
+	h.signedIn()
+	id := h.createService(model.NewService{Name: name("blog"), Kind: model.KindImage, Source: "me/blog", Alias: "naru-blog", Port: 80}, model.ServiceSecrets{})
+	store.NewLiveStates(h.app.db).Save(ctx, id, model.LiveState{Alias: "naru-blog", Instance: "naru-blog-1", Port: 80})
+	h.post(fmt.Sprintf("/services/%d/domains", id), url.Values{"domain": {"blog.example.com"}, "https": {"1"}})
+	// 웹서버가 남긴 접근 로그 (Docker 방식: <데이터>/caddy/data/access.log)
+	logDir := filepath.Join(h.app.cfg.DataDir, "caddy", "data")
+	os.MkdirAll(logDir, 0o755)
+	os.WriteFile(filepath.Join(logDir, "access.log"), []byte(
+		`{"logger":"http.log.access.access","ts":1791633602.0,"request":{"host":"blog.example.com","method":"GET","uri":"/posts?page=2"},"status":200,"duration":0.012}`+"\n"+
+			`{"logger":"http.log.access.access","ts":1791633602.5,"request":{"host":"other.example.com","method":"GET","uri":"/x"},"status":404,"duration":0.001}`+"\n"), 0o644)
+
+	code, _, body := h.get(fmt.Sprintf("/services/%d/logs", id))
+	if code != http.StatusOK {
+		t.Fatalf("%d", code)
+	}
+	for _, want := range []string{"naru-blog-1 listening on :80", "/posts?page=2", "12ms", "&lt;script&gt;"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("logs page is missing %q", want)
+		}
+	}
+	if strings.Contains(body, "other.example.com") || strings.Contains(body, "<script>alert") {
+		t.Fatal("only this service's requests, and app output is escaped")
+	}
+	if i, j := strings.Index(body, "listening on"), strings.Index(body, "/posts"); i < 0 || j < i {
+		t.Fatal("in time order")
+	}
+	if _, _, body := h.get(fmt.Sprintf("/services/%d/logs?show=request", id)); strings.Contains(body, "listening on") || !strings.Contains(body, "/posts") {
+		t.Fatal("request filter")
+	}
+	if _, _, body := h.get(fmt.Sprintf("/services/%d", id)); !strings.Contains(body, fmt.Sprintf("/services/%d/logs", id)) {
+		t.Fatal("the service page links to its logs")
+	}
+	if code, _, _ := h.get("/services/999/logs"); code != http.StatusNotFound {
+		t.Fatal("unknown service")
+	}
+	h.waitFor("the web server logs this service's requests only", func(cfg string) bool {
+		return strings.Contains(cfg, `"filename": "/data/access.log"`) && strings.Contains(cfg, `"blog.example.com": [`) && strings.Contains(cfg, `"skip_unmapped_hosts": true`)
+	})
 }
 
 // ── 웹훅 ─────────────────────────────────

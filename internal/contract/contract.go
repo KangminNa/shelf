@@ -367,6 +367,7 @@ type ServiceViewer interface {
 	Home(ctx context.Context) (model.HomeView, error)
 	Detail(ctx context.Context, id model.ServiceID) (model.ServiceView, error)
 	Deployment(ctx context.Context, id model.ServiceID, d model.DeploymentID) (model.DeploymentView, error)
+	Logs(ctx context.Context, id model.ServiceID, f model.LogFilter) (model.LogsView, error) // 앱 출력과 요청을 시간순으로
 }
 
 // ServerStats는 서버의 CPU·메모리·디스크를 알려준다.
@@ -444,6 +445,16 @@ type SiteFiles interface {
 	Exists(f model.SiteFolder) bool
 	Prune(site model.ServiceName, keep int, live model.DeploymentID)
 	RemoveSite(site model.ServiceName) error
+}
+
+// ContainerLogReader는 컨테이너가 찍은 최근 n줄을 시각과 함께 읽는다.
+type ContainerLogReader interface {
+	Recent(ctx context.Context, container string, n int) ([]model.LogLine, error)
+}
+
+// AccessLogReader는 웹서버가 남긴 요청 기록에서 그 주소들의 최근 n개를 읽는다. 아직 기록이 없으면 빈 목록.
+type AccessLogReader interface {
+	Recent(ctx context.Context, hosts []string, n int) ([]model.LogLine, error)
 }
 
 // AlertSender는 알림 하나를 그 주소의 형식(Discord·Slack·일반 JSON)으로 보낸다. 오래 걸리면 끊는다.

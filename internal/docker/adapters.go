@@ -135,6 +135,11 @@ func (k Containers) Logs(ctx context.Context, name string, lines int) (string, e
 	return k.c.logs(ctx, name, lines)
 }
 
+// Recent는 컨테이너가 찍은 최근 n줄이다 (ContainerLogReader).
+func (k Containers) Recent(ctx context.Context, name string, n int) ([]model.LogLine, error) {
+	return k.c.logLines(ctx, name, n)
+}
+
 func (k Containers) BelongingTo(ctx context.Context, id model.ServiceID) ([]string, error) {
 	return k.c.byLabel(ctx, labelService, strconv.FormatInt(int64(id), 10))
 }

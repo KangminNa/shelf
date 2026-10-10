@@ -22,6 +22,7 @@ type Fixed struct {
 	AdminSocket   string // 웹서버 관리 소켓 — 그린 설정에 항상 들어간다
 	AdminUpstream string // 웹서버가 관리 화면에 닿는 주소
 	InternalTLS   bool   // 개발용 내부 인증서
+	AccessLog     string // 접근 로그 파일 (웹서버가 본 경로) — 비면 남기지 않는다
 	Storage       string // 웹서버가 인증서를 둘 곳 — 비면 웹서버 기본값 (설치형은 데이터 폴더 안으로 정해 Naru가 읽는다)
 	HTTPSPort     int    // 바깥에서 본 HTTPS 포트 (0이면 443) — 넘기는 주소에 쓴다
 }
@@ -70,6 +71,7 @@ func (b siteMapBuilder) Build(ctx context.Context) (model.SiteMap, error) {
 		InternalTLS:  b.fixed.InternalTLS,
 		HTTPSPort:    b.fixed.HTTPSPort,
 		Storage:      b.fixed.Storage,
+		AccessLog:    b.fixed.AccessLog,
 	}
 	if !domain.IsZero() {
 		m.AdminHosts, m.AdminHTTPS = []string{domain.String()}, true

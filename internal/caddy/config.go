@@ -27,7 +27,8 @@ type caddyConfig struct {
 	Admin struct {
 		Listen string `json:"listen"`
 	} `json:"admin"`
-	Storage *module `json:"storage,omitempty"`
+	Storage *module        `json:"storage,omitempty"`
+	Logging *loggingConfig `json:"logging,omitempty"`
 	Apps    struct {
 		HTTP struct {
 			Servers map[string]server `json:"servers"`
@@ -36,9 +37,21 @@ type caddyConfig struct {
 	} `json:"apps"`
 }
 
+// loggingConfig는 접근 로그를 따로 파일로 남기는 설정이다 (기본 로그에는 섞지 않는다).
+type loggingConfig struct {
+	Logs map[string]map[string]any `json:"logs"`
+}
+
+// serverLogs는 서버의 접근 로그 설정이다 — 이름을 붙인 주소만 남기고, 나머지(관리 주소·주소 없는 요청)는 남기지 않는다.
+type serverLogs struct {
+	LoggerNames       map[string][]string `json:"logger_names"`
+	SkipUnmappedHosts bool                `json:"skip_unmapped_hosts"`
+}
+
 type server struct {
-	Listen    []string `json:"listen"`
-	Routes    []route  `json:"routes"`
+	Logs      *serverLogs `json:"logs,omitempty"`
+	Listen    []string    `json:"listen"`
+	Routes    []route     `json:"routes"`
 	AutoHTTPS struct {
 		// 리다이렉트는 Caddy가 아니라 Naru가 그린다 — 인증서가 있을 때만 넘겨야 한다 (불변식 3·4)
 		DisableRedirects bool `json:"disable_redirects"`
@@ -116,11 +129,30 @@ func (JSONWriter) Write(p model.SiteMap) ([]byte, error) {
 	if p.Storage != "" {
 		c.Storage = &module{"module": "file_system", "root": p.Storage}
 	}
+	var logs *serverLogs
+	if p.AccessLog != "" {
+		// 접근 로그는 서비스 주소만 남긴다. 관리 주소와 주소 없이 들어온 요청은 남기지 않는다 —
+		// 웹훅의 ?secret=, 첫 설정의 ?token= 이 파일에 남지 않게 (실제 Caddy로 확인).
+		logs = &serverLogs{LoggerNames: map[string][]string{}, SkipUnmappedHosts: true}
+		for _, s := range sites {
+			for _, h := range s.Hosts {
+				logs.LoggerNames[strings.ToLower(h)] = []string{"access"}
+			}
+		}
+		c.Logging = &loggingConfig{Logs: map[string]map[string]any{
+			"default": {"exclude": []string{"http.log.access"}},
+			"access": {
+				"writer":  map[string]any{"output": "file", "filename": p.AccessLog, "roll_size_mb": 10, "roll_keep": 5},
+				"encoder": map[string]any{"format": "json"},
+				"include": []string{"http.log.access"},
+			},
+		}}
+	}
 	c.Apps.HTTP.Servers = map[string]server{}
 
 	// :80 — 모든 주소. HTTPS로 넘기는 것은 지도가 그러라고 한 주소뿐이다 (인증서가 있을 때만 — 불변식 4).
 	// 넘기는 주소도 HTTP 경로를 그대로 둔다 — 인증서 확인 요청은 넘기지 않고, 그 밖은 넘긴다.
-	plain := server{Listen: []string{":80"}}
+	plain := server{Listen: []string{":80"}, Logs: logs}
 	plain.AutoHTTPS.DisableRedirects = true
 	if len(p.AdminHosts) > 0 {
 		if p.AdminHTTPS && p.AdminRedirectHTTP {
@@ -142,7 +174,7 @@ func (JSONWriter) Write(p model.SiteMap) ([]byte, error) {
 	c.Apps.HTTP.Servers["http"] = plain
 
 	// :443 — HTTPS를 켠 주소만. 여기 있는 주소에 Caddy가 인증서를 받는다.
-	secure := server{Listen: []string{":443"}}
+	secure := server{Listen: []string{":443"}, Logs: logs}
 	secure.AutoHTTPS.DisableRedirects = true
 	if p.AdminHTTPS && len(p.AdminHosts) > 0 {
 		secure.Routes = append(secure.Routes, hostRoute(p.AdminHosts, proxyTo(p.AdminUpstream)))

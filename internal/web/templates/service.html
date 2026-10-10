@@ -17,6 +17,7 @@
       <form method="post" action="/services/{{$id}}/stop"><button class="btn" type="submit">{{t "service.stop"}}</button></form>
       {{end}}
     {{end}}
+    <a class="btn" href="/services/{{$id}}/logs">{{t "service.logs"}}</a>
     {{if $.Data.Deployable}}
     <form method="post" action="/services/{{$id}}/deploy"><button class="btn primary" type="submit">{{t "service.deploy"}}</button></form>
     {{end}}

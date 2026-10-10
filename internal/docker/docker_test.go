@@ -159,3 +159,31 @@ func TestStatesCarryTheIPOnTheAppNetwork(t *testing.T) {
 		t.Fatalf("%+v %v", all, err)
 	}
 }
+
+// mux는 Docker가 TTY 없는 컨테이너 로그를 보내는 모양이다 — 8바이트 머리(흐름·길이) + 내용.
+func mux(stream byte, s string) []byte {
+	h := []byte{stream, 0, 0, 0, byte(len(s) >> 24), byte(len(s) >> 16), byte(len(s) >> 8), byte(len(s))}
+	return append(h, s...)
+}
+
+func TestRecentLogsKeepTimeAndStream(t *testing.T) {
+	var query string
+	sock := fakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		query = r.URL.RawQuery
+		body := append(mux(1, "2026-10-10T12:00:01.500000000Z listening on :80\n"), mux(2, "2026-10-10T12:00:02.000000000Z warn: slow\n2026-10-10T12:00:03.000000000Z second line\n")...)
+		w.Write(body)
+	}))
+	lines, err := NewContainers(New(sock), "naru-net").Recent(context.Background(), "naru-x-1", 50)
+	if err != nil || len(lines) != 3 {
+		t.Fatalf("%+v %v", lines, err)
+	}
+	if !strings.Contains(query, "timestamps=1") || !strings.Contains(query, "tail=50") {
+		t.Fatalf("asks for timestamps and the tail: %s", query)
+	}
+	if lines[0].Text != "listening on :80" || lines[0].Stream != "stdout" || lines[0].At.Second() != 1 || lines[0].Source != model.LogApp {
+		t.Fatalf("%+v", lines[0])
+	}
+	if lines[2].Stream != "stderr" || lines[2].Text != "second line" {
+		t.Fatalf("%+v", lines[2])
+	}
+}

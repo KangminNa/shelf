@@ -299,6 +299,21 @@ func (s *Server) deployPage(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, http.StatusOK, "deploy", v)
 }
 
+// ── 로그 ──────────────────────────────────
+
+func (s *Server) logsPage(w http.ResponseWriter, r *http.Request) {
+	u, _, ok := s.gate(w, r)
+	if !ok {
+		return
+	}
+	lv, err := s.d.Viewer.Logs(r.Context(), model.ServiceID(pathID(r, "id")), model.ParseLogFilter(r.URL.Query().Get("show")))
+	if err != nil {
+		s.render(w, r, http.StatusNotFound, "notfound", view{})
+		return
+	}
+	s.render(w, r, http.StatusOK, "logs", view{Nav: "home", User: &u, Data: lv})
+}
+
 // ── 서비스 화면 그리기 ──────────────────────
 
 type serviceScreen struct {

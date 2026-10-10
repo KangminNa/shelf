@@ -84,6 +84,8 @@ func ConfigFromEnv(version string) Config {
 type mode struct {
 	listen, socket, self string
 	sites, certs, store  func(data string) string
+	accessCaddy          func(data string) string // 접근 로그 — 웹서버가 쓰는 경로
+	accessNaru           func(data string) string // 같은 파일을 Naru가 읽는 경로
 	container            contract.DestinationFinder
 	thisServer           string
 }
@@ -92,18 +94,22 @@ var modes = map[string]mode{
 	// Docker: Naru·Caddy가 앱 컨테이너와 같은 네트워크에 있다 — 별칭으로 보낸다. 데이터 폴더는 공유 볼륨이다.
 	"docker": {
 		listen: ":8080", socket: "/run/caddy/admin.sock", self: "naru:8080",
-		sites:     func(string) string { return "/srv/sites" },
-		certs:     func(d string) string { return filepath.Join(d, "caddy", "data", "caddy", "certificates") },
-		store:     func(string) string { return "" },
-		container: kinds.ContainerAliasDestination{}, thisServer: "",
+		sites:       func(string) string { return "/srv/sites" },
+		certs:       func(d string) string { return filepath.Join(d, "caddy", "data", "caddy", "certificates") },
+		store:       func(string) string { return "" },
+		accessCaddy: func(string) string { return "/data/access.log" }, // 웹서버 컨테이너의 /data = <데이터>/caddy/data
+		accessNaru:  func(d string) string { return filepath.Join(d, "caddy", "data", "access.log") },
+		container:   kinds.ContainerAliasDestination{}, thisServer: "",
 	},
 	// 설치형: Naru·Caddy가 호스트에 있다 — 컨테이너는 IP로, "이 서버"는 127.0.0.1로. Caddy 저장소를 데이터 폴더 안에 둔다.
 	"host": {
 		listen: "127.0.0.1:8080", socket: "/run/naru/caddy.sock", self: "127.0.0.1:8080",
-		sites:     func(d string) string { return filepath.Join(d, "sites") },
-		certs:     func(d string) string { return filepath.Join(d, "caddy", "certificates") },
-		store:     func(d string) string { return filepath.Join(d, "caddy") },
-		container: kinds.ContainerIPDestination{}, thisServer: "127.0.0.1",
+		sites:       func(d string) string { return filepath.Join(d, "sites") },
+		certs:       func(d string) string { return filepath.Join(d, "caddy", "certificates") },
+		store:       func(d string) string { return filepath.Join(d, "caddy") },
+		accessCaddy: func(d string) string { return filepath.Join(d, "caddy", "access.log") },
+		accessNaru:  func(d string) string { return filepath.Join(d, "caddy", "access.log") },
+		container:   kinds.ContainerIPDestination{}, thisServer: "127.0.0.1",
 	},
 }
 
@@ -168,6 +174,8 @@ type Outside struct {
 	Certs   contract.CertificateReader
 	Snippet contract.SnippetCompiler // 고급 칸의 Caddyfile을 바꿔 준다 (Caddy 관리 소켓)
 	Alerts  contract.AlertSender     // 알림을 보낸다 (HTTP)
+	AppLogs contract.ContainerLogReader
+	Access  contract.AccessLogReader // 비면 데이터 폴더의 웹서버 접근 로그를 읽는다
 
 	WatchEvery time.Duration // 지켜보는 간격 (0이면 30초)
 	Clock      contract.Clock
@@ -183,7 +191,7 @@ func RealOutside(cfg Config) Outside {
 	containers := docker.NewContainers(d, cfg.Network)
 	return Outside{
 		Builder: docker.NewBuilder(d), Puller: docker.NewPuller(d), Images: docker.NewImages(d),
-		Starter: containers, Remover: containers, Switch: containers, Watcher: containers,
+		Starter: containers, Remover: containers, Switch: containers, Watcher: containers, AppLogs: containers,
 		Code: git.Downloader{}, Ports: netcheck.TCP{}, DNS: netcheck.NewDNS(nil),
 		Stats:   stats.NewProcSampler(cfg.ProcDir, cfg.DataDir),
 		Sender:  caddy.NewSocketSender(cfg.CaddySocket),
@@ -227,6 +235,9 @@ func OpenWith(cfg Config, log *slog.Logger, out Outside) (*App, error) {
 	}
 	if out.Certs == nil { // 테스트처럼 가짜를 주지 않으면 웹서버 저장소를 읽는다
 		out.Certs = caddy.NewCertificateFiles(cfg.CaddyCerts)
+	}
+	if out.Access == nil {
+		out.Access = caddy.NewAccessLogFile(m.accessNaru(cfg.DataDir))
 	}
 	if out.Alerts == nil {
 		out.Alerts = httppost.AlertPoster{}
@@ -303,7 +314,7 @@ func (a *App) assemble() error {
 	// G. 웹서버
 	siteMap := webserver.NewSiteMapBuilder(webserver.Fixed{
 		AdminSocket: cfg.CaddySocket, AdminUpstream: cfg.SelfUpstream, InternalTLS: cfg.InternalTLS, HTTPSPort: cfg.HTTPSPort,
-		Storage: a.mode.store(cfg.DataDir),
+		Storage: a.mode.store(cfg.DataDir), AccessLog: a.mode.accessCaddy(cfg.DataDir),
 	}, serviceStore, lookup, webserver.Settings{Admin: adminDomain, Email: certEmail, Setup: setup}, out.Certs, out.Clock, webStore, out.Watcher)
 	sync, run := webserver.NewWebServerSync(siteMap, caddy.JSONWriter{}, caddy.NewAdminSocketGuard(out.Sender, cfg.CaddySocket), bus, a.log)
 	a.syncWS = run
@@ -352,6 +363,7 @@ func (a *App) assemble() error {
 	viewer := views.NewServiceViewer(views.Parts{
 		Services: serviceStore, Secrets: secrets, History: history, Containers: out.Watcher, Kinds: lookup,
 		Admin: adminDomain, Deployer: deployer, Certs: out.Certs, Clock: out.Clock, HTTPSPort: cfg.HTTPSPort, Web: webStore,
+		AppLogs: out.AppLogs, Access: out.Access,
 	}, a.log)
 
 	srv, err := web.New(web.Deps{

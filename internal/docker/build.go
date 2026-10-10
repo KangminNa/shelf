@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/KangminNa/naru/internal/model"
 )
 
 // 빌드·받기는 오래 걸린다. 짧은 기본 제한시간이 아니라 호출한 쪽의 ctx로 끊는다.
@@ -333,4 +335,43 @@ func (c *Client) byLabel(ctx context.Context, key, value string) ([]string, erro
 		}
 	}
 	return names, nil
+}
+
+// logLines는 시각이 붙은 로그(timestamps=1)를 줄마다 흐름(stdout·stderr)과 함께 나눈다.
+func (c *Client) logLines(ctx context.Context, name string, n int) ([]model.LogLine, error) {
+	res, err := c.stream(ctx, http.MethodGet, fmt.Sprintf("/containers/%s/logs?stdout=1&stderr=1&timestamps=1&tail=%d", url.PathEscape(name), n), nil, "")
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(io.LimitReader(res.Body, 4<<20))
+	var out []model.LogLine
+	add := func(stream, chunk string) {
+		for _, line := range strings.Split(strings.TrimRight(chunk, "\n"), "\n") {
+			if line == "" {
+				continue
+			}
+			l := model.LogLine{Source: model.LogApp, Stream: stream, Text: line}
+			if ts, rest, ok := strings.Cut(line, " "); ok {
+				if at, err := time.Parse(time.RFC3339Nano, ts); err == nil {
+					l.At, l.Text = at, rest
+				}
+			}
+			out = append(out, l)
+		}
+	}
+	for len(raw) >= 8 && (raw[0] == 1 || raw[0] == 2) && raw[1] == 0 && raw[2] == 0 && raw[3] == 0 {
+		stream := map[byte]string{1: "stdout", 2: "stderr"}[raw[0]]
+		size := int(binary.BigEndian.Uint32(raw[4:8]))
+		raw = raw[8:]
+		if size > len(raw) {
+			size = len(raw)
+		}
+		add(stream, string(raw[:size]))
+		raw = raw[size:]
+	}
+	if len(raw) > 0 { // TTY로 돈 컨테이너는 머리말이 없다 — 흐름을 알 수 없다
+		add("stdout", string(raw))
+	}
+	return out, nil
 }

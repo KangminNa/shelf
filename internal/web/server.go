@@ -33,7 +33,7 @@ const (
 	sessionMaxAge = 7 * 24 * time.Hour
 )
 
-var pageNames = []string{"setup_token", "setup_account", "setup_domain", "setup_https", "setup_done", "login", "home", "service", "new_service", "deploy", "settings", "notfound"}
+var pageNames = []string{"setup_token", "setup_account", "setup_domain", "setup_https", "setup_done", "login", "home", "service", "new_service", "deploy", "settings", "notfound", "logs"}
 
 // Deps는 화면이 쓰는 것들이다. 모두 인터페이스다 — 화면은 저장소도, Docker도, 웹서버도 직접 모른다.
 type Deps struct {
@@ -122,6 +122,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /services/{id}/web", s.saveWebSettings)
 	s.mux.HandleFunc("POST /services/{id}/web/nginx", s.importNginx)
 	s.mux.HandleFunc("GET /services/{id}/deploys/{did}", s.deployPage)
+	s.mux.HandleFunc("GET /services/{id}/logs", s.logsPage)
 	s.mux.HandleFunc("POST /hooks/{id}", s.webhook)
 	s.mux.HandleFunc("GET /settings", s.settingsPage)
 	s.mux.HandleFunc("POST /settings/password", s.changePassword)
@@ -188,6 +189,13 @@ func funcsFor(lang string) template.FuncMap {
 			return "manual"
 		},
 		"bytes": humanBytes,
+		"clock": func(t time.Time) string { return t.Local().Format("01-02 15:04:05") },
+		"ms": func(d time.Duration) string {
+			if d < time.Second {
+				return fmt.Sprintf("%dms", d.Milliseconds())
+			}
+			return fmt.Sprintf("%.1fs", d.Seconds())
+		},
 		"date": func(t time.Time) string {
 			if lang == "ko" {
 				return fmt.Sprintf("%d월 %d일", t.Month(), t.Day())

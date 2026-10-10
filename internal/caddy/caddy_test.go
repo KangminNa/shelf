@@ -74,6 +74,15 @@ var fixtures = map[string]model.SiteMap{
 			Settings: model.SiteSettings{Maintenance: true},
 		}},
 	},
+	// 접근 로그 — 서비스 주소만 남기고, 관리 주소·주소 없는 요청(웹훅 ?secret=, 첫 설정 ?token=)은 남기지 않는다
+	"access-logs": {
+		AdminSocket: sock, AdminUpstream: "naru:8080", AdminHosts: []string{"naru.example.com"}, AdminHTTPS: true,
+		AccessLog: "/data/access.log",
+		Sites: []model.Site{
+			{Hosts: []string{"blog.example.com"}, Destination: model.Destination{Address: "naru-blog:80"}, HTTPS: true},
+			{Hosts: []string{"nas.example.com"}, Destination: model.Destination{Address: "host.docker.internal:5000"}},
+		},
+	},
 	"internal-tls": {
 		AdminSocket: sock, AdminUpstream: "naru:8080", AdminHosts: []string{"naru.localhost"}, AdminHTTPS: true, InternalTLS: true,
 		Sites: []model.Site{{Hosts: []string{"app.localhost"}, Destination: model.Destination{Address: "naru-app:3000"}, HTTPS: true}},
@@ -310,6 +319,52 @@ func TestGuardsNeverBlockCertificateChallenges(t *testing.T) {
 	}
 	if strings.Contains(string(cfg), "admin\",\"password") {
 		t.Fatal("only the bcrypt hash goes in")
+	}
+}
+
+func TestAccessLogsLeaveTheAdminAddressOut(t *testing.T) {
+	cfg, err := (JSONWriter{}).Write(fixtures["access-logs"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		Logging struct {
+			Logs map[string]struct {
+				Writer  map[string]any
+				Include []string
+				Exclude []string
+			}
+		}
+		Apps struct {
+			HTTP struct {
+				Servers map[string]struct {
+					Logs struct {
+						LoggerNames       map[string][]string `json:"logger_names"`
+						SkipUnmappedHosts bool                `json:"skip_unmapped_hosts"`
+					}
+				}
+			}
+		}
+	}
+	json.Unmarshal(cfg, &c)
+	access := c.Logging.Logs["access"]
+	if access.Writer["filename"] != "/data/access.log" || access.Include[0] != "http.log.access" || c.Logging.Logs["default"].Exclude[0] != "http.log.access" {
+		t.Fatalf("access entries go to their own file, not the default log: %+v", c.Logging)
+	}
+	for name, srv := range c.Apps.HTTP.Servers {
+		if !srv.Logs.SkipUnmappedHosts {
+			t.Errorf("%s: requests to unlisted hosts (the admin screen, setup by IP) are not logged", name)
+		}
+		if _, ok := srv.Logs.LoggerNames["naru.example.com"]; ok {
+			t.Errorf("%s: the admin address is never logged", name)
+		}
+	}
+	if _, ok := c.Apps.HTTP.Servers["http"].Logs.LoggerNames["nas.example.com"]; !ok {
+		t.Error("service addresses are logged")
+	}
+	plain, _ := (JSONWriter{}).Write(fixtures["full"])
+	if strings.Contains(string(plain), "logging") {
+		t.Error("without an access log path nothing is logged")
 	}
 }
 
