@@ -122,6 +122,25 @@ func (fakeGit) Download(_ context.Context, _ model.CodeSource, into string, _ io
 	return model.Commit{Hash: "a1b2c3d4e5f6", Message: "fix: things"}, nil
 }
 
+// fakeCerts는 웹서버 인증서 저장소인 척한다.
+type fakeCerts struct {
+	mu   sync.Mutex
+	list model.Certificates
+}
+
+func (c *fakeCerts) Read(context.Context) (model.Certificates, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append(model.Certificates{}, c.list...), nil
+}
+
+func (c *fakeCerts) issue(names ...string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.list = append(c.list, model.Certificate{Names: names, Issuer: "Let's Encrypt",
+		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(90 * 24 * time.Hour)})
+}
+
 type fakeStats struct{}
 
 func (fakeStats) Now() model.ServerSnapshot { return model.ServerSnapshot{Cores: 2} }
@@ -173,6 +192,7 @@ type harness struct {
 	client *http.Client
 	docker *fakeDocker
 	caddy  *fakeCaddy
+	certs  *fakeCerts
 }
 
 // newHarness는 Naru를 통째로 띄운다. DNS는 naru.example.com → 198.51.100.24 로 고정한다.
@@ -187,14 +207,14 @@ func newHarness(t *testing.T, envDomain string) *harness {
 		}
 		return nil, &url.Error{Op: "lookup", URL: host}
 	}
-	h := &harness{t: t, docker: &fakeDocker{states: model.ContainerStates{}}, caddy: &fakeCaddy{}}
+	h := &harness{t: t, docker: &fakeDocker{states: model.ContainerStates{}}, caddy: &fakeCaddy{}, certs: &fakeCerts{}}
 	a, err := OpenWith(Config{
 		DataDir: t.TempDir(), CaddySocket: "/run/caddy/admin.sock", SelfUpstream: "naru:8080", CaddySites: "/srv/sites",
 		Network: "naru-net", AdminDomain: envDomain, Version: "test",
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)), Outside{
 		Builder: fakeRegistry{}, Puller: fakeRegistry{}, Images: fakeImages{},
 		Starter: h.docker, Remover: h.docker, Switch: h.docker, Watcher: h.docker, Ports: h.docker,
-		Code: fakeGit{}, DNS: netcheck.NewDNS(lookup), Stats: fakeStats{}, Sender: h.caddy,
+		Code: fakeGit{}, DNS: netcheck.NewDNS(lookup), Stats: fakeStats{}, Sender: h.caddy, Certs: h.certs,
 		Clock: system.Clock{}, Random: system.Random{}, ReadyTimeout: 5 * time.Second,
 	})
 	if err != nil {
@@ -823,6 +843,38 @@ func TestDeployStopStartAndRollBackFromTheScreen(t *testing.T) {
 	}
 	if _, loc, _ := h.post(fmt.Sprintf("/services/%d/rollback/999", id), nil); !strings.Contains(loc, "err=rollback") {
 		t.Fatalf("an unknown deployment cannot be restored: %q", loc)
+	}
+}
+
+// ── 인증서 · HTTPS 넘기기 ──────────────────────
+
+func TestHTTPSRedirectStartsOnceTheCertificateExists(t *testing.T) {
+	h := newHarness(t, "")
+	h.signedIn()
+	id := h.createService(model.NewService{Name: name("blog"), Kind: model.KindImage, Source: "me/blog", Alias: "naru-blog", Port: 80}, model.ServiceSecrets{})
+	h.post(fmt.Sprintf("/services/%d/domains", id), url.Values{"domain": {"elsewhere.example.com"}, "https": {"1"}})
+
+	_, _, body := h.get(fmt.Sprintf("/services/%d", id))
+	if !strings.Contains(body, "인증서 받는 중") || !strings.Contains(body, "203.0.113.9") {
+		t.Fatal("without a certificate the page says so and shows where DNS points")
+	}
+	h.waitFor("the site is served over HTTP without a redirect", func(cfg string) bool {
+		return strings.Contains(cfg, "elsewhere.example.com") && !strings.Contains(cfg, "Location")
+	})
+
+	h.certs.issue("elsewhere.example.com")
+	h.certs.issue("naru.example.com")
+	h.post(fmt.Sprintf("/services/%d/domains", id), url.Values{"domain": {"other.example.com"}}) // 지도를 다시 그리게 한다
+	h.waitFor("the site and the admin address redirect to HTTPS", func(cfg string) bool {
+		return strings.Count(cfg, `"Location"`) == 2 && strings.Contains(cfg, `"status_code": 307`)
+	})
+	_, _, body = h.get(fmt.Sprintf("/services/%d", id))
+	if !strings.Contains(body, "HTTPS · ") || strings.Contains(body, "인증서 받는 중") || !strings.Contains(body, "Let&#39;s Encrypt") {
+		t.Fatal("the page shows until when the certificate lasts")
+	}
+	_, _, body = h.get("/settings")
+	if !strings.Contains(body, "HTTPS · ") {
+		t.Fatal("settings show the admin address certificate")
 	}
 }
 

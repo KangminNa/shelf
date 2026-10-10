@@ -1,6 +1,9 @@
 package model
 
-import "testing"
+import (
+	"testing"
+	"time"
+)
 
 func TestDomainNames(t *testing.T) {
 	cases := map[string]string{
@@ -135,5 +138,40 @@ func TestLiveDeployment(t *testing.T) {
 		if got := c.l.LiveDeployment(); got != c.want {
 			t.Errorf("%+v → %d", c.l, got)
 		}
+	}
+}
+
+func TestCertificatesCoverDomains(t *testing.T) {
+	now := time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)
+	day := 24 * time.Hour
+	certs := Certificates{
+		{Names: []string{"blog.example.com"}, Issuer: "Let's Encrypt", NotBefore: now.Add(-day), NotAfter: now.Add(60 * day)},
+		{Names: []string{"blog.example.com"}, Issuer: "ZeroSSL", NotBefore: now.Add(-day), NotAfter: now.Add(80 * day)},
+		{Names: []string{"*.apps.example.com"}, Issuer: "Let's Encrypt", NotBefore: now.Add(-day), NotAfter: now.Add(30 * day)},
+		{Names: []string{"old.example.com"}, NotBefore: now.Add(-90 * day), NotAfter: now.Add(-day)},
+		{Names: []string{"soon.example.com"}, NotBefore: now.Add(-80 * day), NotAfter: now.Add(5 * day)},
+		{Names: []string{"future.example.com"}, NotBefore: now.Add(day), NotAfter: now.Add(90 * day)},
+	}
+	d := func(s string) DomainName { v, _ := ParseDomainName(s); return v }
+
+	if st := certs.For(d("Blog.Example.com"), now); !st.Usable(now) || st.Issuer != "ZeroSSL" {
+		t.Fatalf("the longest-lasting certificate wins: %+v", st)
+	}
+	if !certs.For(d("a.apps.example.com"), now).Usable(now) {
+		t.Fatal("a wildcard covers one level")
+	}
+	for _, no := range []string{"a.b.apps.example.com", "apps.example.com", "old.example.com", "future.example.com", "nothing.example.com"} {
+		if certs.For(d(no), now).Usable(now) {
+			t.Errorf("%s has no usable certificate", no)
+		}
+	}
+	if st := certs.For(d("soon.example.com"), now); !st.EndsSoon(now) {
+		t.Fatal("five days left is soon")
+	}
+	if certs.For(d("blog.example.com"), now).EndsSoon(now) {
+		t.Fatal("eighty days left is not soon")
+	}
+	if (CertificateState{}).Usable(now) {
+		t.Fatal("no certificate is not usable")
 	}
 }

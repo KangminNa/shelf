@@ -52,6 +52,8 @@ type Deps struct {
 	Stats       contract.ServerStats
 	WebServer   contract.WebServerSync
 	DNS         contract.DNSChecker
+	Certs       contract.CertificateReader
+	Clock       contract.Clock
 	Log         *slog.Logger
 	DataDir     string
 	Version     string
@@ -178,6 +180,12 @@ func funcsFor(lang string) template.FuncMap {
 			return "manual"
 		},
 		"bytes": humanBytes,
+		"date": func(t time.Time) string {
+			if lang == "ko" {
+				return fmt.Sprintf("%d월 %d일", t.Month(), t.Day())
+			}
+			return t.Format("Jan 2")
+		},
 	}
 }
 

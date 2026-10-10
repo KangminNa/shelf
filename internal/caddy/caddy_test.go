@@ -36,6 +36,20 @@ var fixtures = map[string]model.SiteMap{
 			{Hosts: []string{"static.example.com"}, Destination: model.Destination{Folder: "/srv/sites/landing/12"}, HTTPS: true},
 		},
 	},
+	// 인증서가 있는 주소만 넘긴다 — 그 판단은 webserver가 하고, 여기서는 지도대로 그리는지만 본다
+	"redirects": {
+		AdminSocket: sock, AdminUpstream: "naru:8080", AdminHosts: []string{"naru.example.com"}, AdminHTTPS: true, AdminRedirectHTTP: true,
+		ACMEEmail: "me@example.com",
+		Sites: []model.Site{
+			{Hosts: []string{"ready.example.com"}, Destination: model.Destination{Address: "naru-ready:80"}, HTTPS: true, RedirectHTTP: true, HSTS: true},
+			{Hosts: []string{"waiting.example.com"}, Destination: model.Destination{Address: "naru-waiting:80"}, HTTPS: true},
+			{Hosts: []string{"plain.example.com"}, Destination: model.Destination{Address: "naru-plain:80"}, RedirectHTTP: true},
+		},
+	},
+	"redirects-dev-port": {
+		AdminSocket: sock, AdminUpstream: "naru:8080", AdminHosts: []string{"naru.localhost"}, AdminHTTPS: true, InternalTLS: true, HTTPSPort: 8443,
+		Sites: []model.Site{{Hosts: []string{"site.localhost"}, Destination: model.Destination{Folder: "/srv/sites/site/3"}, HTTPS: true, RedirectHTTP: true}},
+	},
 	"internal-tls": {
 		AdminSocket: sock, AdminUpstream: "naru:8080", AdminHosts: []string{"naru.localhost"}, AdminHTTPS: true, InternalTLS: true,
 		Sites: []model.Site{{Hosts: []string{"app.localhost"}, Destination: model.Destination{Address: "naru-app:3000"}, HTTPS: true}},
@@ -75,7 +89,10 @@ type decoded struct {
 					DisableRedirects bool `json:"disable_redirects"`
 				} `json:"automatic_https"`
 				Routes []struct {
-					Match  []struct{ Host []string }
+					Match []struct {
+						Host []string
+						Not  []struct{ Path []string }
+					}
 					Handle []map[string]any
 				}
 			}
@@ -116,9 +133,21 @@ func TestInvariantsHoldForEveryFixture(t *testing.T) {
 			}
 			for _, r := range s.Routes {
 				for _, h := range r.Handle {
-					if h["handler"] == "static_response" {
-						if hs, ok := h["headers"].(map[string]any); ok && hs["Location"] != nil {
-							t.Errorf("%s/%s: no HTTP→HTTPS redirect until certificates are confirmed (invariant 4)", name, sname)
+					hs, ok := h["headers"].(map[string]any)
+					if h["handler"] != "static_response" || !ok || hs["Location"] == nil {
+						continue
+					}
+					// 넘기기는 :80에서, 지도가 넘기라고 한 HTTPS 주소에만, 인증서 확인 경로는 빼고, 307로 (불변식 4)
+					if sname != "http" || len(r.Match) != 1 || h["status_code"] != float64(307) {
+						t.Errorf("%s/%s: a redirect must be a 307 on :80 for one host match", name, sname)
+						continue
+					}
+					if len(r.Match[0].Not) != 1 || r.Match[0].Not[0].Path[0] != acmeChallenge {
+						t.Errorf("%s: certificate challenges must never be redirected", name)
+					}
+					for _, host := range r.Match[0].Host {
+						if !redirectAllowed(p, host) {
+							t.Errorf("%s: %s is redirected but the site map did not ask for it (invariant 4)", name, host)
 						}
 					}
 				}
@@ -130,6 +159,58 @@ func TestInvariantsHoldForEveryFixture(t *testing.T) {
 				t.Errorf("%s: secrets never go into the Caddy config (invariant 5)", name)
 			}
 		}
+	}
+}
+
+// redirectAllowed는 지도가 그 주소를 넘기라고 했는가 — HTTPS를 켜고, 인증서가 있다고 한 주소뿐이다.
+func redirectAllowed(m model.SiteMap, host string) bool {
+	for _, h := range m.AdminHosts {
+		if h == host {
+			return m.AdminHTTPS && m.AdminRedirectHTTP
+		}
+	}
+	for _, s := range m.Sites {
+		for _, h := range s.Hosts {
+			if h == host {
+				return s.HTTPS && s.RedirectHTTP
+			}
+		}
+	}
+	return false
+}
+
+func TestRedirectsFollowTheSiteMap(t *testing.T) {
+	d := decode(t, fixtures["redirects"])
+	redirected := map[string]string{}
+	for _, r := range d.Apps.HTTP.Servers["http"].Routes {
+		for _, h := range r.Handle {
+			if hs, ok := h["headers"].(map[string]any); ok && hs["Location"] != nil {
+				redirected[r.Match[0].Host[0]] = hs["Location"].([]any)[0].(string)
+			}
+		}
+	}
+	if len(redirected) != 2 || redirected["ready.example.com"] != "https://{http.request.host}{http.request.uri}" || redirected["naru.example.com"] == "" {
+		t.Fatalf("only the admin address and the site with a certificate are redirected: %v", redirected)
+	}
+	// 넘기는 주소도 HTTP 경로가 뒤에 남는다 — 인증서 확인 요청이 거기로 간다
+	served := 0
+	for _, r := range d.Apps.HTTP.Servers["http"].Routes {
+		if len(r.Match) == 1 && r.Match[0].Host[0] == "ready.example.com" && len(r.Match[0].Not) == 0 {
+			served++
+		}
+	}
+	if served != 1 {
+		t.Fatal("the plain route stays behind the redirect for challenge requests")
+	}
+	dev := decode(t, fixtures["redirects-dev-port"])
+	var loc any
+	for _, r := range dev.Apps.HTTP.Servers["http"].Routes {
+		if hs, ok := r.Handle[0]["headers"].(map[string]any); ok && hs["Location"] != nil {
+			loc = hs["Location"].([]any)[0]
+		}
+	}
+	if loc != "https://{http.request.host}:8443{http.request.uri}" {
+		t.Fatalf("a non-standard HTTPS port is kept: %v", loc)
 	}
 }
 

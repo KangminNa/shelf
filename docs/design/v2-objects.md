@@ -134,7 +134,7 @@
 | `WebServerSync` | 사이트 지도를 웹서버에 맞춘다 — 바뀌었다는 알림을 받으면 바로, 평소엔 30초마다 | `webServerSync` |
 | `ConfigWriter` | 사이트 지도를 웹서버 설정으로 쓴다 | `caddy.JSONWriter` |
 | `ConfigSender` | 설정을 웹서버에 보낸다 | `caddy.SocketSender`, 그것을 감싸 관리 소켓 설정이 빠졌는지 먼저 보는 `caddy.AdminSocketGuard` |
-| `CertificateReader` | 도메인마다 인증서가 있는지·언제 끝나는지·왜 실패했는지 읽는다 — **M4. 아직 `contract`에 없다** (설계 노트를 먼저) | `caddy.CertificateFiles` |
+| `CertificateReader` | 웹서버가 받아 둔 인증서를 읽는다 — 공개 인증서(`.crt`)만, 키는 열지 않는다. 사이트 지도는 이것으로 "HTTPS로 넘겨도 되는가"를 정한다 (불변식 4) | `caddy.CertificateFiles` |
 
 ### H. 보여주기 — `views`
 
@@ -246,10 +246,11 @@
 | 이름 | 무엇 |
 |---|---|
 | `Destination` | 요청을 보낼 곳 — 컨테이너:포트 / 폴더 / 외부 주소 |
-| `Site` | 사이트 지도의 한 줄 — 주소들, 목적지, HTTPS, HSTS |
-| `SiteMap` | 웹서버에 줄 지도 — 사이트들, 관리 주소, 관리 소켓, 모르는 주소 처리 |
+| `Site` | 사이트 지도의 한 줄 — 주소들, 목적지, HTTPS, HSTS, HTTP를 HTTPS로 넘기는지(`RedirectHTTP` — 인증서가 있을 때만) |
+| `SiteMap` | 웹서버에 줄 지도 — 사이트들, 관리 주소(와 그 넘기기), 관리 소켓, 모르는 주소 처리, 바깥 HTTPS 포트 |
 | `WebServerStatus` | 웹서버에 닿는지, 마지막 오류, 마지막으로 맞춘 때 |
-| `CertificateState` | 인증서 상태 — 있음(만료일) · 받는 중 · 실패(사람 말 이유) (M4) |
+| `Certificate` · `Certificates` | 웹서버가 받아 둔 인증서 하나(덮는 이름·발급자·기간) · 전부. `Certificates.For(도메인, 지금)`이 그 도메인의 상태를 찾는다 (와일드카드는 한 단계) |
+| `CertificateState` | 도메인 하나의 인증서 상태 — 있음(만료일·발급자) · 아직 없음. `Usable`이면 HTTP를 HTTPS로 넘긴다, `EndsSoon`은 14일 안에 끝남. 실패 이유는 M4-2 |
 | `DNSAnswer` | 도메인이 이 서버를 가리키는지의 답 |
 | `SetBy` | 설정 값을 누가 정했나 — 환경 변수 · 화면 · 아무도 |
 | `HookRequest` · `HookResult` | 받은 웹훅(헤더·쿼리·본문) · 처리 결과(HTTP 상태·문구·배포 번호) |
@@ -262,6 +263,7 @@
 | `ServiceStatus` | 화면 상태 — 문구 키(실행 중 · 멈춤 · 죽음 · 컨테이너 없음 · 파일 서빙 …)와 색 |
 | `ServiceCard` · `HomeView` | 홈의 카드 하나 · 홈 화면 (Docker에 닿지 못했는지 포함) |
 | `ServiceView` · `ServiceForm` · `WebhookView` | 서비스 상세 · 설정 폼에 채울 값(토큰 원문 없음, 있는지만) · 웹훅 주소와 시크릿 |
+| `DomainView` | 서비스 상세의 주소 하나와 그 인증서 상태 |
 | `DeploymentView` · `StepView` | 배포 화면 · 배포 단계 하나 |
 | `ServerSnapshot` | 서버의 CPU·메모리·디스크 |
 
@@ -566,6 +568,12 @@ type ConfigSender interface {
 	Ping(ctx context.Context) error
 }
 
+// CertificateReader는 웹서버가 받아 둔 인증서를 읽는다. 공개 인증서만 열고 키 파일은 열지 않는다.
+// 읽지 못하면 오류와 함께 빈 목록 — 쓰는 쪽은 "인증서 없음"으로 본다 (HTTP로라도 열리는 쪽으로 무너진다).
+type CertificateReader interface {
+	Read(ctx context.Context) (model.Certificates, error)
+}
+
 // ── H. 보여주기 ────────────────────────────
 
 // ServiceViewer는 화면에 보여줄 서비스 모습을 모은다. 비밀(토큰·비밀번호)은 담지 않는다.
@@ -708,10 +716,10 @@ type RandomTokens interface {
 | `FolderSwapper` | SiteFiles |
 | `oldVersionCleaner` | DeployHistoryReader · ImageCleaner · SiteFiles |
 | `hookReceiver` | ServiceReader · SecretStore · SignatureChecker(차례로) · BranchFilter · Deployer · HookLogStore · Clock |
-| `siteMapBuilder` | ServiceReader · KindLookup · AdminDomainSetting · CertEmailSetting · SetupProgress · (M4: CertificateReader) |
+| `siteMapBuilder` | ServiceReader · KindLookup · AdminDomainSetting · CertEmailSetting · SetupProgress · CertificateReader · Clock |
 | `webServerSync` | SiteMapBuilder · ConfigWriter · ConfigSender(`AdminSocketGuard`로 감싼 것) · EventSubscriber |
-| `serviceViewer` | ServiceReader · SecretStore · DeployHistoryReader · ContainerWatcher · KindLookup · AdminDomainSetting · Deployer |
-| `web` | LoginManager · AccountManager · SetupKey · AdminDomainSetting · CertEmailSetting · SetupProgress · ServiceLauncher · ServiceEditor · ServiceViewer · Deployer · ServiceControl · HookReceiver · ServerStats · WebServerSync · DNSChecker |
+| `serviceViewer` | ServiceReader · SecretStore · DeployHistoryReader · ContainerWatcher · KindLookup · AdminDomainSetting · Deployer · CertificateReader · Clock |
+| `web` | LoginManager · AccountManager · SetupKey · AdminDomainSetting · CertEmailSetting · SetupProgress · ServiceLauncher · ServiceEditor · ServiceViewer · Deployer · ServiceControl · HookReceiver · ServerStats · WebServerSync · DNSChecker · CertificateReader · Clock |
 
 ---
 
@@ -752,6 +760,7 @@ Deployer.Deploy
 ```
 WebServerSync (SiteMapChanged를 듣거나 30초마다)
    SiteMapBuilder.Build → ConfigWriter.Write → ConfigSender.Send
+     └ CertificateReader.Read — 인증서가 있는 HTTPS 주소만 RedirectHTTP (생기거나 끝나면 다음 맞추기에서 바뀐다)
                                                └ AdminSocketGuard: 관리 소켓 설정이 빠졌으면 보내지 않는다
                                                   └ SocketSender: 유닉스 소켓으로 보낸다
 ```
@@ -844,7 +853,6 @@ M4 전에 한다. 지금의 화면·배포 테스트가 회귀 테스트다 — 
 | `DockerfilePortReader.Ports` | 포트만 | `(ports, found)` | "Dockerfile이 없다"와 "EXPOSE가 없다"를 구분해 알려준다 |
 | `SwapRequest` | 비밀 포함 | 비밀 없음 | §7대로 `ContainerSwapper`가 `SecretStore`에서 직접 읽는다 — 배포기는 비밀을 만지지 않는다 |
 | `DeployLock.TryLock` | — | `why`가 비면 합치지 않는다 | 되돌리기는 "끝나고 한 번 더"로 합치면 안 된다 |
-| `CertificateReader` | contract에 있음 | 아직 없음 | M4 설계 노트에서 정한다 |
 | `siteMapBuilder` · `serviceViewer` | `DomainStore`를 씀 | 쓰지 않음 | `ServiceReader`가 주소까지 함께 준다 |
 | `Deployer`·`WebServerSync` 만들기 | — | `NewDeployer`는 `wait`, `NewWebServerSync`는 `run`을 함께 돌려준다 | 수명(멈추기·기다리기)은 조립(`app`)만 다룬다 — 인터페이스는 세 개·두 개 그대로 |
 | 저장된 env·볼륨 | — | `StoredEnvVars`·`StoredVolumes` | v1에서 온 값에 틀린 줄이 하나 있어도 나머지를 잃지 않게 |
@@ -864,7 +872,7 @@ M4 전에 한다. 지금의 화면·배포 테스트가 회귀 테스트다 — 
 
 | 기능 | 왜 아직인가 | 들어갈 곳 |
 |---|---|---|
-| HTTP→HTTPS 넘기기 · 인증서 상태 | 인증서가 있는지 확인하지 않고 넘기면 관리 화면이 잠긴다 (불변식 4) | `CertificateReader` → `siteMapBuilder` (M4 설계 노트) |
+| 인증서 발급 실패 이유 (M4-2) | Caddy는 실패를 로그에만 남긴다 — Naru가 그리는 설정에 로그 파일 출력을 넣고 읽는 쪽을 권한다. 실제 문구는 staging에서 모은다 | `CertificateReader` 옆에 실패 읽기 (설계 노트) |
 | 웹서버 고급 설정 | 설정을 `SiteMap`에 싣는 모양을 먼저 정해야 설정 쓰기가 분기 덩어리가 되지 않는다 | `SiteMap`에 사이트 옵션, 옵션마다 작은 설정 쓰기 객체 (M5 설계 노트) |
 | 비공개 레지스트리 | 레지스트리 자격 증명을 어디에 둘지 정하지 않았다 | `SecretStore` + `ImagePuller` (설계 노트) |
 | 빌드가 필요한 정적 사이트 | 빌드를 어떤 컨테이너에서 돌릴지 정하지 않았다 | `StaticBuilder` 앞에 사이트 빌드 단계 (설계 노트) |

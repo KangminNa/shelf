@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/KangminNa/naru/internal/model"
@@ -45,8 +46,16 @@ type route struct {
 }
 
 type match struct {
-	Host []string `json:"host"`
+	Host []string    `json:"host"`
+	Not  []pathMatch `json:"not,omitempty"`
 }
+
+type pathMatch struct {
+	Path []string `json:"path"`
+}
+
+// acmeChallenge는 인증서를 받고 갱신할 때 확인 기관이 :80으로 묻는 경로다. 이것은 넘기지 않는다.
+const acmeChallenge = "/.well-known/acme-challenge/*"
 
 type module map[string]any
 
@@ -93,13 +102,20 @@ func (JSONWriter) Write(p model.SiteMap) ([]byte, error) {
 	c.Admin.Listen = SocketListen(p.AdminSocket)
 	c.Apps.HTTP.Servers = map[string]server{}
 
-	// :80 — 모든 주소. 아직 HTTPS로 넘기지 않는다 (인증서가 확인되면 M4에서).
+	// :80 — 모든 주소. HTTPS로 넘기는 것은 지도가 그러라고 한 주소뿐이다 (인증서가 있을 때만 — 불변식 4).
+	// 넘기는 주소도 HTTP 경로를 그대로 둔다 — 인증서 확인 요청은 넘기지 않고, 그 밖은 넘긴다.
 	plain := server{Listen: []string{":80"}}
 	plain.AutoHTTPS.DisableRedirects = true
 	if len(p.AdminHosts) > 0 {
+		if p.AdminHTTPS && p.AdminRedirectHTTP {
+			plain.Routes = append(plain.Routes, redirectRoute(p.AdminHosts, p.HTTPSPort))
+		}
 		plain.Routes = append(plain.Routes, hostRoute(p.AdminHosts, proxyTo(p.AdminUpstream)))
 	}
 	for _, s := range sites {
+		if s.HTTPS && s.RedirectHTTP {
+			plain.Routes = append(plain.Routes, redirectRoute(s.Hosts, p.HTTPSPort))
+		}
 		plain.Routes = append(plain.Routes, hostRoute(s.Hosts, serve(s)))
 	}
 	if p.OpenFallback {
@@ -147,6 +163,22 @@ func hostRoute(hosts []string, handlers ...module) route {
 		lower[i] = strings.ToLower(h)
 	}
 	return route{Match: []match{{Host: lower}}, Handle: handlers, Terminal: true}
+}
+
+// redirectRoute는 그 주소들의 :80 요청을 HTTPS로 넘긴다. 307 — 브라우저가 영구히 기억하지 않아
+// HTTPS를 끄거나 인증서를 잃으면 바로 되돌릴 수 있다 (영구 고정은 HSTS로 따로 켠다).
+func redirectRoute(hosts []string, port int) route {
+	r := hostRoute(hosts, module{"handler": "static_response", "status_code": 307,
+		"headers": map[string][]string{"Location": {httpsLocation(port)}}})
+	r.Match[0].Not = []pathMatch{{Path: []string{acmeChallenge}}}
+	return r
+}
+
+func httpsLocation(port int) string {
+	if port == 0 || port == 443 {
+		return "https://{http.request.host}{http.request.uri}"
+	}
+	return "https://{http.request.host}:" + strconv.Itoa(port) + "{http.request.uri}"
 }
 
 // serve는 사이트 하나를 어떻게 응답할지다 — 파일을 직접, 아니면 연결 대상으로.

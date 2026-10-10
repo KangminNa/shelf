@@ -57,8 +57,10 @@ func TestSiteMapFollowsServicesAndSettings(t *testing.T) {
 	nas, _ := services.Create(ctx, model.NewService{Name: name("nas"), Kind: model.KindExternal, External: "host.docker.internal:5000"})
 	domains.Add(ctx, nas, model.DomainInput{Domain: domain("nas.example.com")})
 
+	certs := &fakeCerts{}
+	clock := &fakeClock{now: time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)}
 	b := NewSiteMapBuilder(Fixed{AdminSocket: "/run/caddy/admin.sock", AdminUpstream: "naru:8080"}, services,
-		kinds.NewLookup(kinds.Tools{}), admin, settings.NewCertEmailSetting(model.Email{}, set, bus), setup)
+		kinds.NewLookup(kinds.Tools{}), Settings{admin, settings.NewCertEmailSetting(model.Email{}, set, bus), setup}, certs, clock)
 
 	m, err := b.Build(ctx)
 	if err != nil {
@@ -90,7 +92,53 @@ func TestSiteMapFollowsServicesAndSettings(t *testing.T) {
 	if _, err := (caddy.JSONWriter{}).Write(m); err != nil {
 		t.Fatal("the map is writable:", err)
 	}
+
+	// 인증서 — 생기면 넘기고, 끝나거나 못 읽으면 넘기지 않는다 (불변식 4)
+	redirected := func(m model.SiteMap) map[string]bool {
+		out := map[string]bool{"naru.example.com": m.AdminRedirectHTTP}
+		for _, s := range m.Sites {
+			out[s.Hosts[0]] = s.RedirectHTTP
+		}
+		return out
+	}
+	if r := redirected(m); r["naru.example.com"] || r["blog.example.com"] {
+		t.Fatalf("no certificate, no redirect: %v", r)
+	}
+	certs.list = model.Certificates{
+		{Names: []string{"naru.example.com"}, NotBefore: clock.now.Add(-time.Hour), NotAfter: clock.now.Add(90 * 24 * time.Hour)},
+		{Names: []string{"*.example.com"}, NotBefore: clock.now.Add(-time.Hour), NotAfter: clock.now.Add(30 * 24 * time.Hour)},
+	}
+	m, _ = b.Build(ctx)
+	if r := redirected(m); !r["naru.example.com"] || !r["blog.example.com"] || !r["www.example.com"] || r["nas.example.com"] {
+		t.Fatalf("with a certificate, HTTPS addresses are redirected — HTTP-only ones never: %v", r)
+	}
+	clock.now = clock.now.Add(31 * 24 * time.Hour)
+	m, _ = b.Build(ctx)
+	if r := redirected(m); r["blog.example.com"] || !r["naru.example.com"] {
+		t.Fatalf("an expired certificate stops the redirect: %v", r)
+	}
+	certs.err = errors.New("permission denied")
+	m, err = b.Build(ctx)
+	if r := redirected(m); err != nil || r["naru.example.com"] {
+		t.Fatalf("unreadable storage means no redirect, and the map still builds: %v %v", r, err)
+	}
 }
+
+type fakeCerts struct {
+	list model.Certificates
+	err  error
+}
+
+func (f *fakeCerts) Read(context.Context) (model.Certificates, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.list, nil
+}
+
+type fakeClock struct{ now time.Time }
+
+func (c *fakeClock) Now() time.Time { return c.now }
 
 type fakeBuilder struct {
 	m   model.SiteMap

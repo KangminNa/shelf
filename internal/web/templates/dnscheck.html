@@ -9,3 +9,6 @@
   <div class="check warn"><b>{{t "dns.resolves" .Domain .IPList}}</b><span>{{t "dns.unknownself"}}</span></div>
 {{end}}
 {{end}}
+
+{{define "cert"}}{{if .Ready}}<span class="chip {{if .Soon}}warn{{else}}on{{end}}" title="{{.Issuer}}">{{t "cert.until" (date .Until)}}</span>{{else}}<span class="chip warn">{{t "cert.waiting"}}</span>{{end}}{{end}}
+{{define "certdns"}}{{if .Matches}}{{t "cert.dns.ok"}}{{else if .Resolves}}{{t "cert.dns.points" .IPList}}{{else}}{{t "cert.dns.none"}}{{end}}{{end}}

@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/KangminNa/naru/internal/access"
@@ -46,6 +47,8 @@ type Config struct {
 	InternalTLS  bool   // NARU_TLS=internal — 개발용. 공개 CA 대신 내부 CA로 인증서
 	Network      string // NARU_NETWORK — 앱 컨테이너와 웹서버가 함께 있는 네트워크, 기본 naru-net
 	CaddySites   string // NARU_CADDY_SITES — 웹서버 컨테이너에서 본 정적 사이트 폴더, 기본 /srv/sites
+	CaddyCerts   string // NARU_CADDY_CERTS — 웹서버가 받은 인증서 (Naru가 읽기만), 기본 <데이터>/caddy/data/caddy/certificates
+	HTTPSPort    int    // NARU_HTTPS_PORT — 바깥에서 본 HTTPS 포트, 기본 443 (로컬처럼 다른 포트로 열었을 때만)
 	AdminDomain  string // ADMIN_DOMAIN — 있으면 화면 설정보다 우선
 	ACMEEmail    string // ACME_EMAIL — 있으면 화면 설정보다 우선
 	Version      string
@@ -62,10 +65,19 @@ func ConfigFromEnv(version string) Config {
 		InternalTLS:  os.Getenv("NARU_TLS") == "internal",
 		Network:      envOr("NARU_NETWORK", "naru-net"),
 		CaddySites:   envOr("NARU_CADDY_SITES", "/srv/sites"),
+		CaddyCerts:   os.Getenv("NARU_CADDY_CERTS"),
+		HTTPSPort:    envPort("NARU_HTTPS_PORT", 443),
 		AdminDomain:  os.Getenv("ADMIN_DOMAIN"),
 		ACMEEmail:    os.Getenv("ACME_EMAIL"),
 		Version:      version,
 	}
+}
+
+func envPort(key string, fallback int) int {
+	if n, err := strconv.Atoi(os.Getenv(key)); err == nil && n > 0 && n < 65536 {
+		return n
+	}
+	return fallback
 }
 
 func envOr(key, fallback string) string {
@@ -89,10 +101,18 @@ type Outside struct {
 	DNS     contract.DNSChecker
 	Stats   contract.ServerStats
 	Sender  contract.ConfigSender // 관리 소켓 확인(AdminSocketGuard)은 app이 늘 감싼다
+	Certs   contract.CertificateReader
 	Clock   contract.Clock
 	Random  contract.RandomTokens
 
 	ReadyTimeout time.Duration // 새 컨테이너 응답을 기다리는 시간 (0이면 60초)
+}
+
+func certsDir(cfg Config) string {
+	if cfg.CaddyCerts != "" {
+		return cfg.CaddyCerts
+	}
+	return filepath.Join(cfg.DataDir, "caddy", "data", "caddy", "certificates")
 }
 
 // RealOutside는 진짜 Docker·git·DNS·Caddy 소켓이다.
@@ -105,6 +125,7 @@ func RealOutside(cfg Config) Outside {
 		Code: git.Downloader{}, Ports: netcheck.TCP{}, DNS: netcheck.NewDNS(nil),
 		Stats:  stats.NewProcSampler(cfg.ProcDir, cfg.DataDir),
 		Sender: caddy.NewSocketSender(cfg.CaddySocket),
+		Certs:  caddy.NewCertificateFiles(certsDir(cfg)),
 		Clock:  system.Clock{}, Random: system.Random{},
 	}
 }
@@ -133,6 +154,9 @@ func Open(cfg Config, log *slog.Logger) (*App, error) { return OpenWith(cfg, log
 
 // OpenWith는 바깥 도구를 골라 조립한다 (테스트용).
 func OpenWith(cfg Config, log *slog.Logger, out Outside) (*App, error) {
+	if out.Certs == nil { // 테스트처럼 가짜를 주지 않으면 데이터 폴더의 Caddy 저장소를 읽는다
+		out.Certs = caddy.NewCertificateFiles(certsDir(cfg))
+	}
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return nil, err
 	}
@@ -223,21 +247,21 @@ func (a *App) assemble() error {
 
 	// G. 웹서버
 	siteMap := webserver.NewSiteMapBuilder(webserver.Fixed{
-		AdminSocket: cfg.CaddySocket, AdminUpstream: cfg.SelfUpstream, InternalTLS: cfg.InternalTLS,
-	}, serviceStore, lookup, adminDomain, certEmail, setup)
+		AdminSocket: cfg.CaddySocket, AdminUpstream: cfg.SelfUpstream, InternalTLS: cfg.InternalTLS, HTTPSPort: cfg.HTTPSPort,
+	}, serviceStore, lookup, webserver.Settings{Admin: adminDomain, Email: certEmail, Setup: setup}, out.Certs, out.Clock)
 	sync, run := webserver.NewWebServerSync(siteMap, caddy.JSONWriter{}, caddy.NewAdminSocketGuard(out.Sender, cfg.CaddySocket), bus, a.log)
 	a.syncWS = run
 
 	// H. 보여주기
 	viewer := views.NewServiceViewer(views.Parts{
 		Services: serviceStore, Secrets: secrets, History: history, Containers: out.Watcher, Kinds: lookup,
-		Admin: adminDomain, Deployer: deployer,
+		Admin: adminDomain, Deployer: deployer, Certs: out.Certs, Clock: out.Clock,
 	}, a.log)
 
 	srv, err := web.New(web.Deps{
 		Login: login, Accounts: a.Accounts, SetupKey: a.key, AdminDomain: adminDomain, CertEmail: certEmail, Setup: setup,
 		Launcher: launcher, Editor: editor, Viewer: viewer, Deployer: deployer, Control: control, Hooks: hooks,
-		Stats: out.Stats, WebServer: sync, DNS: out.DNS, Log: a.log, DataDir: cfg.DataDir, Version: cfg.Version,
+		Stats: out.Stats, WebServer: sync, DNS: out.DNS, Certs: out.Certs, Clock: out.Clock, Log: a.log, DataDir: cfg.DataDir, Version: cfg.Version,
 	})
 	if err != nil {
 		return err

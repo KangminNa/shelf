@@ -201,6 +201,9 @@ JSON이 아니라 Caddyfile인 이유: Caddy를 아는 사람의 지식과 인�
 
 4. **유효한 인증서가 있을 때만 HTTPS로 넘긴다.** (F-61의 일반화)
    발급이 아직이거나 실패한 도메인을 HTTPS로 넘기면 그 사이트는 열리지 않는다. 관리 도메인이라면 자기 서버에서 잠긴다.
+   → (v2 M4-1) 판단은 `siteMapBuilder` 한 곳 — `CertificateReader`가 읽은 인증서가 지금 그 주소를 덮을 때만 `RedirectHTTP`.
+   설정 쓰기는 지도가 넘기라고 한 주소에만 `:80`에서 `307`을 그리고, 인증서 확인 경로(`/.well-known/acme-challenge/*`)는 넘기지 않는다.
+   인증서 저장소를 읽지 못하면 "없음"으로 본다 — 넘기기가 꺼질 뿐 HTTP로는 열린다.
 
 5. **비밀은 Caddy 설정에 넣지 않는다.**
    설정은 `autosave.json`에 평문으로 남는다. 업로드 인증서는 파일 경로(`load_files`)로, DNS 토큰은 `{env.CF_API_TOKEN}` 같은 환경변수 자리표시자로 넘긴다.

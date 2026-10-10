@@ -82,15 +82,16 @@
 <section class="section" id="domains">
   <h2>{{t "service.addresses"}}</h2>
   {{if eq .Data.Form "domain"}}{{template "error" .}}{{end}}
-  {{if $s.Domains}}
+  {{if .Data.Domains}}
   <ul class="rows">
-    {{range $s.Domains}}
-    <li><a class="ext" href="http://{{.Domain}}" target="_blank" rel="noopener">{{.Domain}} ↗</a>
+    {{range .Data.Domains}}{{$d := .Domain}}
+    <li><a class="ext" href="http://{{$d.Domain}}" target="_blank" rel="noopener">{{$d.Domain}} ↗</a>
       <span class="spacer"></span>
-      {{if .HTTPS}}<span class="chip on">{{t "service.https"}}</span>{{else}}<span class="chip">{{t "service.httponly"}}</span>{{end}}
-      {{if .HSTS}}<span class="chip on">{{t "service.hsts"}}</span>{{end}}
-      <form method="post" action="/services/{{$id}}/domains/{{.ID}}/delete"><button class="btn small quiet" type="submit" aria-label="{{t "service.domain.remove"}} {{.Domain}}">✕</button></form>
+      {{if $d.HTTPS}}{{template "cert" .Cert}}{{else}}<span class="chip">{{t "service.httponly"}}</span>{{end}}
+      {{if $d.HSTS}}<span class="chip on">{{t "service.hsts"}}</span>{{end}}
+      <form method="post" action="/services/{{$id}}/domains/{{$d.ID}}/delete"><button class="btn small quiet" type="submit" aria-label="{{t "service.domain.remove"}} {{$d.Domain}}">✕</button></form>
     </li>
+    {{with .Cert.DNS}}<li class="sub"><small class="muted">{{template "certdns" .}}</small></li>{{end}}
     {{end}}
   </ul>
   {{else}}<p class="desc">{{t "service.noaddress"}}</p>{{end}}

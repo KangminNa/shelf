@@ -295,6 +295,12 @@ type ConfigSender interface {
 	Ping(ctx context.Context) error
 }
 
+// CertificateReader는 웹서버가 받아 둔 인증서를 읽는다. 공개 인증서만 열고 키 파일은 열지 않는다.
+// 읽지 못하면 오류와 함께 빈 목록 — 쓰는 쪽은 "인증서 없음"으로 본다 (HTTP로라도 열리는 쪽으로 무너진다).
+type CertificateReader interface {
+	Read(ctx context.Context) (model.Certificates, error)
+}
+
 // ── H. 보여주기 ────────────────────────────
 
 // ServiceViewer는 화면에 보여줄 서비스 모습을 모은다. 비밀(토큰·비밀번호)은 담지 않는다.

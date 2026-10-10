@@ -22,6 +22,8 @@ type Parts struct {
 	Kinds      contract.KindLookup
 	Admin      contract.AdminDomainSetting
 	Deployer   contract.Deployer
+	Certs      contract.CertificateReader
+	Clock      contract.Clock
 }
 
 type serviceViewer struct {
@@ -108,6 +110,15 @@ func (v serviceViewer) Detail(ctx context.Context, id model.ServiceID) (model.Se
 	}
 	if to.Folder != "" {
 		view.Target = to.Folder
+	}
+	certs, _ := v.p.Certs.Read(ctx) // 못 읽으면 "아직 없음"으로 보인다
+	now := v.p.Clock.Now()
+	for _, d := range s.Domains {
+		dv := model.DomainView{Domain: d}
+		if d.HTTPS {
+			dv.Certificate = certs.For(d.Domain, now)
+		}
+		view.Domains = append(view.Domains, dv)
 	}
 	if view.Deployable {
 		view.Deploys, _ = v.p.History.Recent(ctx, id, 10)

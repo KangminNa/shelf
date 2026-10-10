@@ -31,6 +31,7 @@ services:
     restart: unless-stopped
     environment:
       - NARU_TLS=internal                            # 로컬: 공개 CA에 요청하지 않는다
+      - NARU_HTTPS_PORT=8443                         # 로컬은 HTTPS를 8443으로 열었다 — HTTP에서 넘길 때 이 포트로
       - NARU_NETWORK=${NARU_NETWORK:-naru-net}       # 앱 컨테이너를 붙일 네트워크 (아래 apps와 같아야 한다)
     ports:
       - "127.0.0.1:8080:8080"                        # 웹서버를 거치지 않고 들어가는 뒷문 (로컬 전용)

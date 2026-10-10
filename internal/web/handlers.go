@@ -281,11 +281,12 @@ type settingsScreen struct {
 	FixedDomain string
 	DataDir     string
 	Check       *model.DNSAnswer
+	Cert        *certRow // 관리 주소의 인증서
 }
 
 func (s *Server) settingsScreen(r *http.Request) settingsScreen {
 	domain, fixed := s.adminDomainForm(r)
-	return settingsScreen{Domain: domain, Email: s.certEmail(r), FixedDomain: fixed, DataDir: s.d.DataDir}
+	return settingsScreen{Domain: domain, Email: s.certEmail(r), FixedDomain: fixed, DataDir: s.d.DataDir, Cert: s.adminCert(r.Context())}
 }
 
 func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {

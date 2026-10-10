@@ -22,20 +22,28 @@ type Fixed struct {
 	AdminSocket   string // 웹서버 관리 소켓 — 그린 설정에 항상 들어간다
 	AdminUpstream string // 웹서버가 관리 화면에 닿는 주소
 	InternalTLS   bool   // 개발용 내부 인증서
+	HTTPSPort     int    // 바깥에서 본 HTTPS 포트 (0이면 443) — 넘기는 주소에 쓴다
+}
+
+// Settings는 사이트 지도가 읽는 서버 설정이다.
+type Settings struct {
+	Admin contract.AdminDomainSetting
+	Email contract.CertEmailSetting
+	Setup contract.SetupProgress
 }
 
 type siteMapBuilder struct {
 	fixed    Fixed
 	services contract.ServiceReader
 	kinds    contract.KindLookup
-	admin    contract.AdminDomainSetting
-	email    contract.CertEmailSetting
-	setup    contract.SetupProgress
+	settings Settings
+	certs    contract.CertificateReader
+	clock    contract.Clock
 }
 
-func NewSiteMapBuilder(fixed Fixed, services contract.ServiceReader, kinds contract.KindLookup,
-	admin contract.AdminDomainSetting, email contract.CertEmailSetting, setup contract.SetupProgress) contract.SiteMapBuilder {
-	return siteMapBuilder{fixed, services, kinds, admin, email, setup}
+func NewSiteMapBuilder(fixed Fixed, services contract.ServiceReader, kinds contract.KindLookup, settings Settings,
+	certs contract.CertificateReader, clock contract.Clock) contract.SiteMapBuilder {
+	return siteMapBuilder{fixed, services, kinds, settings, certs, clock}
 }
 
 func (b siteMapBuilder) Build(ctx context.Context) (model.SiteMap, error) {
@@ -43,18 +51,25 @@ func (b siteMapBuilder) Build(ctx context.Context) (model.SiteMap, error) {
 	if err != nil {
 		return model.SiteMap{}, err
 	}
-	domain, _ := b.admin.Get(ctx)
-	email, _ := b.email.Get(ctx)
+	domain, _ := b.settings.Admin.Get(ctx)
+	email, _ := b.settings.Email.Get(ctx)
+	// 인증서를 읽지 못하면 "하나도 없음"으로 본다 — 넘기기가 꺼질 뿐 HTTP로는 열린다 (안전한 쪽으로 무너진다).
+	certs, _ := b.certs.Read(ctx)
+	now := b.clock.Now()
+	ready := func(d model.DomainName) bool { return certs.For(d, now).Usable(now) }
+
 	m := model.SiteMap{
 		AdminSocket:   b.fixed.AdminSocket,
 		AdminUpstream: b.fixed.AdminUpstream,
 		// 첫 설정이 끝나기 전이나 관리 주소가 없을 때는 IP로 들어와도 관리 화면에 닿아야 한다.
-		OpenFallback: !b.setup.Done(ctx) || domain.IsZero(),
+		OpenFallback: !b.settings.Setup.Done(ctx) || domain.IsZero(),
 		ACMEEmail:    email.String(),
 		InternalTLS:  b.fixed.InternalTLS,
+		HTTPSPort:    b.fixed.HTTPSPort,
 	}
 	if !domain.IsZero() {
 		m.AdminHosts, m.AdminHTTPS = []string{domain.String()}, true
+		m.AdminRedirectHTTP = ready(domain)
 	}
 	for _, s := range all {
 		tools, ok := b.kinds.Find(s.Kind)
@@ -66,7 +81,8 @@ func (b siteMapBuilder) Build(ctx context.Context) (model.SiteMap, error) {
 			if d.Domain == domain {
 				continue // 관리 주소가 우선
 			}
-			m.Sites = append(m.Sites, model.Site{Hosts: []string{d.Domain.String()}, Destination: to, HTTPS: d.HTTPS, HSTS: d.HSTS})
+			m.Sites = append(m.Sites, model.Site{Hosts: []string{d.Domain.String()}, Destination: to, HTTPS: d.HTTPS, HSTS: d.HSTS,
+				RedirectHTTP: d.HTTPS && ready(d.Domain)})
 		}
 	}
 	return m, nil

@@ -24,6 +24,7 @@
   <h2>{{t "settings.domain.heading"}}</h2>
   <p class="desc">{{t "settings.domain.desc"}}</p>
   {{if eq .Data.Form "domain"}}{{template "error" .}}{{end}}
+  {{with .Data.Cert}}<p class="cert-line">{{t "settings.cert"}} {{template "cert" .}}</p>{{end}}
   {{with .Data.FixedDomain}}
     <p class="flash ok">{{t "settings.domain.fixed" .}}</p>
   {{else}}

@@ -81,9 +81,16 @@ type ServiceForm struct {
 	HasToken   bool
 }
 
+// DomainView는 서비스 상세의 주소 하나와 그 인증서 상태다.
+type DomainView struct {
+	Domain      Domain
+	Certificate CertificateState
+}
+
 // ServiceView는 서비스 상세 화면이다.
 type ServiceView struct {
 	Service    Service
+	Domains    []DomainView
 	Status     ServiceStatus
 	Target     string
 	Container  bool // 멈추기·켜기가 된다

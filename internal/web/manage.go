@@ -314,6 +314,7 @@ type serviceScreen struct {
 	WebhookURL    string
 	WebhookSecret string
 	HasToken      bool
+	Domains       []domainRow
 	Settings      serviceForm
 	Form          string // 오류가 난 폼
 }
@@ -327,7 +328,7 @@ func (s *Server) servicePage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	v := s.serviceView(u, sv, "", nil)
+	v := s.serviceView(r, u, sv, "", nil)
 	v.OK = okKeys[r.URL.Query().Get("ok")]
 	if e := r.URL.Query().Get("err"); e != "" {
 		v.Err = errKeys[e]
@@ -336,17 +337,18 @@ func (s *Server) servicePage(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) renderService(w http.ResponseWriter, r *http.Request, u model.Account, sv model.ServiceView, status int, form, errKey string, f *serviceForm) {
-	v := s.serviceView(u, sv, form, f)
+	v := s.serviceView(r, u, sv, form, f)
 	v.Err = errKey
 	s.render(w, r, status, "service", v)
 }
 
-func (s *Server) serviceView(u model.Account, sv model.ServiceView, form string, f *serviceForm) view {
+func (s *Server) serviceView(r *http.Request, u model.Account, sv model.ServiceView, form string, f *serviceForm) view {
 	sc := model.ServiceCard{ID: sv.Service.ID, Name: sv.Service.Name.String(), Kind: sv.Service.Kind, Domain: sv.Service.PrimaryDomain(), Status: sv.Status}
 	d := serviceScreen{
 		Service: sv.Service, Card: cardOf(sc), Target: sv.Target, Container: sv.Container, Deployable: sv.Deployable,
 		Deploys: sv.Deploys, LiveID: sv.LiveID, Running: sv.Deploying, Form: form,
 		WebhookURL: sv.Webhook.URL, WebhookSecret: sv.Webhook.Secret, HasToken: sv.Form.HasToken,
+		Domains: s.domainRows(r, sv.Domains),
 	}
 	if len(d.Deploys) > 0 {
 		d.Latest = &d.Deploys[0]
