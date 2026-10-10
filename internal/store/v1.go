@@ -20,6 +20,7 @@ const (
 	keyV1Imported = "v1_imported" // 계정·관리 주소
 	// 앱·프록시 호스트. M1에서 계정만 옮긴 설치도 다시 볼 수 있게 따로 둔다.
 	keyV1ImportedServices = "v1_imported_services"
+	keyV1ImportedAlerts   = "v1_imported_alerts" // 알림 주소 (M6)
 )
 
 // v1은 ADMIN_DOMAIN을 이 설명이 붙은 프록시 호스트로 등록했다.
@@ -34,6 +35,7 @@ type V1Report struct {
 	External    int    // 직접 만든 프록시 호스트 → external 서비스
 	Domains     int
 	History     int // 옮긴 배포 기록
+	Channels    int // 옮긴 알림 주소
 }
 
 // ImportV1은 dataDir에 있는 v1 DB(auth.db · proxy.db · deploy.db)를 처음 한 번만 옮긴다.
@@ -63,7 +65,66 @@ func ImportV1(ctx context.Context, db *DB, dataDir string) (V1Report, error) {
 			return r, err
 		}
 	}
+	if _, done := set.Get(ctx, keyV1ImportedAlerts); !done {
+		if err := importChannels(ctx, db, dataDir, &r); err != nil {
+			return r, err
+		}
+		if err := set.Set(ctx, keyV1ImportedAlerts, "1"); err != nil {
+			return r, err
+		}
+	}
 	return r, nil
+}
+
+// importChannels는 v1의 알림 채널 중 켜져 있고 주소가 올바른 것을 옮긴다. 발송 기록은 옮기지 않는다.
+func importChannels(ctx context.Context, db *DB, dataDir string, r *V1Report) error {
+	v1, ok, err := openV1(dataDir, "notify.db")
+	if err != nil || !ok {
+		return err
+	}
+	defer v1.Close()
+	rows, err := v1.QueryContext(ctx, `SELECT url, secret, description FROM channels WHERE enabled = 1 ORDER BY id`)
+	if err != nil {
+		return err
+	}
+	type row struct{ url, secret, name string }
+	var all []row
+	for rows.Next() {
+		var x row
+		var secret, desc sql.NullString
+		if err := rows.Scan(&x.url, &secret, &desc); err != nil {
+			rows.Close()
+			return err
+		}
+		x.secret, x.name = secret.String, desc.String
+		all = append(all, x)
+	}
+	rows.Close()
+	r.Found = true
+	channels := NewChannels(db)
+	for _, x := range all {
+		u, err := model.ParseAlertURL(x.url)
+		if err != nil {
+			continue
+		}
+		name := strings.TrimSpace(x.name)
+		if name == "" {
+			name = hostOf(u.String())
+		}
+		if _, err := channels.Add(ctx, model.AlertChannel{Name: name, URL: u.String(), Secret: x.secret}); err != nil {
+			return err
+		}
+		r.Channels++
+	}
+	return nil
+}
+
+func hostOf(raw string) string {
+	rest := raw[strings.Index(raw, "://")+3:]
+	if i := strings.IndexAny(rest, "/?#"); i >= 0 {
+		rest = rest[:i]
+	}
+	return rest
 }
 
 func openV1(dataDir, file string) (*sql.DB, bool, error) {

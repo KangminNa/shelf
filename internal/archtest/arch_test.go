@@ -19,9 +19,9 @@ const module = "github.com/KangminNa/naru/internal/"
 // 패키지의 자리. 자리마다 할 수 있는 일이 다르다.
 var (
 	core      = set("model", "contract")
-	tools     = set("docker", "git", "files", "caddy", "netcheck", "stats", "events", "system")
+	tools     = set("docker", "git", "files", "caddy", "netcheck", "stats", "events", "system", "httppost")
 	storage   = set("store")
-	behaviors = set("access", "settings", "services", "kinds", "deploy", "webhook", "webserver", "views", "websettings")
+	behaviors = set("access", "settings", "services", "kinds", "deploy", "webhook", "webserver", "views", "websettings", "watch", "notify")
 	entries   = set("web", "cli")
 	root      = set("app")
 )
@@ -368,7 +368,7 @@ func TestR9KindsBranchOnlyInKinds(t *testing.T) {
 // R10: 화면·셸 명령은 비밀(ServiceSecrets)과 비밀번호 해시(PasswordHash)를 쓰지 않는다 —
 // 직접 쓰지도 않고, 그것을 주고받는 인터페이스를 갖지도 않는다.
 func TestR10NoSecretsOnScreen(t *testing.T) {
-	secret := set("ServiceSecrets", "PasswordHash", "WebSettings", "BasicLogin")
+	secret := set("ServiceSecrets", "PasswordHash", "WebSettings", "BasicLogin", "AlertChannel")
 	carries := map[string]bool{} // 비밀을 주고받는 contract 인터페이스
 	for _, f := range sources(t) {
 		if f.pkg != "contract" {

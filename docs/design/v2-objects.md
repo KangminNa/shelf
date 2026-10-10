@@ -11,7 +11,7 @@
 
 ## 1. Naru가 하는 일
 
-사용자 눈으로 본 Naru의 일은 아홉 가지다. 모든 객체는 이 중 하나에 속한다.
+사용자 눈으로 본 Naru의 일은 열한 가지다. 모든 객체는 이 중 하나에 속한다.
 
 | | 하는 일 | 사용자가 보는 것 |
 |---|---|---|
@@ -23,6 +23,8 @@
 | **F** | push 받아 배포하기 | 웹훅 확인, 브랜치 확인, 배포 시작 |
 | **G** | 웹서버 맞추기 | 주소마다 어디로 보낼지 정하고 웹서버(Caddy)에 반영 |
 | **H** | 보여주기 | 홈, 서비스 상세, 배포 기록, 서버 상태 |
+| **J** | 지켜보기 | 서비스·웹서버·Docker 상태를 30초마다 보고 바뀌면 알린다. 문제와 고칠 방법, 서비스 CPU·메모리 (M6) |
+| **K** | 알리기 | 일어난 일(서비스 멈춤·복구, 배포 실패, 인증서 곧 끝남, 웹서버·Docker 끊김)을 등록한 알림 주소로 보낸다 (M6) |
 | **I** | 웹서버 설정 정하기 | 서비스마다 헤더·IP 제한·비밀번호·점검 중·경로별 연결·고급(Caddyfile), nginx 설정 가져오기 (M5) |
 
 그리고 이 일들이 바깥 세계(Docker, git, Caddy, DB, 파일, 네트워크)를 쓰는 데 필요한 **도구**가 있다.
@@ -168,6 +170,7 @@
 | `ContainerRemover` | 컨테이너를 없앤다 | `docker.Containers` |
 | `ContainerSwitch` | 컨테이너를 멈추고 켠다 | `docker.Containers` |
 | `ContainerWatcher` | 컨테이너 상태·로그, 이 서비스의 컨테이너 목록을 본다 | `docker.Containers` |
+| `AlertSender` | 알림 하나를 그 주소의 형식으로 보낸다 (10초 제한, 응답 본문은 읽고 버린다) | `httppost.AlertPoster` |
 | `SnippetCompiler` | 고급 칸의 Caddyfile 지시어를 웹서버 형식으로 바꾼다 — 그 사이트의 경로 처리만 꺼내고 나머지는 "적용되지 않음"으로 알린다 | `caddy.AdaptCompiler` (Caddy 관리 API `/adapt`) |
 | `CodeDownloader` | 저장소 코드를 내려받는다 (토큰은 인자·설정 파일에 남기지 않는다) | `git.Downloader` |
 | `WorkFolder` | 잠깐 쓸 작업 폴더를 빌려주고 돌려받는다. 그 안의 경로를 심볼릭 링크로 빠져나가지 않게 찾아 준다 | `files.TempFolders` |
@@ -178,6 +181,29 @@
 | `DNSChecker` | 도메인이 이 서버를 가리키는지 본다 | `netcheck.DNS` |
 | `EventPublisher` · `EventSubscriber` | 일어난 일을 알리고, 듣는다 | `events.Bus` |
 | `Clock` · `RandomTokens` | 지금 시각, 난수 문자열 | `system.Clock`, `system.Random` |
+
+### J. 지켜보기 — `watch` (M6)
+
+30초마다 본다. **바뀔 때만** 이벤트를 낸다 — 듣는 쪽(알리기)이 알아서 보낸다 (Observer).
+
+| 인터페이스 | 하는 일 | 구현 |
+|---|---|---|
+| `HealthWatcher` | 마지막으로 본 것(멈춘 서비스·웹서버·Docker·본 시각)을 알려준다. 도는 고리는 만들 때 함께 돌려준다 | `healthWatcher` |
+
+**알림 폭탄을 막는 규칙:** 두 번 연속(약 1분) 문제일 때만 멈춤으로 본다 · 직접 멈춘 서비스와 배포 중인 서비스는 보지 않는다 ·
+Naru가 막 켜졌을 때 이미 멈춰 있던 것은 알리지 않고 기준으로만 삼는다 · 인증서 곧 끝남은 주소마다 하루 한 번.
+지켜보는 것은 **컨테이너 서비스**뿐이다 — 정적 사이트는 웹서버가 직접 서빙하고, 외부 연결은 감시하지 않기로 했다.
+
+### K. 알리기 — `notify` (M6)
+
+| 인터페이스 | 하는 일 | 구현 |
+|---|---|---|
+| `AlertSettings` | 알림 주소를 등록·삭제·시험하고, 보낸 결과를 보여준다. 화면에는 주소를 가린 모습만 준다 | `alerts` |
+
+이벤트를 들으면 줄에 넣고, 따로 도는 일꾼이 주소마다 보낸다 — 보내기가 느려도 배포·지켜보기를 막지 않는다.
+형식은 주소로 고른다: Discord(`discord.com/api/webhooks`) → `{"content"}`, Slack(`hooks.slack.com`) → `{"text"}`,
+그 밖 → v1과 같은 JSON(`event`·`level`·`title`·`detail`·`service`·`sent_at`), 시크릿이 있으면 `X-Naru-Signature-256`(HMAC-SHA256).
+**알림 주소는 비밀이다** (Discord 주소는 그 자체로 비밀번호) — 화면에는 `discord.com/…`처럼 가리고, 로그에 남기지 않는다.
 
 ### 설치 방식 — Docker · 설치형 (`app`만 안다)
 
@@ -212,6 +238,7 @@
 | `DeployHistoryStore` · `DeployHistoryReader` | 배포 기록을 저장한다 · 읽는다 |
 | `HookLogStore` | 웹훅을 받은 기록을 저장한다 |
 | `WebSettingsStore` | 서비스의 웹서버 설정을 저장한다 (비밀번호는 bcrypt 해시만) |
+| `ChannelStore` · `DeliveryLog` | 알림 주소(비밀)를 저장한다 · 보낸 결과를 남긴다 (최근 200개) |
 
 ### 들어오는 쪽
 
@@ -305,6 +332,16 @@
 | `SiteSettings` · `SitePath` | 사이트 지도에 실리는 설정 — 경로 목적지가 이미 실제 주소로 바뀐 것 |
 | `RefusedError` | 웹서버가 설정을 받아들이지 않았다 — 이유는 웹서버가 한 말 그대로 |
 
+### 지켜보기 · 알리기 (M6)
+
+| 이름 | 무엇 |
+|---|---|
+| `WatchSnapshot` · `DownService` | 마지막으로 본 것 — 멈춘 서비스(왜), 웹서버·Docker에 닿는지, 본 시각 · 멈춘 서비스 하나 |
+| `Alert` · `AlertLevel` | 보낼 알림 — 사건 이름, 문제·복구·알림, 제목, 내용, 서비스 이름 |
+| `AlertChannel` · `ChannelID` | 알림 주소 — 이름, 주소, 시크릿. **`web`·`cli`는 이 타입을 쓸 수 없다** (주소가 비밀) |
+| `AlertURL` · `ChannelInput` · `ChannelView` | http(s) 주소 값 · 화면에서 받은 것 · 화면에 보일 것(가린 주소, 형식, 시크릿이 있는지) |
+| `Delivery` | 보낸 결과 하나 — 주소 이름, 사건, 제목, 성공 여부, 이유, 시각 |
+
 ### 화면에 보여줄 모습 (`ServiceViewer`가 모은다)
 
 | 이름 | 무엇 |
@@ -323,6 +360,9 @@
 | `SiteMapChanged` | 주소·포트·서빙 폴더·관리 주소·첫 설정 상태가 바뀌었을 때 → `WebServerSync`가 바로 맞춘다 |
 | `DeployFinished` | 배포가 끝났을 때 (성공·실패) |
 | `ServiceDeleted` | 서비스를 지웠을 때 |
+| `ServiceDown` · `ServiceUp` | 컨테이너 서비스가 (두 번 연속) 멈췄을 때 · 다시 응답할 때 |
+| `WebServerDown` · `WebServerUp` · `DockerDown` · `DockerUp` | 웹서버·Docker에 (두 번 연속) 닿지 않을 때 · 다시 닿을 때 |
+| `CertificateEndingSoon` | 인증서가 14일 안에 끝날 때 (주소마다 하루 한 번) |
 
 ---
 
@@ -650,6 +690,38 @@ type LoginHasher interface {
 	Hash(password string) (string, error)
 }
 
+// ── J. 지켜보기 ────────────────────────────
+
+// HealthWatcher는 지켜보기가 마지막으로 본 것을 알려준다. 도는 고리(30초마다)는 만들 때 함께 돌려준다.
+// 바뀔 때만 이벤트(ServiceDown·ServiceUp·WebServerDown …)를 낸다 — 보내는 일은 알리기가 듣고 한다.
+type HealthWatcher interface {
+	Snapshot() model.WatchSnapshot
+}
+
+// ── K. 알리기 ─────────────────────────────
+
+// AlertSettings는 알림 주소를 등록·삭제·시험하고, 보낸 결과를 보여준다. 화면에는 주소를 가린 모습만 준다.
+type AlertSettings interface {
+	Channels(ctx context.Context) ([]model.ChannelView, error)
+	Add(ctx context.Context, in model.ChannelInput) error
+	Remove(ctx context.Context, id model.ChannelID) error
+	Test(ctx context.Context, id model.ChannelID) error
+	Deliveries(ctx context.Context, n int) ([]model.Delivery, error)
+}
+
+// ChannelStore는 알림 주소를 저장한다. 주소와 시크릿은 비밀이다.
+type ChannelStore interface {
+	List(ctx context.Context) ([]model.AlertChannel, error)
+	Add(ctx context.Context, c model.AlertChannel) (model.ChannelID, error)
+	Remove(ctx context.Context, id model.ChannelID) error
+}
+
+// DeliveryLog는 보낸 결과를 남긴다 (최근 것만).
+type DeliveryLog interface {
+	Save(ctx context.Context, d model.Delivery) error
+	Recent(ctx context.Context, n int) ([]model.Delivery, error)
+}
+
 // ── H. 보여주기 ────────────────────────────
 
 // ServiceViewer는 화면에 보여줄 서비스 모습을 모은다. 비밀(토큰·비밀번호)은 담지 않는다.
@@ -736,6 +808,11 @@ type SiteFiles interface {
 	RemoveSite(site model.ServiceName) error
 }
 
+// AlertSender는 알림 하나를 그 주소의 형식(Discord·Slack·일반 JSON)으로 보낸다. 오래 걸리면 끊는다.
+type AlertSender interface {
+	Send(ctx context.Context, ch model.AlertChannel, a model.Alert) error
+}
+
 // SnippetCompiler는 고급 칸의 Caddyfile 지시어(사이트 블록 안쪽)를 웹서버 형식으로 바꾼다.
 // 그 사이트의 경로 처리만 꺼내고, 그 밖(TLS·관리·포트·다른 사이트)은 ignored로 알려준다.
 type SnippetCompiler interface {
@@ -802,7 +879,9 @@ type RandomTokens interface {
 | `webServerSync` | SiteMapBuilder · ConfigWriter · ConfigSender(`AdminSocketGuard`로 감싼 것) · EventSubscriber |
 | `serviceViewer` | ServiceReader · SecretStore · DeployHistoryReader · ContainerWatcher · KindLookup · AdminDomainSetting · Deployer · CertificateReader · Clock · WebSettingsStore |
 | `webSettingsEditor` | ServiceReader · WebSettingsStore · SnippetCompiler · LoginHasher · WebServerSync |
-| `web` | LoginManager · AccountManager · SetupKey · AdminDomainSetting · CertEmailSetting · SetupProgress · ServiceLauncher · ServiceEditor · ServiceViewer · Deployer · ServiceControl · HookReceiver · ServerStats · WebServerSync · DNSChecker · CertificateReader · Clock · WebSettingsEditor · NginxTranslator |
+| `healthWatcher` | ServiceReader · KindLookup · ContainerWatcher · PortChecker · Deployer · WebServerSync · CertificateReader · AdminDomainSetting · Clock · EventPublisher |
+| `alerts` | ChannelStore · DeliveryLog · AlertSender · ServiceReader · EventSubscriber · Clock |
+| `web` | LoginManager · AccountManager · SetupKey · AdminDomainSetting · CertEmailSetting · SetupProgress · ServiceLauncher · ServiceEditor · ServiceViewer · Deployer · ServiceControl · HookReceiver · ServerStats · WebServerSync · DNSChecker · CertificateReader · Clock · WebSettingsEditor · NginxTranslator · AlertSettings |
 
 ---
 
@@ -900,7 +979,7 @@ WebServerSync (SiteMapChanged를 듣거나 30초마다)
 | R7 | SQL은 `store`에만 |
 | R8 | 바깥 세계에 닿는 것 — `os/exec`·`syscall`·`archive/tar` import, 파일 읽고 쓰기(`os.WriteFile`…), 연결(`net.Dial`…, `http.Client`…) — 은 도구·저장·조립(`app`)에만 |
 | R9 | 종류 이름으로 분기하는 코드는 `kinds`에만 |
-| R10 | `web`·`cli`는 `model.ServiceSecrets`·`model.PasswordHash`·`model.WebSettings`·`model.BasicLogin`을 쓰지 않는다 (그것을 주고받는 인터페이스도) |
+| R10 | `web`·`cli`는 `model.ServiceSecrets`·`model.PasswordHash`·`model.WebSettings`·`model.BasicLogin`·`model.AlertChannel`을 쓰지 않는다 (그것을 주고받는 인터페이스도) |
 | R11 | 검사용 정규식은 `model`에만 |
 | R12 | 설정을 환경 변수에서 읽는 건(`os.Getenv`·`LookupEnv`) `app`·`cmd`뿐이다 — 그래서 설치 방식(`NARU_INSTALL`)에 따른 분기도 `app`에만 있다. 도구가 자식 프로세스(git)에 환경을 넘기는 `os.Environ`은 허용 |
 

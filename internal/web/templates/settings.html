@@ -47,6 +47,39 @@
   {{end}}
 </section>
 
+<section class="section" id="alerts">
+  <h2>{{t "alerts.heading"}}</h2>
+  <p class="desc">{{t "alerts.desc"}}</p>
+  {{if eq .Data.Form "alerts"}}{{template "error" .}}{{with .Data.AlertError}}<pre class="code why">{{.}}</pre>{{end}}{{end}}
+  {{if .Data.Channels}}
+  <ul class="rows">
+    {{range .Data.Channels}}
+    <li><b>{{.Name}}</b> <code class="muted">{{.Target}}</code>
+      <span class="spacer"></span>
+      <span class="chip">{{t (print "alerts.format." .Format)}}</span>{{if .HasSecret}}<span class="chip on">{{t "alerts.signed"}}</span>{{end}}
+      <form method="post" action="/settings/alerts/{{.ID}}/test"><button class="btn small" type="submit">{{t "alerts.test"}}</button></form>
+      <form method="post" action="/settings/alerts/{{.ID}}/delete"><button class="btn small quiet" type="submit" aria-label="{{t "alerts.remove"}} {{.Name}}">✕</button></form>
+    </li>
+    {{end}}
+  </ul>
+  {{else}}<p class="desc">{{t "alerts.none"}}</p>{{end}}
+  <form method="post" action="/settings/alerts" class="form">
+    <div class="pair">
+      <input class="input" name="name" value="{{.Data.AlertForm.Name}}" placeholder="{{t "alerts.name"}}" aria-label="{{t "alerts.name"}}">
+      <input class="input mono" name="url" value="{{.Data.AlertForm.URL}}" placeholder="https://discord.com/api/webhooks/…" aria-label="{{t "alerts.url"}}" required autocomplete="off">
+    </div>
+    <label class="field"><span>{{t "alerts.secret"}}</span>
+      <input class="input mono" type="password" name="secret" autocomplete="off"><small>{{t "alerts.secret.hint"}}</small></label>
+    <div><button class="btn primary" type="submit">{{t "alerts.add"}}</button></div>
+  </form>
+  {{with .Data.Deliveries}}
+  <h3 class="sub-heading">{{t "alerts.recent"}}</h3>
+  <ul class="rows">
+    {{range .}}<li><span class="dot {{if .OK}}ok{{else}}bad{{end}}"></span><span class="muted small">{{ago .At}}</span> <b>{{.ChannelName}}</b> {{.Title}}{{if not .OK}} <code class="muted">{{.Detail}}</code>{{end}}</li>{{end}}
+  </ul>
+  {{end}}
+</section>
+
 <section class="section">
   <h2>{{t "nav.language"}}</h2>
   <div class="seg">

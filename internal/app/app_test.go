@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -213,6 +214,16 @@ func newHarness(t *testing.T, envDomain string) *harness { return newHarnessIn(t
 
 // newHarnessIn은 설치 방식을 골라 띄운다 — "docker" 또는 "host".
 func newHarnessIn(t *testing.T, envDomain, install string) *harness {
+	return newHarnessWith(t, harnessOpts{envDomain: envDomain, install: install})
+}
+
+type harnessOpts struct {
+	envDomain, install string
+	watchEvery         time.Duration // 0이 아니면 지켜보기 고리를 이 간격으로 돌린다
+}
+
+func newHarnessWith(t *testing.T, o harnessOpts) *harness {
+	envDomain, install := o.envDomain, o.install
 	t.Helper()
 	lookup := func(_ context.Context, host string) ([]string, error) {
 		switch host {
@@ -232,7 +243,7 @@ func newHarnessIn(t *testing.T, envDomain, install string) *harness {
 		Builder: fakeRegistry{}, Puller: fakeRegistry{}, Images: fakeImages{},
 		Starter: h.docker, Remover: h.docker, Switch: h.docker, Watcher: h.docker, Ports: h.docker,
 		Code: fakeGit{}, DNS: netcheck.NewDNS(lookup), Stats: fakeStats{}, Sender: h.caddy, Certs: h.certs, Snippet: fakeSnippet{},
-		Clock: system.Clock{}, Random: system.Random{}, ReadyTimeout: 5 * time.Second,
+		Clock: system.Clock{}, Random: system.Random{}, ReadyTimeout: 5 * time.Second, WatchEvery: o.watchEvery,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -240,6 +251,10 @@ func newHarnessIn(t *testing.T, envDomain, install string) *harness {
 	h.app = a
 	runCtx, stop := context.WithCancel(ctx)
 	go a.syncWS(runCtx)
+	go a.alerts(runCtx)
+	if o.watchEvery > 0 {
+		go a.watch(runCtx)
+	}
 	h.srv = httptest.NewServer(a.handler)
 	t.Cleanup(func() {
 		h.srv.Close()
@@ -1016,6 +1031,138 @@ func TestUnknownInstallModeRefusesToStart(t *testing.T) {
 	_, err := OpenWith(Config{DataDir: t.TempDir(), Install: "kubernetes"}, slog.New(slog.NewTextHandler(io.Discard, nil)), Outside{Clock: system.Clock{}, Random: system.Random{}, Sender: &fakeCaddy{}})
 	if err == nil || !strings.Contains(err.Error(), "NARU_INSTALL") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+// ── 지켜보기 · 알리기 (M6-1) ──────────────────────
+
+// receiver는 알림을 받는 쪽인 척한다.
+type receiver struct {
+	mu   sync.Mutex
+	got  []map[string]any
+	sigs []string
+	srv  *httptest.Server
+}
+
+func newReceiver(t *testing.T) *receiver {
+	r := &receiver{}
+	r.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		var m map[string]any
+		json.NewDecoder(req.Body).Decode(&m)
+		r.mu.Lock()
+		r.got, r.sigs = append(r.got, m), append(r.sigs, req.Header.Get("X-Naru-Signature-256"))
+		r.mu.Unlock()
+	}))
+	t.Cleanup(r.srv.Close)
+	return r
+}
+
+func (r *receiver) events() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []string
+	for _, m := range r.got {
+		out = append(out, fmt.Sprint(m["event"]))
+	}
+	return out
+}
+
+func (r *receiver) waitFor(t *testing.T, event string) map[string]any {
+	t.Helper()
+	for i := 0; i < 300; i++ {
+		r.mu.Lock()
+		for _, m := range r.got {
+			if m["event"] == event {
+				r.mu.Unlock()
+				return m
+			}
+		}
+		r.mu.Unlock()
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("no %s alert arrived (got %v)", event, r.events())
+	return nil
+}
+
+func TestAlertAddressesFromTheScreen(t *testing.T) {
+	h := newHarness(t, "")
+	h.signedIn()
+	rcv := newReceiver(t)
+	code, loc, _ := h.post("/settings/alerts", url.Values{"name": {"ops"}, "url": {rcv.srv.URL + "/hook/very-secret-path"}, "secret": {"s3cret"}})
+	if code != http.StatusSeeOther || !strings.Contains(loc, "ok=alert-added") {
+		t.Fatalf("%d %q", code, loc)
+	}
+	_, _, body := h.get("/settings")
+	if !strings.Contains(body, "<b>ops</b>") || strings.Contains(body, "very-secret-path") || !strings.Contains(body, "서명") {
+		t.Fatal("the address is shown masked, with its format")
+	}
+	if _, loc, _ := h.post("/settings/alerts/1/test", nil); !strings.Contains(loc, "ok=alert-tested") {
+		t.Fatalf("test: %q", loc)
+	}
+	if m := rcv.waitFor(t, "test"); m["level"] != "info" || rcv.sigs[0] == "" {
+		t.Fatalf("a signed test arrives: %v %v", m, rcv.sigs)
+	}
+	if _, _, body := h.get("/settings"); !strings.Contains(body, "최근에 보낸 것") || !strings.Contains(body, "Naru 알림 시험") {
+		t.Fatal("the result is listed")
+	}
+	if code, _, body := h.post("/settings/alerts", url.Values{"url": {"ftp://example.com/x"}}); code != http.StatusBadRequest || !strings.Contains(body, "https://") {
+		t.Fatalf("a bad address is refused: %d", code)
+	}
+
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "gone", http.StatusGone) }))
+	defer dead.Close()
+	h.post("/settings/alerts", url.Values{"url": {dead.URL + "/x"}})
+	if code, _, body := h.post("/settings/alerts/2/test", nil); code != http.StatusBadGateway || !strings.Contains(body, "410") || strings.Contains(body, dead.URL+"/x") {
+		t.Fatalf("a failing address says why, without the full address: %d", code)
+	}
+	h.post("/settings/alerts/2/delete", nil)
+	if _, _, body := h.get("/settings"); strings.Contains(body, "/settings/alerts/2/test") {
+		t.Fatal("removed")
+	}
+}
+
+func TestAServiceThatStopsAndComesBackIsReported(t *testing.T) {
+	h := newHarnessWith(t, harnessOpts{install: "docker", watchEvery: 20 * time.Millisecond})
+	h.signedIn()
+	rcv := newReceiver(t)
+	h.post("/settings/alerts", url.Values{"url": {rcv.srv.URL + "/hook"}})
+	id := h.createService(model.NewService{Name: name("blog"), Kind: model.KindImage, Source: "me/blog", Alias: "naru-blog", Port: 80}, model.ServiceSecrets{})
+	store.NewLiveStates(h.app.db).Save(ctx, id, model.LiveState{Alias: "naru-blog", Instance: "naru-blog-1", Port: 80})
+	h.docker.set("naru-blog-1", model.ContainerState{Name: "naru-blog-1", Running: true, State: "running"})
+	time.Sleep(100 * time.Millisecond) // 건강한 모습을 먼저 본다
+
+	h.docker.set("naru-blog-1", model.ContainerState{Name: "naru-blog-1", State: "exited", ExitCode: 1})
+	down := rcv.waitFor(t, "service.down")
+	if down["service"] != "blog" || down["level"] != "problem" || !strings.Contains(fmt.Sprint(down["detail"]), "멈췄어요") {
+		t.Fatalf("%v", down)
+	}
+	h.docker.set("naru-blog-1", model.ContainerState{Name: "naru-blog-1", Running: true, State: "running"})
+	if up := rcv.waitFor(t, "service.up"); up["level"] != "recovery" {
+		t.Fatalf("%v", up)
+	}
+	time.Sleep(100 * time.Millisecond)
+	count := 0
+	for _, e := range rcv.events() {
+		if e == "service.down" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("one outage, one alert: %v", rcv.events())
+	}
+}
+
+func TestAFailedDeployIsReported(t *testing.T) {
+	h := newHarness(t, "")
+	h.signedIn()
+	rcv := newReceiver(t)
+	h.post("/settings/alerts", url.Values{"url": {rcv.srv.URL + "/hook"}})
+	// 저장소에 없는 빌드 경로 — 배포가 확실히 실패한다
+	id := h.createService(model.NewService{Name: name("app"), Kind: model.KindRepo, Source: "https://github.com/me/app", Branch: "main", BuildPath: "no/such/folder"}, model.ServiceSecrets{})
+	h.post(fmt.Sprintf("/services/%d/deploy", id), nil)
+	h.app.wait()
+	if m := rcv.waitFor(t, "deploy.failed"); m["service"] != "app" || m["level"] != "problem" {
+		t.Fatalf("%v", m)
 	}
 }
 

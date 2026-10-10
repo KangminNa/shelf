@@ -54,6 +54,7 @@ type Deps struct {
 	DNS         contract.DNSChecker
 	WebSettings contract.WebSettingsEditor
 	Nginx       contract.NginxTranslator
+	Alerts      contract.AlertSettings
 	Certs       contract.CertificateReader
 	Clock       contract.Clock
 	Log         *slog.Logger
@@ -125,6 +126,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /settings", s.settingsPage)
 	s.mux.HandleFunc("POST /settings/password", s.changePassword)
 	s.mux.HandleFunc("POST /settings/domain", s.changeDomain)
+	s.mux.HandleFunc("POST /settings/alerts", s.addAlert)
+	s.mux.HandleFunc("POST /settings/alerts/{cid}/delete", s.removeAlert)
+	s.mux.HandleFunc("POST /settings/alerts/{cid}/test", s.testAlert)
 
 	s.mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		s.render(w, r, http.StatusNotFound, "notfound", view{})

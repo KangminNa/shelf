@@ -22,15 +22,18 @@ import (
 	"github.com/KangminNa/naru/internal/events"
 	"github.com/KangminNa/naru/internal/files"
 	"github.com/KangminNa/naru/internal/git"
+	"github.com/KangminNa/naru/internal/httppost"
 	"github.com/KangminNa/naru/internal/kinds"
 	"github.com/KangminNa/naru/internal/model"
 	"github.com/KangminNa/naru/internal/netcheck"
+	"github.com/KangminNa/naru/internal/notify"
 	"github.com/KangminNa/naru/internal/services"
 	"github.com/KangminNa/naru/internal/settings"
 	"github.com/KangminNa/naru/internal/stats"
 	"github.com/KangminNa/naru/internal/store"
 	"github.com/KangminNa/naru/internal/system"
 	"github.com/KangminNa/naru/internal/views"
+	"github.com/KangminNa/naru/internal/watch"
 	"github.com/KangminNa/naru/internal/web"
 	"github.com/KangminNa/naru/internal/webhook"
 	"github.com/KangminNa/naru/internal/webserver"
@@ -164,8 +167,11 @@ type Outside struct {
 	Sender  contract.ConfigSender // 관리 소켓 확인(AdminSocketGuard)은 app이 늘 감싼다
 	Certs   contract.CertificateReader
 	Snippet contract.SnippetCompiler // 고급 칸의 Caddyfile을 바꿔 준다 (Caddy 관리 소켓)
-	Clock   contract.Clock
-	Random  contract.RandomTokens
+	Alerts  contract.AlertSender     // 알림을 보낸다 (HTTP)
+
+	WatchEvery time.Duration // 지켜보는 간격 (0이면 30초)
+	Clock      contract.Clock
+	Random     contract.RandomTokens
 
 	ReadyTimeout time.Duration // 새 컨테이너 응답을 기다리는 시간 (0이면 60초)
 }
@@ -183,6 +189,7 @@ func RealOutside(cfg Config) Outside {
 		Sender:  caddy.NewSocketSender(cfg.CaddySocket),
 		Certs:   caddy.NewCertificateFiles(cfg.CaddyCerts),
 		Snippet: caddy.NewAdaptCompiler(cfg.CaddySocket),
+		Alerts:  httppost.AlertPoster{},
 		Clock:   system.Clock{}, Random: system.Random{},
 	}
 }
@@ -199,6 +206,8 @@ type App struct {
 	stop   context.CancelFunc
 	wait   func() // 진행 중인 배포를 기다린다
 	syncWS func(context.Context)
+	alerts func(context.Context) // 알림 보내는 일꾼
+	watch  func(context.Context) // 지켜보는 고리
 	work   files.TempFolders
 	past   contract.DeployHistoryStore
 
@@ -218,6 +227,9 @@ func OpenWith(cfg Config, log *slog.Logger, out Outside) (*App, error) {
 	}
 	if out.Certs == nil { // 테스트처럼 가짜를 주지 않으면 웹서버 저장소를 읽는다
 		out.Certs = caddy.NewCertificateFiles(cfg.CaddyCerts)
+	}
+	if out.Alerts == nil {
+		out.Alerts = httppost.AlertPoster{}
 	}
 	if out.Snippet == nil {
 		out.Snippet = caddy.NewAdaptCompiler(cfg.CaddySocket)
@@ -325,6 +337,17 @@ func (a *App) assemble() error {
 		Services: serviceStore, Store: webStore, Compiler: out.Snippet, Hasher: websettings.BcryptHasher{}, Sync: sync,
 	})
 
+	// J·K. 지켜보기 · 알리기 — 지켜보기가 이벤트를 내고, 알리기가 듣고 보낸다
+	alertSettings, runAlerts := notify.NewAlerts(notify.Parts{
+		Channels: store.NewChannels(db), Deliveries: store.NewDeliveries(db), Sender: out.Alerts,
+		Services: serviceStore, Events: bus, Clock: out.Clock, Log: a.log,
+	})
+	_, runWatch := watch.NewHealthWatcher(watch.Parts{
+		Services: serviceStore, Kinds: lookup, Containers: out.Watcher, Ports: out.Ports, Deployer: deployer,
+		WebServer: sync, Certs: out.Certs, Admin: adminDomain, Clock: out.Clock, Events: bus, Every: out.WatchEvery, Log: a.log,
+	})
+	a.alerts, a.watch = runAlerts, runWatch
+
 	// H. 보여주기
 	viewer := views.NewServiceViewer(views.Parts{
 		Services: serviceStore, Secrets: secrets, History: history, Containers: out.Watcher, Kinds: lookup,
@@ -335,7 +358,7 @@ func (a *App) assemble() error {
 		Login: login, Accounts: a.Accounts, SetupKey: a.key, AdminDomain: adminDomain, CertEmail: certEmail, Setup: setup,
 		Launcher: launcher, Editor: editor, Viewer: viewer, Deployer: deployer, Control: control, Hooks: hooks,
 		Stats: out.Stats, WebServer: sync, DNS: out.DNS, Certs: out.Certs, Clock: out.Clock, Log: a.log,
-		WebSettings: webSettings, Nginx: websettings.NginxReader{}, DataDir: cfg.DataDir, Version: cfg.Version,
+		WebSettings: webSettings, Nginx: websettings.NginxReader{}, Alerts: alertSettings, DataDir: cfg.DataDir, Version: cfg.Version,
 	})
 	if err != nil {
 		return err
@@ -368,6 +391,8 @@ func (a *App) Run(ctx context.Context) error {
 		go sampler.Run(ctx, 5*time.Second)
 	}
 	go a.syncWS(ctx)
+	go a.alerts(ctx)
+	go a.watch(ctx)
 
 	httpServer := &http.Server{
 		Addr:              a.cfg.Listen,

@@ -433,3 +433,54 @@ func TestLiveStateKeepsTheInstanceIP(t *testing.T) {
 		t.Fatalf("%+v", s.Live)
 	}
 }
+
+func TestAlertChannelsAndDeliveries(t *testing.T) {
+	db := open(t, t.TempDir())
+	ch := NewChannels(db)
+	id, err := ch.Add(ctx, model.AlertChannel{Name: "team", URL: "https://discord.com/api/webhooks/1/x", Secret: "s"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	all, _ := ch.List(ctx)
+	if len(all) != 1 || all[0].ID != id || all[0].Secret != "s" {
+		t.Fatalf("%+v", all)
+	}
+	dl := NewDeliveries(db)
+	for i := 0; i < 205; i++ {
+		dl.Save(ctx, model.Delivery{Channel: id, ChannelName: "team", Event: "service.down", Title: "t", OK: i%2 == 0, At: time.Unix(int64(1790000000+i), 0)})
+	}
+	recent, _ := dl.Recent(ctx, 300)
+	if len(recent) != 200 || recent[0].At.Unix() != 1790000204 {
+		t.Fatalf("only the latest 200, newest first: %d %v", len(recent), recent[0].At)
+	}
+	ch.Remove(ctx, id)
+	if all, _ := ch.List(ctx); len(all) != 0 {
+		t.Fatal("removed")
+	}
+	if recent, _ := dl.Recent(ctx, 10); len(recent) != 10 || recent[0].ChannelName != "team" {
+		t.Fatal("results stay readable after the channel is gone")
+	}
+}
+
+func TestV1AlertChannelsComeAlong(t *testing.T) {
+	dir := t.TempDir()
+	writeV1(t, dir, "notify.db",
+		`CREATE TABLE channels (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL DEFAULT 'webhook', url TEXT NOT NULL, secret TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, description TEXT NOT NULL DEFAULT '')`,
+		`INSERT INTO channels (url, secret, description) VALUES ('https://discord.com/api/webhooks/1/x', '', 'team chat')`,
+		`INSERT INTO channels (url, secret, enabled) VALUES ('https://ops.example.com/hook', 'sig', 1)`,
+		`INSERT INTO channels (url, enabled) VALUES ('https://old.example.com/off', 0)`,
+		`INSERT INTO channels (url) VALUES ('not a url')`,
+	)
+	db := open(t, dir)
+	r, err := ImportV1(ctx, db, dir)
+	if err != nil || r.Channels != 2 {
+		t.Fatalf("%+v %v", r, err)
+	}
+	all, _ := NewChannels(db).List(ctx)
+	if len(all) != 2 || all[0].Name != "team chat" || all[1].Name != "ops.example.com" || all[1].Secret != "sig" {
+		t.Fatalf("enabled, valid channels come along: %+v", all)
+	}
+	if again, _ := ImportV1(ctx, db, dir); again.Channels != 0 {
+		t.Fatal("once")
+	}
+}

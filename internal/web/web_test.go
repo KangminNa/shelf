@@ -46,7 +46,7 @@ func TestMessagesAreComplete(t *testing.T) {
 func TestInputErrorCodesHaveMessages(t *testing.T) {
 	for _, code := range []string{"name", "nametaken", "domain", "domaintaken", "admindomain", "repo", "branch", "image",
 		"upstream", "path", "port", "env", "volumes", "kind", "email", "username",
-		"header", "ip", "route", "pathtarget", "pathself", "advanced", "weakpassword"} {
+		"header", "ip", "route", "pathtarget", "pathself", "advanced", "weakpassword", "alerturl"} {
 		if _, ok := messages["ko"]["err."+code]; !ok {
 			t.Errorf("err.%s has no message", code)
 		}

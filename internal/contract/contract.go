@@ -328,6 +328,38 @@ type LoginHasher interface {
 	Hash(password string) (string, error)
 }
 
+// ── J. 지켜보기 ────────────────────────────
+
+// HealthWatcher는 지켜보기가 마지막으로 본 것을 알려준다. 도는 고리(30초마다)는 만들 때 함께 돌려준다.
+// 바뀔 때만 이벤트(ServiceDown·ServiceUp·WebServerDown …)를 낸다 — 보내는 일은 알리기가 듣고 한다.
+type HealthWatcher interface {
+	Snapshot() model.WatchSnapshot
+}
+
+// ── K. 알리기 ─────────────────────────────
+
+// AlertSettings는 알림 주소를 등록·삭제·시험하고, 보낸 결과를 보여준다. 화면에는 주소를 가린 모습만 준다.
+type AlertSettings interface {
+	Channels(ctx context.Context) ([]model.ChannelView, error)
+	Add(ctx context.Context, in model.ChannelInput) error
+	Remove(ctx context.Context, id model.ChannelID) error
+	Test(ctx context.Context, id model.ChannelID) error
+	Deliveries(ctx context.Context, n int) ([]model.Delivery, error)
+}
+
+// ChannelStore는 알림 주소를 저장한다. 주소와 시크릿은 비밀이다.
+type ChannelStore interface {
+	List(ctx context.Context) ([]model.AlertChannel, error)
+	Add(ctx context.Context, c model.AlertChannel) (model.ChannelID, error)
+	Remove(ctx context.Context, id model.ChannelID) error
+}
+
+// DeliveryLog는 보낸 결과를 남긴다 (최근 것만).
+type DeliveryLog interface {
+	Save(ctx context.Context, d model.Delivery) error
+	Recent(ctx context.Context, n int) ([]model.Delivery, error)
+}
+
 // ── H. 보여주기 ────────────────────────────
 
 // ServiceViewer는 화면에 보여줄 서비스 모습을 모은다. 비밀(토큰·비밀번호)은 담지 않는다.
@@ -412,6 +444,11 @@ type SiteFiles interface {
 	Exists(f model.SiteFolder) bool
 	Prune(site model.ServiceName, keep int, live model.DeploymentID)
 	RemoveSite(site model.ServiceName) error
+}
+
+// AlertSender는 알림 하나를 그 주소의 형식(Discord·Slack·일반 JSON)으로 보낸다. 오래 걸리면 끊는다.
+type AlertSender interface {
+	Send(ctx context.Context, ch model.AlertChannel, a model.Alert) error
 }
 
 // SnippetCompiler는 고급 칸의 Caddyfile 지시어(사이트 블록 안쪽)를 웹서버 형식으로 바꾼다.

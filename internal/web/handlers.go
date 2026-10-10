@@ -269,6 +269,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 var okKeys = map[string]string{
 	"setup": "ok.setup", "password": "ok.password", "domain": "ok.domain",
 	"queued": "ok.queued", "saved": "ok.saved", "redeploy": "ok.redeploy", "stopped": "ok.stopped", "started": "ok.started",
+	"alert-added": "ok.alertadded", "alert-removed": "ok.alertremoved", "alert-tested": "ok.alerttested",
 	"domain-added": "ok.domainadded", "domain-removed": "ok.domainremoved", "deleted": "ok.deleted", "web": "ok.web",
 }
 
@@ -282,11 +283,20 @@ type settingsScreen struct {
 	DataDir     string
 	Check       *model.DNSAnswer
 	Cert        *certRow // 관리 주소의 인증서
+	Channels    []model.ChannelView
+	Deliveries  []model.Delivery
+	AlertError  string // 시험으로 보내지 못한 이유
+	AlertForm   alertForm
 }
+
+type alertForm struct{ Name, URL string }
 
 func (s *Server) settingsScreen(r *http.Request) settingsScreen {
 	domain, fixed := s.adminDomainForm(r)
-	return settingsScreen{Domain: domain, Email: s.certEmail(r), FixedDomain: fixed, DataDir: s.d.DataDir, Cert: s.adminCert(r.Context())}
+	d := settingsScreen{Domain: domain, Email: s.certEmail(r), FixedDomain: fixed, DataDir: s.d.DataDir, Cert: s.adminCert(r.Context())}
+	d.Channels, _ = s.d.Alerts.Channels(r.Context())
+	d.Deliveries, _ = s.d.Alerts.Deliveries(r.Context(), 10)
+	return d
 }
 
 func (s *Server) settingsPage(w http.ResponseWriter, r *http.Request) {

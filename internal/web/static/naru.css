@@ -99,6 +99,7 @@ ul.plain li { margin: 2px 0; overflow-wrap: anywhere; }
 .pair { display: flex; gap: 8px; flex-wrap: wrap; }
 .pair .input { flex: 1 1 180px; width: auto; }
 pre.code.why { margin-top: -8px; }
+.sub-heading { margin: 20px 0 6px; font-size: 14px; color: var(--text-2); }
 .check { margin: 0; padding: 11px 14px; border-radius: 12px; font-size: 14px; display: flex; flex-direction: column; gap: 2px; }
 .check.ok { background: var(--ok-soft); color: var(--ok); }
 .check.warn { background: var(--warn-soft); color: var(--warn); }
