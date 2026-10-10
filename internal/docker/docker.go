@@ -34,13 +34,7 @@ func New(socketPath string) *Client {
 type State string
 
 const (
-	Running    State = "running"
-	Restarting State = "restarting" // 계속 죽었다 살아나는 중 — 대개 앱이 바로 죽는다
-	Exited     State = "exited"
-	Created    State = "created"
-	Paused     State = "paused"
-	Dead       State = "dead"
-	Missing    State = "missing" // 컨테이너가 없다
+	Running State = "running"
 )
 
 type Container struct {
@@ -51,15 +45,6 @@ type Container struct {
 }
 
 // Ping은 Docker에 닿는가.
-func (c *Client) ping(ctx context.Context) error {
-	res, err := c.get(ctx, "/_ping")
-	if err != nil {
-		return err
-	}
-	res.Body.Close()
-	return nil
-}
-
 // Containers는 모든 컨테이너를 이름(앞의 / 없이) → 상태로 돌려준다. 앱 수와 상관없이 한 번 부른다.
 func (c *Client) containers(ctx context.Context) (map[string]Container, error) {
 	res, err := c.get(ctx, "/containers/json?all=1")

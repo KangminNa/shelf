@@ -42,7 +42,7 @@ func TestContainers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got["shelf-blog"].State != Running || got["naru-api"].State != Restarting || len(got) != 2 {
+	if got["shelf-blog"].State != Running || got["naru-api"].State != "restarting" || len(got) != 2 {
 		t.Fatalf("%+v", got)
 	}
 }
@@ -57,7 +57,7 @@ func TestErrorsCarryTheReason(t *testing.T) {
 }
 
 func TestUnreachableDocker(t *testing.T) {
-	if err := New("/nonexistent/docker.sock").ping(context.Background()); err == nil {
+	if _, err := New("/nonexistent/docker.sock").containers(context.Background()); err == nil {
 		t.Fatal("a missing socket is an error")
 	}
 }

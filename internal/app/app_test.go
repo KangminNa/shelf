@@ -168,12 +168,6 @@ func (c *fakeCaddy) Ping(context.Context) error {
 	return c.fail
 }
 
-func (c *fakeCaddy) count() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return len(c.loads)
-}
-
 func (c *fakeCaddy) last() string {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -223,7 +217,7 @@ func newHarness(t *testing.T, envDomain string) *harness {
 	h.app = a
 	runCtx, stop := context.WithCancel(ctx)
 	go a.syncWS(runCtx)
-	h.srv = httptest.NewServer(a.Handler())
+	h.srv = httptest.NewServer(a.handler)
 	t.Cleanup(func() {
 		h.srv.Close()
 		stop()
@@ -341,7 +335,7 @@ func name(s string) model.ServiceName {
 // createAccount는 마법사를 계정 단계까지 지난다.
 func (h *harness) createAccount() {
 	h.t.Helper()
-	code, loc, _ := h.post("/setup", url.Values{"token": {h.app.SetupKey()}, "username": {"admin"}, "password": {"longenough"}, "password2": {"longenough"}})
+	code, loc, _ := h.post("/setup", url.Values{"token": {h.app.key.Value()}, "username": {"admin"}, "password": {"longenough"}, "password2": {"longenough"}})
 	if code != http.StatusSeeOther || loc != "/setup/domain" {
 		h.t.Fatalf("account step: %d → %q", code, loc)
 	}
@@ -371,7 +365,7 @@ func TestFreshInstallSendsEveryoneToSetup(t *testing.T) {
 	if code, _, _ := h.get("/setup?token=wrong"); code != http.StatusForbidden {
 		t.Fatalf("a wrong token is forbidden, got %d", code)
 	}
-	if code, _, body := h.get("/setup?token=" + h.app.SetupKey()); code != http.StatusOK || !strings.Contains(body, `name="password"`) {
+	if code, _, body := h.get("/setup?token=" + h.app.key.Value()); code != http.StatusOK || !strings.Contains(body, `name="password"`) {
 		t.Fatal("the right token shows the account form")
 	}
 	h.waitFor("unknown hosts reach the admin screen before setup", func(cfg string) bool {

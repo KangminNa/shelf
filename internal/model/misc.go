@@ -26,8 +26,7 @@ type HookRequest struct {
 	Headers map[string]string // 소문자 키
 	Query   map[string]string
 	Body    []byte
-	Ref     string // push가 가리키는 ref ("refs/heads/main"), 없으면 빈 값
-	Ping    bool
+	Ref     string // push가 가리키는 ref ("refs/heads/main") — 받는 쪽이 본문에서 읽어 채운다
 }
 
 // HookResult는 웹훅을 처리한 결과다.

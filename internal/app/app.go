@@ -270,12 +270,6 @@ func (a *App) assemble() error {
 	return nil
 }
 
-// Handler는 관리 화면이다 (테스트는 이것을 그대로 띄운다).
-func (a *App) Handler() http.Handler { return a.handler }
-
-// SetupKey는 이번 실행의 첫 설정 열쇠다.
-func (a *App) SetupKey() string { return a.key.Value() }
-
 // Close는 진행 중인 배포를 멈추고 기다린 뒤 DB를 닫는다.
 func (a *App) Close() error {
 	a.stop()

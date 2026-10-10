@@ -96,7 +96,7 @@ func (h hookReceiver) Receive(ctx context.Context, id model.ServiceID, r model.H
 	record := func(result string) {
 		h.logs.Save(ctx, id, model.HookLog{At: h.clock.Now(), Result: result})
 	}
-	if r.Ping || r.Headers["x-github-event"] == "ping" {
+	if r.Headers["x-github-event"] == "ping" {
 		record("ping")
 		return model.HookResult{Status: http.StatusOK, Message: "pong"}
 	}

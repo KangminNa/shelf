@@ -49,7 +49,6 @@ type CertificateState struct {
 	Issued   bool
 	NotAfter time.Time
 	Issuer   string
-	Failed   string // 실패했다면 사람 말 이유 (M4-2)
 }
 
 // Usable은 지금 쓸 수 있는 인증서가 있는가 — 있고, 아직 끝나지 않았다.
