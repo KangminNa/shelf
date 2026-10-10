@@ -3,6 +3,8 @@ package kinds
 import (
 	"context"
 	"fmt"
+	"net"
+	"strconv"
 	"strings"
 	"time"
 
@@ -132,15 +134,16 @@ func (w ContainerSwapper) Swap(ctx context.Context, req model.SwapRequest, v mod
 	}
 	name := fmt.Sprintf("%s-%d", alias, req.Deployment)
 	log.Step("새 컨테이너 시작", "starting the new container")
-	if err := w.t.Starter.Start(ctx, model.ContainerSpec{
+	ip, err := w.t.Starter.Start(ctx, model.ContainerSpec{
 		Name: name, Image: v.Image, Env: secrets.Env.List(), Binds: secrets.Volumes.List(),
 		Network: w.t.Network, Aliases: []string{alias}, Service: s.ID, Deploy: req.Deployment,
-	}); err != nil {
+	})
+	if err != nil {
 		return model.LiveState{}, err
 	}
 
 	log.Step(fmt.Sprintf("포트 %d 응답 기다리기", port), fmt.Sprintf("waiting for port %d", port))
-	if err := w.waitReady(ctx, name, port); err != nil {
+	if err := w.waitReady(ctx, name, ip, port); err != nil {
 		if logs, lerr := w.t.Watcher.Logs(context.Background(), name, 30); lerr == nil && strings.TrimSpace(logs) != "" {
 			fmt.Fprintf(log, "— 컨테이너 출력 마지막 30줄 / last 30 lines —\n%s\n", logs)
 		}
@@ -148,9 +151,13 @@ func (w ContainerSwapper) Swap(ctx context.Context, req model.SwapRequest, v mod
 		return model.LiveState{}, fmt.Errorf("%w — 지금 돌던 것은 그대로 둡니다 / the running version is untouched", err)
 	}
 	fmt.Fprintln(log, "응답함 / answering")
+	return model.LiveState{Alias: alias, Instance: name, InstanceIP: ip, Port: port}, nil
+}
 
+// Retire는 웹서버가 새 것(keep)을 가리킨 뒤에 부른다 — 이 서비스로 돌던 나머지 컨테이너를 내린다.
+func (w ContainerSwapper) Retire(ctx context.Context, s model.Service, keep model.LiveState, log contract.DeployLogWriter) {
 	log.Step("옛 컨테이너 내리기", "retiring the old container")
-	for _, old := range w.older(ctx, s, name) {
+	for _, old := range w.older(ctx, s, keep.Instance) {
 		w.t.Switch.TurnOff(ctx, old)
 		if err := w.t.Remover.Remove(ctx, old); err != nil {
 			fmt.Fprintf(log, "%s: %v\n", old, err)
@@ -158,11 +165,15 @@ func (w ContainerSwapper) Swap(ctx context.Context, req model.SwapRequest, v mod
 			fmt.Fprintf(log, "%s 내림 / removed\n", old)
 		}
 	}
-	return model.LiveState{Alias: alias, Instance: name, Port: port}, nil
 }
 
 // waitReady는 새 컨테이너가 port에서 연결을 받을 때까지 기다린다. 먼저 죽으면 바로 실패한다.
-func (w ContainerSwapper) waitReady(ctx context.Context, name string, port model.Port) error {
+// 응답은 IP로 확인한다 — 설치형(호스트)에서는 컨테이너 이름을 풀 수 없다. IP를 모르면 이름으로.
+func (w ContainerSwapper) waitReady(ctx context.Context, name, ip string, port model.Port) error {
+	reach := ip
+	if reach == "" {
+		reach = name
+	}
 	ctx, cancel := context.WithTimeout(ctx, w.t.ReadyTimeout)
 	defer cancel()
 	wait := int(w.t.ReadyTimeout.Seconds())
@@ -171,7 +182,7 @@ func (w ContainerSwapper) waitReady(ctx context.Context, name string, port model
 			return fmt.Errorf("컨테이너가 바로 멈췄어요 (종료 코드 %d) / the container exited (code %d)", st.ExitCode, st.ExitCode)
 		}
 		dctx, dcancel := context.WithTimeout(ctx, 2*time.Second)
-		err := w.t.Ports.Answers(dctx, name, port)
+		err := w.t.Ports.Answers(dctx, reach, port)
 		dcancel()
 		if err == nil {
 			return nil
@@ -205,13 +216,26 @@ func (w ContainerSwapper) older(ctx context.Context, s model.Service, keep strin
 
 // ── 보낼 곳 · 상태 ─────────────────────────
 
-// ContainerDestination은 서비스 별칭:앱 포트다. 아직 모르면 비어 있다.
-type ContainerDestination struct{}
+// ContainerAliasDestination은 서비스 별칭:앱 포트다 (Docker 방식 — 웹서버가 같은 네트워크에 있다).
+// 새 컨테이너가 같은 별칭으로 붙으니 배포 때 웹서버 설정이 바뀌지 않는다. 아직 모르면 비어 있다.
+type ContainerAliasDestination struct{}
 
-func (ContainerDestination) Find(s model.Service) model.Destination {
+func (ContainerAliasDestination) Find(s model.Service) model.Destination {
 	d := model.Destination{Container: true}
 	if s.Live.Alias != "" && s.Port != 0 {
 		d.Address = fmt.Sprintf("%s:%d", s.Live.Alias, s.Port)
+	}
+	return d
+}
+
+// ContainerIPDestination은 요청을 받는 컨테이너의 IP:앱 포트다 (설치형 — 웹서버가 호스트에 있다).
+// IP는 재시작하면 바뀔 수 있어 사이트 지도를 그릴 때마다 지금 IP로 덮어쓴다. 모르면 비어 있다(웹서버가 502).
+type ContainerIPDestination struct{}
+
+func (ContainerIPDestination) Find(s model.Service) model.Destination {
+	d := model.Destination{Container: true}
+	if s.Live.InstanceIP != "" && s.Port != 0 {
+		d.Address = net.JoinHostPort(s.Live.InstanceIP, strconv.Itoa(int(s.Port)))
 	}
 	return d
 }

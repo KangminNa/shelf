@@ -59,28 +59,42 @@ func (i Images) Exists(ctx context.Context, id model.ImageID) bool {
 
 func (i Images) Remove(ctx context.Context, ref string) error { return i.c.removeImage(ctx, ref) }
 
-// Containers는 컨테이너를 띄우고·없애고·멈추고·켜고, 상태를 본다.
-type Containers struct{ c *Client }
+// Containers는 컨테이너를 띄우고·없애고·멈추고·켜고, 상태를 본다. network는 앱 컨테이너가 붙는 네트워크다.
+type Containers struct {
+	c       *Client
+	network string
+}
 
-func NewContainers(c *Client) Containers { return Containers{c} }
+func NewContainers(c *Client, network string) Containers { return Containers{c, network} }
 
-// Start는 만들고 띄운다. 띄우지 못하면 만든 것을 지운다.
-func (k Containers) Start(ctx context.Context, s model.ContainerSpec) error {
-	_, err := k.c.create(ctx, Spec{
+// Start는 만들고 띄운 뒤 앱 네트워크에서의 IP를 돌려준다. 네트워크가 없으면 만든다.
+// 띄우지 못하면 만든 것을 지운다.
+func (k Containers) Start(ctx context.Context, s model.ContainerSpec) (string, error) {
+	spec := Spec{
 		Name: s.Name, Image: string(s.Image), Env: s.Env, Binds: s.Binds, Network: s.Network, Aliases: s.Aliases,
 		Labels: map[string]string{
 			labelService:    strconv.FormatInt(int64(s.Service), 10),
 			labelDeployment: strconv.FormatInt(int64(s.Deploy), 10),
 		},
-	})
-	if err != nil {
-		return err
+	}
+	// 네트워크가 없으면 먼저 만든다. Docker는 없는 네트워크로도 create를 받아 두고 start에서야 실패한다 (dockerd 27에서 확인).
+	if s.Network != "" {
+		if err := k.c.ensureNetwork(ctx, s.Network); err != nil {
+			return "", err
+		}
+	}
+	if _, err := k.c.create(ctx, spec); err != nil {
+		return "", err
 	}
 	if err := k.c.start(ctx, s.Name); err != nil {
 		k.c.remove(context.Background(), s.Name)
-		return err
+		return "", err
 	}
-	return nil
+	in, err := k.c.inspect(ctx, s.Name)
+	if err != nil {
+		return "", err
+	}
+	return in.IPs[s.Network], nil
 }
 
 // Remove는 없앤다. 이미 없으면 괜찮다.
@@ -104,7 +118,7 @@ func (k Containers) All(ctx context.Context) (model.ContainerStates, error) {
 	}
 	out := make(model.ContainerStates, len(raw))
 	for name, c := range raw {
-		out[name] = model.ContainerState{Name: name, Running: c.State == Running, State: string(c.State), Status: c.Status}
+		out[name] = model.ContainerState{Name: name, Running: c.State == Running, State: string(c.State), Status: c.Status, IP: c.IPs[k.network]}
 	}
 	return out, nil
 }
@@ -114,7 +128,7 @@ func (k Containers) One(ctx context.Context, name string) (model.ContainerState,
 	if err != nil {
 		return model.ContainerState{}, err
 	}
-	return model.ContainerState{Name: name, Running: in.Running, State: in.Status, ExitCode: in.ExitCode}, nil
+	return model.ContainerState{Name: name, Running: in.Running, State: in.Status, ExitCode: in.ExitCode, IP: in.IPs[k.network]}, nil
 }
 
 func (k Containers) Logs(ctx context.Context, name string, lines int) (string, error) {

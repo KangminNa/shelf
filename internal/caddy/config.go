@@ -27,7 +27,8 @@ type caddyConfig struct {
 	Admin struct {
 		Listen string `json:"listen"`
 	} `json:"admin"`
-	Apps struct {
+	Storage *module `json:"storage,omitempty"`
+	Apps    struct {
 		HTTP struct {
 			Servers map[string]server `json:"servers"`
 		} `json:"http"`
@@ -112,6 +113,9 @@ func (JSONWriter) Write(p model.SiteMap) ([]byte, error) {
 
 	var c caddyConfig
 	c.Admin.Listen = SocketListen(p.AdminSocket)
+	if p.Storage != "" {
+		c.Storage = &module{"module": "file_system", "root": p.Storage}
+	}
 	c.Apps.HTTP.Servers = map[string]server{}
 
 	// :80 — 모든 주소. HTTPS로 넘기는 것은 지도가 그러라고 한 주소뿐이다 (인증서가 있을 때만 — 불변식 4).

@@ -128,6 +128,7 @@ type ContainerState struct {
 	State    string // running · restarting · exited · created · paused · dead
 	Status   string // "Up 3 hours"
 	ExitCode int
+	IP       string // 앱 네트워크에서의 지금 IP (모르면 빈 값)
 }
 
 // ContainerStates는 이름 → 상태. nil이면 Docker를 읽지 못했다.

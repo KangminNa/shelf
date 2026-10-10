@@ -16,7 +16,7 @@ type Services struct{ db *DB }
 func NewServices(db *DB) Services { return Services{db} }
 
 const serviceColumns = `id, name, kind, source, branch, build_path, folder, upstream, port, auto_deploy,
-	container, instance, release, stopped, hook_at, hook_result`
+	container, instance, release, stopped, hook_at, hook_result, instance_ip`
 
 func scanService(row interface{ Scan(...any) error }) (model.Service, error) {
 	var (
@@ -27,7 +27,7 @@ func scanService(row interface{ Scan(...any) error }) (model.Service, error) {
 		alias, inst, release string
 	)
 	err := row.Scan(&id, &name, &kind, &s.Source, &s.Branch, &s.BuildPath, &s.Folder, &s.External, &port, &s.AutoDeploy,
-		&alias, &inst, &release, &s.Live.Stopped, &hookAt, &hookRes)
+		&alias, &inst, &release, &s.Live.Stopped, &hookAt, &hookRes, &s.Live.InstanceIP)
 	if err != nil {
 		return s, err
 	}
@@ -188,8 +188,8 @@ type LiveStates struct{ db *DB }
 func NewLiveStates(db *DB) LiveStates { return LiveStates{db} }
 
 func (l LiveStates) Save(ctx context.Context, id model.ServiceID, s model.LiveState) error {
-	_, err := l.db.sql.ExecContext(ctx, `UPDATE services SET container = ?, instance = ?, release = ?, port = CASE WHEN ? > 0 THEN ? ELSE port END, stopped = ? WHERE id = ?`,
-		s.Alias, s.Instance, s.Release, int(s.Port), int(s.Port), s.Stopped, int64(id))
+	_, err := l.db.sql.ExecContext(ctx, `UPDATE services SET container = ?, instance = ?, instance_ip = ?, release = ?, port = CASE WHEN ? > 0 THEN ? ELSE port END, stopped = ? WHERE id = ?`,
+		s.Alias, s.Instance, s.InstanceIP, s.Release, int(s.Port), int(s.Port), s.Stopped, int64(id))
 	return err
 }
 

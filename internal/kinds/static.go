@@ -59,6 +59,10 @@ func (w FolderSwapper) Swap(ctx context.Context, req model.SwapRequest, v model.
 	return model.LiveState{Release: target.ReleaseName()}, nil
 }
 
+// Retire는 할 일이 없다 — 웹서버가 새 배포본을 가리키면 옛 것은 그냥 남는다 (정리는 OldVersionCleaner가).
+func (FolderSwapper) Retire(context.Context, model.Service, model.LiveState, contract.DeployLogWriter) {
+}
+
 // FolderDestination은 웹서버 컨테이너에서 본 배포본 폴더다. 아직 배포하지 않았으면 비어 있다.
 type FolderDestination struct{ shown string }
 

@@ -15,3 +15,6 @@ Thumbs.db
 # 임시
 tmp/
 *.log
+
+# 빌드 결과
+dist/

@@ -58,11 +58,12 @@ type fakeDocker struct {
 	hold   chan struct{}
 }
 
-func (d *fakeDocker) Start(_ context.Context, s model.ContainerSpec) error {
+func (d *fakeDocker) Start(_ context.Context, s model.ContainerSpec) (string, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.states[s.Name] = model.ContainerState{Name: s.Name, Running: true, State: "running", Status: "Up 1 second"}
-	return nil
+	ip := fmt.Sprintf("172.30.0.%d", len(d.states)+10)
+	d.states[s.Name] = model.ContainerState{Name: s.Name, Running: true, State: "running", Status: "Up 1 second", IP: ip}
+	return ip, nil
 }
 
 func (d *fakeDocker) Remove(_ context.Context, name string) error {
@@ -207,8 +208,11 @@ type harness struct {
 	certs  *fakeCerts
 }
 
-// newHarness는 Naru를 통째로 띄운다. DNS는 naru.example.com → 198.51.100.24 로 고정한다.
-func newHarness(t *testing.T, envDomain string) *harness {
+// newHarness는 Naru를 통째로 띄운다 (Docker 방식). DNS는 naru.example.com → 198.51.100.24 로 고정한다.
+func newHarness(t *testing.T, envDomain string) *harness { return newHarnessIn(t, envDomain, "docker") }
+
+// newHarnessIn은 설치 방식을 골라 띄운다 — "docker" 또는 "host".
+func newHarnessIn(t *testing.T, envDomain, install string) *harness {
 	t.Helper()
 	lookup := func(_ context.Context, host string) ([]string, error) {
 		switch host {
@@ -220,10 +224,11 @@ func newHarness(t *testing.T, envDomain string) *harness {
 		return nil, &url.Error{Op: "lookup", URL: host}
 	}
 	h := &harness{t: t, docker: &fakeDocker{states: model.ContainerStates{}}, caddy: &fakeCaddy{}, certs: &fakeCerts{}}
-	a, err := OpenWith(Config{
-		DataDir: t.TempDir(), CaddySocket: "/run/caddy/admin.sock", SelfUpstream: "naru:8080", CaddySites: "/srv/sites",
-		Network: "naru-net", AdminDomain: envDomain, Version: "test",
-	}, slog.New(slog.NewTextHandler(io.Discard, nil)), Outside{
+	cfg := Config{DataDir: t.TempDir(), CaddySocket: "/run/caddy/admin.sock", Network: "naru-net", AdminDomain: envDomain, Version: "test", Install: install}
+	if install == "docker" {
+		cfg.SelfUpstream, cfg.CaddySites = "naru:8080", "/srv/sites"
+	}
+	a, err := OpenWith(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), Outside{
 		Builder: fakeRegistry{}, Puller: fakeRegistry{}, Images: fakeImages{},
 		Starter: h.docker, Remover: h.docker, Switch: h.docker, Watcher: h.docker, Ports: h.docker,
 		Code: fakeGit{}, DNS: netcheck.NewDNS(lookup), Stats: fakeStats{}, Sender: h.caddy, Certs: h.certs, Snippet: fakeSnippet{},
@@ -971,6 +976,46 @@ func TestImportFromNginxFillsTheFormWithoutSaving(t *testing.T) {
 	}
 	if got, _ := store.NewWebSettings(h.app.db).Get(ctx, shop); len(got.Headers) != 0 {
 		t.Fatal("nothing is saved until the user applies")
+	}
+}
+
+// ── 설치 방식 ─────────────────────────────
+
+// 설치형은 같은 화면·같은 흐름이고, 웹서버가 닿는 방법만 다르다 — 컨테이너는 IP로, "이 서버"는 127.0.0.1로.
+func TestHostInstallReachesContainersByIP(t *testing.T) {
+	h := newHarnessIn(t, "", "host")
+	h.signedIn()
+	_, loc, _ := h.post("/services/new", url.Values{"kind": {"image"}, "source": {"traefik/whoami"}, "domain": {"who.example.com"}})
+	if !strings.HasPrefix(loc, "/services/1/deploys/") {
+		t.Fatalf("deploy starts: %q", loc)
+	}
+	h.app.wait()
+	ip := h.service(1).Live.InstanceIP
+	if ip == "" {
+		t.Fatal("the container's IP is recorded")
+	}
+	h.post("/services/new", url.Values{"kind": {"external"}, "upstream": {"localhost:5000"}, "domain": {"nas.example.com"}})
+	h.waitFor("containers by IP, this server as 127.0.0.1, the admin screen on loopback", func(cfg string) bool {
+		return strings.Contains(cfg, ip+":80") && strings.Contains(cfg, "127.0.0.1:5000") && strings.Contains(cfg, "127.0.0.1:8080") &&
+			!strings.Contains(cfg, "naru-who:80") && !strings.Contains(cfg, "host.docker.internal")
+	})
+	if !strings.Contains(h.caddy.last(), filepath.Join(h.app.cfg.DataDir, "sites")) && strings.Contains(h.caddy.last(), "/srv/sites") {
+		t.Fatal("static sites are served straight from the data folder")
+	}
+}
+
+func TestDockerInstallKeepsTheNetworkAlias(t *testing.T) {
+	h := newHarness(t, "")
+	h.signedIn()
+	h.post("/services/new", url.Values{"kind": {"image"}, "source": {"traefik/whoami"}, "domain": {"who.example.com"}})
+	h.app.wait()
+	h.waitFor("containers by alias", func(cfg string) bool { return strings.Contains(cfg, "naru-who:80") })
+}
+
+func TestUnknownInstallModeRefusesToStart(t *testing.T) {
+	_, err := OpenWith(Config{DataDir: t.TempDir(), Install: "kubernetes"}, slog.New(slog.NewTextHandler(io.Discard, nil)), Outside{Clock: system.Clock{}, Random: system.Random{}, Sender: &fakeCaddy{}})
+	if err == nil || !strings.Contains(err.Error(), "NARU_INSTALL") {
+		t.Fatalf("got %v", err)
 	}
 }
 

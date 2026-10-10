@@ -1,0 +1,3 @@
+{
+  "admin": { "listen": "unix//run/naru/caddy.sock" }
+}

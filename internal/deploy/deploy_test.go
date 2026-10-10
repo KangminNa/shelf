@@ -31,6 +31,7 @@ type fakeDocker struct {
 	builds     []string
 	removedImg []string
 	listens    func(name string) bool // nil이면 모두 듣는다
+	nextIP     int
 	exits      func(name string) bool // 시작하자마자 죽는가
 }
 
@@ -38,6 +39,7 @@ type fakeContainer struct {
 	spec    model.ContainerSpec
 	running bool
 	exited  bool
+	ip      string
 }
 
 func newFakeDocker() *fakeDocker {
@@ -84,18 +86,19 @@ func (f *fakeDocker) Remove(_ context.Context, name string) error {
 	return nil
 }
 
-func (f *fakeDocker) Start(_ context.Context, s model.ContainerSpec) error {
+func (f *fakeDocker) Start(_ context.Context, s model.ContainerSpec) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if _, ok := f.containers[s.Name]; ok {
-		return errors.New("name in use")
+		return "", errors.New("name in use")
 	}
-	c := &fakeContainer{spec: s, running: true}
+	f.nextIP++
+	c := &fakeContainer{spec: s, running: true, ip: fmt.Sprintf("10.9.0.%d", f.nextIP)}
 	if f.exits != nil && f.exits(s.Name) {
 		c.running, c.exited = false, true
 	}
 	f.containers[s.Name] = c
-	return nil
+	return c.ip, nil
 }
 
 func (f *fakeDocker) TurnOff(_ context.Context, name string) error {
@@ -150,12 +153,19 @@ func (f *fakeDocker) BelongingTo(_ context.Context, id model.ServiceID) ([]strin
 }
 
 // Answers는 컨테이너가 실행 중이고 듣고 있으면 성공한다.
+// Answers는 컨테이너가 실행 중이고 듣고 있으면 성공한다. 응답 확인은 IP로 온다.
 func (f *fakeDocker) Answers(_ context.Context, host string, _ model.Port) error {
 	f.mu.Lock()
-	c, ok := f.containers[host]
+	var c *fakeContainer
+	name := ""
+	for n, x := range f.containers {
+		if x.ip == host {
+			c, name = x, n
+		}
+	}
 	listens := f.listens
 	f.mu.Unlock()
-	if !ok || !c.running || (listens != nil && !listens(host)) {
+	if c == nil || !c.running || (listens != nil && !listens(name)) {
 		return errors.New("connection refused")
 	}
 	return nil
@@ -170,6 +180,19 @@ func (f *fakeDocker) names() []string {
 	}
 	return out
 }
+
+// fakeSync는 웹서버 맞추기다. 맞출 때 어떤 컨테이너가 살아 있었는지 기록한다 — 옛 것이 그때까지 살아 있어야 한다.
+type fakeSync struct {
+	docker *fakeDocker
+	fail   error
+	seen   [][]string
+}
+
+func (s *fakeSync) SyncNow(context.Context) error {
+	s.seen = append(s.seen, s.docker.names())
+	return s.fail
+}
+func (s *fakeSync) Status() model.WebServerStatus { return model.WebServerStatus{} }
 
 // fakeGit은 정해 둔 파일을 "내려받는다".
 type fakeGit struct {
@@ -199,6 +222,7 @@ type rig struct {
 	history  store.Deployments
 	sites    string
 	changes  int
+	sync     *fakeSync
 }
 
 func newRig(t *testing.T) *rig {
@@ -217,6 +241,7 @@ func newRig(t *testing.T) *rig {
 			r.changes++
 		}
 	})
+	r.sync = &fakeSync{docker: r.docker}
 	siteFiles := files.NewSiteFolders(r.sites)
 	secrets := store.NewSecrets(db)
 	lookup := kinds.NewLookup(kinds.Tools{
@@ -228,7 +253,7 @@ func newRig(t *testing.T) *rig {
 	lock := NewMemoryDeployLock()
 	r.d, r.wait = NewDeployer(ctx, slog.New(slog.NewTextHandler(io.Discard, nil)), Parts{
 		Lock: lock, History: r.history, Past: r.history, Logs: NewDeployLog(r.history), Services: r.services,
-		Live: store.NewLiveStates(db), Kinds: lookup, Cleaner: NewOldVersionCleaner(r.history, r.docker, siteFiles), Events: bus,
+		Live: store.NewLiveStates(db), Kinds: lookup, Cleaner: NewOldVersionCleaner(r.history, r.docker, siteFiles), Events: bus, Sync: r.sync,
 	})
 	r.control = NewServiceControl(ControlParts{
 		Services: r.services, Store: r.services, Live: store.NewLiveStates(db), Lock: lock, Switch: r.docker, Remover: r.docker,
@@ -566,5 +591,51 @@ func TestEnvAndVolumes(t *testing.T) {
 		if _, err := model.ParseVolumes(bad); err == nil {
 			t.Errorf("%s should be refused", bad)
 		}
+	}
+}
+
+// 웹서버가 새 것을 가리키기 전에 옛 것을 내리면, 설치형(IP로 보냄)에서는 그 사이 요청이 끊긴다.
+func TestTheOldVersionServesUntilTheWebServerPointsAtTheNewOne(t *testing.T) {
+	r := newRig(t)
+	r.docker.images["me/app"] = model.ImageDetails{ID: "sha256:v", Ports: []model.Port{80}}
+	id := r.create(model.NewService{Name: name("app"), Kind: model.KindImage, Source: "me/app"}, "")
+	first := r.deploy(id)
+	old := r.get(id).Live
+	if old.InstanceIP == "" {
+		t.Fatal("the container's IP is recorded")
+	}
+	r.sync.seen = nil
+	second := r.deploy(id)
+	if second.Status != model.DeploySuccess || len(r.sync.seen) != 1 {
+		t.Fatalf("%+v syncs=%d", second, len(r.sync.seen))
+	}
+	if strings.Join(r.sync.seen[0], " ") == fmt.Sprintf("naru-app-%d", second.ID) {
+		t.Fatal("the old container must still be running when the web server is switched")
+	}
+	if names := r.docker.names(); len(names) != 1 || names[0] != fmt.Sprintf("naru-app-%d", second.ID) {
+		t.Fatalf("after the switch the old one is retired: %v (first #%d)", names, first.ID)
+	}
+	if now := r.get(id).Live; now.InstanceIP == old.InstanceIP || now.InstanceIP == "" {
+		t.Fatalf("the new IP is recorded: %+v", now)
+	}
+}
+
+func TestIfTheWebServerCannotSwitchBothVersionsStay(t *testing.T) {
+	r := newRig(t)
+	r.docker.images["me/app"] = model.ImageDetails{ID: "sha256:v", Ports: []model.Port{80}}
+	id := r.create(model.NewService{Name: name("app"), Kind: model.KindImage, Source: "me/app"}, "")
+	r.deploy(id)
+	r.sync.fail = errors.New("caddy: dial unix /run/naru/caddy.sock: connect: no such file")
+	dep := r.deploy(id)
+	if dep.Status != model.DeploySuccess || !strings.Contains(dep.Log, "남겨") {
+		t.Fatalf("the new version runs, the log says the old one is kept:\n%s", dep.Log)
+	}
+	if len(r.docker.names()) != 2 {
+		t.Fatalf("both stay until the web server is reachable: %v", r.docker.names())
+	}
+	r.sync.fail = nil
+	third := r.deploy(id)
+	if names := r.docker.names(); len(names) != 1 || names[0] != fmt.Sprintf("naru-app-%d", third.ID) {
+		t.Fatalf("the next deploy cleans up everything older: %v", names)
 	}
 }

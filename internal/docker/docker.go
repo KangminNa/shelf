@@ -41,7 +41,8 @@ type Container struct {
 	Name   string
 	Image  string
 	State  State
-	Status string // "Up 3 hours", "Exited (1) 2 minutes ago"
+	Status string            // "Up 3 hours", "Exited (1) 2 minutes ago"
+	IPs    map[string]string // 네트워크 이름 → 그 네트워크에서의 IP
 }
 
 // Ping은 Docker에 닿는가.
@@ -53,10 +54,13 @@ func (c *Client) containers(ctx context.Context) (map[string]Container, error) {
 	}
 	defer res.Body.Close()
 	var raw []struct {
-		Names  []string
-		Image  string
-		State  string
-		Status string
+		Names           []string
+		Image           string
+		State           string
+		Status          string
+		NetworkSettings struct {
+			Networks map[string]struct{ IPAddress string }
+		}
 	}
 	if err := json.NewDecoder(res.Body).Decode(&raw); err != nil {
 		return nil, fmt.Errorf("docker: decode containers: %w", err)
@@ -65,7 +69,11 @@ func (c *Client) containers(ctx context.Context) (map[string]Container, error) {
 	for _, r := range raw {
 		for _, n := range r.Names {
 			name := strings.TrimPrefix(n, "/")
-			out[name] = Container{Name: name, Image: r.Image, State: State(r.State), Status: r.Status}
+			ips := map[string]string{}
+			for net, n := range r.NetworkSettings.Networks {
+				ips[net] = n.IPAddress
+			}
+			out[name] = Container{Name: name, Image: r.Image, State: State(r.State), Status: r.Status, IPs: ips}
 		}
 	}
 	return out, nil

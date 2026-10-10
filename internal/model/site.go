@@ -31,8 +31,9 @@ type SiteMap struct {
 	AdminHTTPS    bool
 	// AdminRedirectHTTP는 관리 주소의 :80 요청을 HTTPS로 넘기는가 — 인증서가 있을 때만 (없는데 넘기면 내 서버에서 잠긴다).
 	AdminRedirectHTTP bool
-	OpenFallback      bool // 모르는 주소로 :80에 온 요청을 관리 화면으로 — 첫 설정 전이나 관리 주소가 없을 때
-	HTTPSPort         int  // 바깥에서 본 HTTPS 포트. 0이면 443 (로컬 개발처럼 다른 포트로 열었을 때만 적는다)
+	OpenFallback      bool   // 모르는 주소로 :80에 온 요청을 관리 화면으로 — 첫 설정 전이나 관리 주소가 없을 때
+	HTTPSPort         int    // 바깥에서 본 HTTPS 포트. 0이면 443 (로컬 개발처럼 다른 포트로 열었을 때만 적는다)
+	Storage           string // 웹서버가 인증서를 둘 폴더. 비면 웹서버 기본값
 	ACMEEmail         string
 	InternalTLS       bool // 개발용 내부 인증서
 	Sites             []Site

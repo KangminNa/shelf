@@ -22,6 +22,7 @@ type Fixed struct {
 	AdminSocket   string // 웹서버 관리 소켓 — 그린 설정에 항상 들어간다
 	AdminUpstream string // 웹서버가 관리 화면에 닿는 주소
 	InternalTLS   bool   // 개발용 내부 인증서
+	Storage       string // 웹서버가 인증서를 둘 곳 — 비면 웹서버 기본값 (설치형은 데이터 폴더 안으로 정해 Naru가 읽는다)
 	HTTPSPort     int    // 바깥에서 본 HTTPS 포트 (0이면 443) — 넘기는 주소에 쓴다
 }
 
@@ -40,11 +41,12 @@ type siteMapBuilder struct {
 	certs    contract.CertificateReader
 	clock    contract.Clock
 	web      contract.WebSettingsStore
+	watcher  contract.ContainerWatcher
 }
 
 func NewSiteMapBuilder(fixed Fixed, services contract.ServiceReader, kinds contract.KindLookup, settings Settings,
-	certs contract.CertificateReader, clock contract.Clock, web contract.WebSettingsStore) contract.SiteMapBuilder {
-	return siteMapBuilder{fixed, services, kinds, settings, certs, clock, web}
+	certs contract.CertificateReader, clock contract.Clock, web contract.WebSettingsStore, watcher contract.ContainerWatcher) contract.SiteMapBuilder {
+	return siteMapBuilder{fixed, services, kinds, settings, certs, clock, web, watcher}
 }
 
 func (b siteMapBuilder) Build(ctx context.Context) (model.SiteMap, error) {
@@ -67,10 +69,22 @@ func (b siteMapBuilder) Build(ctx context.Context) (model.SiteMap, error) {
 		ACMEEmail:    email.String(),
 		InternalTLS:  b.fixed.InternalTLS,
 		HTTPSPort:    b.fixed.HTTPSPort,
+		Storage:      b.fixed.Storage,
 	}
 	if !domain.IsZero() {
 		m.AdminHosts, m.AdminHTTPS = []string{domain.String()}, true
 		m.AdminRedirectHTTP = ready(domain)
+	}
+	// 컨테이너 IP는 재시작하면 바뀔 수 있다 — 지금 IP로 덮어쓴다 (Docker를 못 읽으면 배포 때 기록한 IP).
+	wctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	states, werr := b.watcher.All(wctx)
+	cancel()
+	if werr == nil {
+		for i := range all {
+			if st, ok := states[all[i].Live.CurrentContainer()]; ok && st.IP != "" {
+				all[i].Live.InstanceIP = st.IP
+			}
+		}
 	}
 	// 경로별 연결의 목적지를 실제 주소로 바꾸려면 모든 서비스의 목적지를 먼저 알아야 한다
 	destinations := map[model.ServiceID]model.Destination{}

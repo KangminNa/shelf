@@ -9,5 +9,5 @@ exec docker run --rm \
   -v "$PWD":/src -w /src \
   -v naru-gomod:/go/pkg/mod \
   -v naru-gobuild:/root/.cache/go-build \
-  -e CGO_ENABLED=0 \
+  -e CGO_ENABLED=0 -e GOOS -e GOARCH \
   golang:1.27-alpine go "$@"

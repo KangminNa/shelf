@@ -71,6 +71,13 @@ Paste an nginx config and it is carried over into the fields. Applying checks wi
 
 ---
 
+## Ways to install
+
+The same binary installs two ways, with the same features:
+
+- **Docker** (`docker compose up`) — the simplest. The web server and app containers share a Docker network.
+- **Host** (systemd) — the web server reaches programs on the server at `localhost`, and app containers by IP on any network. Linux servers. [Host install](docs/install-host.md) (Korean)
+
 ## Try it locally
 
 Only Docker is needed (no Go install).

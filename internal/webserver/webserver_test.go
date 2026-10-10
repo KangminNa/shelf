@@ -61,7 +61,7 @@ func TestSiteMapFollowsServicesAndSettings(t *testing.T) {
 	clock := &fakeClock{now: time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)}
 	web := store.NewWebSettings(db)
 	b := NewSiteMapBuilder(Fixed{AdminSocket: "/run/caddy/admin.sock", AdminUpstream: "naru:8080"}, services,
-		kinds.NewLookup(kinds.Tools{}), Settings{admin, settings.NewCertEmailSetting(model.Email{}, set, bus), setup}, certs, clock, web)
+		kinds.NewLookup(kinds.Tools{}), Settings{admin, settings.NewCertEmailSetting(model.Email{}, set, bus), setup}, certs, clock, web, &fakeWatcher{})
 
 	m, err := b.Build(ctx)
 	if err != nil {
@@ -262,5 +262,54 @@ func TestAChangeIsSyncedRightAway(t *testing.T) {
 	wait(2)
 	if sender.count() != 2 {
 		t.Fatalf("a SiteMapChanged event is applied without waiting 30s: %d loads", sender.count())
+	}
+}
+
+type fakeWatcher struct {
+	states model.ContainerStates
+	err    error
+}
+
+func (w *fakeWatcher) All(context.Context) (model.ContainerStates, error) { return w.states, w.err }
+func (w *fakeWatcher) One(context.Context, string) (model.ContainerState, error) {
+	return model.ContainerState{}, nil
+}
+func (w *fakeWatcher) Logs(context.Context, string, int) (string, error) { return "", nil }
+func (w *fakeWatcher) BelongingTo(context.Context, model.ServiceID) ([]string, error) {
+	return nil, nil
+}
+
+// 설치형은 컨테이너 IP로 보낸다 — 컨테이너가 재시작해 IP가 바뀌면 다음 맞추기에서 따라간다.
+func TestSiteMapFollowsTheCurrentContainerIP(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "naru.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	bus := events.NewBus()
+	set := store.NewSettings(db)
+	services := store.NewServices(db)
+	id, _ := services.Create(ctx, model.NewService{Name: name("x"), Kind: model.KindImage, Alias: "naru-x", Port: 80})
+	store.NewDomains(db).Add(ctx, id, model.DomainInput{Domain: domain("x.example.com")})
+	store.NewLiveStates(db).Save(ctx, id, model.LiveState{Alias: "naru-x", Instance: "naru-x-3", InstanceIP: "10.0.0.3"})
+
+	watcher := &fakeWatcher{states: model.ContainerStates{"naru-x-3": {Name: "naru-x-3", IP: "10.0.0.9"}}}
+	b := NewSiteMapBuilder(Fixed{AdminSocket: "/s", AdminUpstream: "127.0.0.1:8080"}, services,
+		kinds.NewLookup(kinds.Tools{ContainerDestination: kinds.ContainerIPDestination{}}),
+		Settings{settings.NewAdminDomainSetting(model.DomainName{}, set, bus), settings.NewCertEmailSetting(model.Email{}, set, bus), settings.NewSetupProgress(set, bus)},
+		&fakeCerts{}, &fakeClock{now: time.Now()}, store.NewWebSettings(db), watcher)
+	addr := func() string {
+		m, err := b.Build(ctx)
+		if err != nil || len(m.Sites) != 1 {
+			t.Fatalf("%+v %v", m, err)
+		}
+		return m.Sites[0].Destination.Address
+	}
+	if got := addr(); got != "10.0.0.9:80" {
+		t.Fatalf("the current IP wins over the recorded one: %s", got)
+	}
+	watcher.err = errors.New("docker unreachable")
+	if got := addr(); got != "10.0.0.3:80" {
+		t.Fatalf("without Docker the recorded IP is used: %s", got)
 	}
 }

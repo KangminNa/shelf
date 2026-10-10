@@ -107,3 +107,43 @@ func TestInputs(t *testing.T) {
 		t.Fatalf("%+v %v", in, err)
 	}
 }
+
+func TestDestinationsByInstallMode(t *testing.T) {
+	s := model.Service{Kind: model.KindImage, Port: 8080, Live: model.LiveState{Alias: "naru-api", Instance: "naru-api-3", InstanceIP: "172.18.0.5"}}
+	if got := (ContainerAliasDestination{}).Find(s); got != (model.Destination{Address: "naru-api:8080", Container: true}) {
+		t.Errorf("docker: by alias, got %+v", got)
+	}
+	if got := (ContainerIPDestination{}).Find(s); got != (model.Destination{Address: "172.18.0.5:8080", Container: true}) {
+		t.Errorf("host: by IP, got %+v", got)
+	}
+	s.Live.InstanceIP = ""
+	if got := (ContainerIPDestination{}).Find(s); got.Address != "" || !got.Container {
+		t.Errorf("an unknown IP goes nowhere (the web server answers 502), got %+v", got)
+	}
+
+	host := ExternalDestination{ThisServer: "127.0.0.1"}
+	cases := map[string]string{
+		"host.docker.internal:5000":         "127.0.0.1:5000",
+		"https://host.docker.internal:8443": "https://127.0.0.1:8443",
+		"192.168.0.20:80":                   "192.168.0.20:80",
+	}
+	for in, want := range cases {
+		if got := host.Find(model.Service{External: in}).Address; got != want {
+			t.Errorf("host mode: %s → %s, want %s", in, got, want)
+		}
+		if got := (ExternalDestination{}).Find(model.Service{External: in}).Address; got != in {
+			t.Errorf("docker mode keeps %s, got %s", in, got)
+		}
+	}
+
+	l := NewLookup(Tools{ContainerDestination: ContainerIPDestination{}, ExternalDestination: host})
+	repo, _ := l.Find(model.KindRepo)
+	s.Live.InstanceIP = "172.18.0.7"
+	if repo.Destination.Find(s).Address != "172.18.0.7:8080" {
+		t.Fatal("the lookup uses the destination the composition root chose")
+	}
+	ext, _ := l.Find(model.KindExternal)
+	if ext.Destination.Find(model.Service{External: "host.docker.internal:1"}).Address != "127.0.0.1:1" {
+		t.Fatal("external too")
+	}
+}

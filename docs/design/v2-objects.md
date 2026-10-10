@@ -98,8 +98,8 @@
 |---|---|---|---|---|---|
 | `InputChecker` | 이 종류에 필요한 값이 다 있는지 본다 | `RepoInput` | `ImageInput` | `StaticInput` | `ExternalInput` |
 | `VersionBuilder` | 새 버전을 만든다 | `RepoBuilder` (저장소 → 이미지 빌드) | `ImageFetcher` (이미지 받기) | `StaticBuilder` (폴더 → 배포본) | — |
-| `VersionSwapper` | 새 버전으로 바꿔 끼운다 | `ContainerSwapper` | `ContainerSwapper` | `FolderSwapper` | — |
-| `DestinationFinder` | 웹서버가 요청을 보낼 곳을 알려준다 | `ContainerDestination` | `ContainerDestination` | `FolderDestination` | `ExternalDestination` |
+| `VersionSwapper` | 새 버전을 띄우고(Swap), 웹서버가 새 것을 가리킨 뒤 옛 것을 내린다(Retire) | `ContainerSwapper` | `ContainerSwapper` | `FolderSwapper` | — |
+| `DestinationFinder` | 웹서버가 요청을 보낼 곳을 알려준다 | `ContainerAliasDestination` 또는 `ContainerIPDestination` (설치 방식에 따라 `app`이 고른다) | 같음 | `FolderDestination` | `ExternalDestination` |
 | `StatusReader` | 화면에 보일 상태를 읽는다 | `ContainerStatus` | `ContainerStatus` | `StaticStatus` | `ExternalStatus` |
 
 | 인터페이스 | 하는 일 | 구현 |
@@ -179,6 +179,25 @@
 | `EventPublisher` · `EventSubscriber` | 일어난 일을 알리고, 듣는다 | `events.Bus` |
 | `Clock` · `RandomTokens` | 지금 시각, 난수 문자열 | `system.Clock`, `system.Random` |
 
+### 설치 방식 — Docker · 설치형 (`app`만 안다)
+
+같은 바이너리를 Docker(compose)로도, 호스트에 직접(systemd)도 설치한다. 화면과 기능은 같고 **바깥에 닿는 방법만** 다르다.
+방식은 `NARU_INSTALL=docker|host`(기본 `host`)로 정하고, 그 값을 아는 곳은 `app` 하나다 — `app`이 방식에 맞는 값과 구현을 골라 끼운다 (R12).
+
+| | Docker | 설치형 |
+|---|---|---|
+| Caddy → 앱 컨테이너 | `ContainerAliasDestination` — 별칭:포트 (같은 네트워크) | `ContainerIPDestination` — 컨테이너 IP:포트 (리눅스 호스트는 브리지 IP에 닿는다) |
+| Caddy → "이 서버" | `host.docker.internal` | `127.0.0.1` (`ExternalDestination`이 그릴 때 바꾼다 — 저장된 값은 그대로) |
+| Caddy → 관리 화면 · Naru가 듣는 곳 | `naru:8080` · `:8080` | `127.0.0.1:8080` · `127.0.0.1:8080` |
+| 정적 사이트 · 인증서 저장소 | `/srv/sites` · 공유 볼륨 | 데이터 폴더의 `sites` · 데이터 폴더의 `caddy` (설정에 저장 위치를 적는다) |
+| 실행 · 관리 소켓 | compose 컨테이너 둘 · 둘만 마운트하는 볼륨 | systemd 서비스 둘(같은 `naru` 사용자) · `/run/naru/caddy.sock` (0600) |
+
+컨테이너 IP는 재시작하면 바뀔 수 있다 — `siteMapBuilder`가 맞출 때마다 `ContainerWatcher`로 지금 IP를 읽어 덮어쓴다 (못 읽으면 배포 때 기록한 IP).
+응답 확인은 두 방식 모두 IP로 한다 (Naru는 Docker 방식에서도 앱 네트워크에 있다).
+
+**무중단 교체 순서 (두 방식 모두):** 새 것 띄움 → 응답 확인 → 지금 상태 저장 → `WebServerSync.SyncNow` → 옛 것 내림(`VersionSwapper.Retire`).
+웹서버가 새 것을 가리키기 전에는 옛 것을 내리지 않는다 — 맞추기가 실패하면 둘 다 남겨 두고 다음 배포에서 정리한다.
+
 ### 저장 — `store` (SQLite, SQL은 여기에만)
 
 | 인터페이스 | 하는 일 |
@@ -245,13 +264,13 @@
 | `Service` | 서비스 하나의 지금 모습 — 비밀은 없다 |
 | `ServiceSecrets` | 배포에만 쓰는 비밀(env·볼륨·git 토큰·웹훅 시크릿). **`web`·`cli`는 이 타입을 쓸 수 없다** |
 | `Domain` · `DomainInput` | 서비스에 붙은 주소 하나 · 붙일 주소 |
-| `LiveState` | 지금 도는 것 — 서비스 별칭, 요청을 받는 컨테이너, 서빙 중인 배포본, 포트, 직접 멈췄는지 |
+| `LiveState` | 지금 도는 것 — 서비스 별칭, 요청을 받는 컨테이너와 그 IP, 서빙 중인 배포본, 포트, 직접 멈췄는지 |
 | `HookLog` | 웹훅을 마지막으로 받은 때와 결과 |
 | `Version` | 배포할 수 있게 만든 것 — 이미지 ID 또는 배포본 폴더, 커밋, 찾은 포트 |
 | `Commit` · `ImageID` · `ImageDetails` | 가져온 커밋 · Docker 이미지 ID · 받은 이미지의 ID와 열어둔 포트 |
 | `SiteFolder` | 정적 사이트 배포본 하나 (서비스 이름 + 배포 번호) |
 | `CodeSource` | 내려받을 코드 — 저장소·브랜치·토큰 |
-| `ContainerSpec` · `ContainerState` · `ContainerStates` | 띄울 컨테이너 · 컨테이너 하나의 상태 · 이름별 상태 (nil이면 Docker를 읽지 못함) |
+| `ContainerSpec` · `ContainerState` · `ContainerStates` | 띄울 컨테이너 · 컨테이너 하나의 상태(앱 네트워크에서의 지금 IP 포함) · 이름별 상태 (nil이면 Docker를 읽지 못함) |
 | `Deployment` | 배포 한 번의 기록 |
 | `DeployStatus` | 진행 중 · 성공 · 실패 |
 | `DeployReason` | 왜 배포했나 — 직접 · push · 처음 올림 · 되돌림 |
@@ -469,9 +488,11 @@ type VersionBuilder interface {
 	Build(ctx context.Context, req model.BuildRequest, log DeployLogWriter) (model.Version, error)
 }
 
-// VersionSwapper는 새 버전으로 바꿔 끼운다. 실패하면 지금 도는 것을 그대로 둔다.
+// VersionSwapper는 새 버전으로 바꿔 끼운다. Swap은 새 것을 띄우고 응답까지만 확인한다 — 실패하면 지금 도는 것을 그대로 둔다.
+// Retire는 웹서버가 새 것을 가리킨 뒤에 옛 것을 내린다 (그 전에 내리면 설치형에서 요청이 끊긴다).
 type VersionSwapper interface {
 	Swap(ctx context.Context, req model.SwapRequest, v model.Version, log DeployLogWriter) (model.LiveState, error)
+	Retire(ctx context.Context, s model.Service, keep model.LiveState, log DeployLogWriter)
 }
 
 // DestinationFinder는 웹서버가 요청을 보낼 곳을 알려준다.
@@ -661,9 +682,9 @@ type ImageCleaner interface {
 	Remove(ctx context.Context, ref string) error
 }
 
-// ContainerStarter는 컨테이너를 만들어 띄운다.
+// ContainerStarter는 컨테이너를 만들어 띄우고, 앱 네트워크에서의 IP를 알려준다 (네트워크가 없으면 만든다).
 type ContainerStarter interface {
-	Start(ctx context.Context, spec model.ContainerSpec) error
+	Start(ctx context.Context, spec model.ContainerSpec) (ip string, err error)
 }
 
 // ContainerRemover는 컨테이너를 없앤다.
@@ -768,7 +789,7 @@ type RandomTokens interface {
 | `domainChecker` | DomainStore · AdminDomainSetting |
 | `serviceEditor` | ServiceReader · ServiceStore · DomainStore · SecretStore · NameChooser · DomainChecker · KindLookup · RandomTokens · EventPublisher |
 | `serviceLauncher` | ServiceEditor · KindLookup · Deployer |
-| `deployer` | DeployLock · DeployHistoryStore · DeployHistoryReader · DeployLog · ServiceReader · LiveStateStore · KindLookup · OldVersionCleaner · EventPublisher |
+| `deployer` | DeployLock · DeployHistoryStore · DeployHistoryReader · DeployLog · ServiceReader · LiveStateStore · KindLookup · OldVersionCleaner · EventPublisher · WebServerSync |
 | `serviceControl` | ServiceReader · ServiceStore · LiveStateStore · DeployLock · ContainerSwitch · ContainerRemover · ContainerWatcher · ImageCleaner · SiteFiles · DeployHistoryReader · EventPublisher |
 | `RepoBuilder` | WorkFolder · CodeDownloader · SecretStore · DockerfilePortReader · BuildContextPacker · ImageBuilder |
 | `ImageFetcher` | ImagePuller |
@@ -777,7 +798,7 @@ type RandomTokens interface {
 | `FolderSwapper` | SiteFiles |
 | `oldVersionCleaner` | DeployHistoryReader · ImageCleaner · SiteFiles |
 | `hookReceiver` | ServiceReader · SecretStore · SignatureChecker(차례로) · BranchFilter · Deployer · HookLogStore · Clock |
-| `siteMapBuilder` | ServiceReader · KindLookup · AdminDomainSetting · CertEmailSetting · SetupProgress · CertificateReader · Clock · WebSettingsStore |
+| `siteMapBuilder` | ServiceReader · KindLookup · AdminDomainSetting · CertEmailSetting · SetupProgress · CertificateReader · Clock · WebSettingsStore · ContainerWatcher |
 | `webServerSync` | SiteMapBuilder · ConfigWriter · ConfigSender(`AdminSocketGuard`로 감싼 것) · EventSubscriber |
 | `serviceViewer` | ServiceReader · SecretStore · DeployHistoryReader · ContainerWatcher · KindLookup · AdminDomainSetting · Deployer · CertificateReader · Clock · WebSettingsStore |
 | `webSettingsEditor` | ServiceReader · WebSettingsStore · SnippetCompiler · LoginHasher · WebServerSync |
@@ -812,8 +833,10 @@ web → HookReceiver.Receive
 Deployer.Deploy
    DeployLock.TryLock → DeployHistoryStore.Start → DeployLog.Open
    → VersionBuilder.Build     (RepoBuilder: WorkFolder · CodeDownloader · BuildContextPacker · ImageBuilder)
-   → VersionSwapper.Swap      (ContainerSwapper: ContainerStarter로 새 것 → PortChecker로 응답 확인 → ContainerSwitch로 옛 것 끔)
-   → LiveStateStore.Save → DeployHistoryStore.Finish → OldVersionCleaner.Clean
+   → VersionSwapper.Swap      (ContainerSwapper: ContainerStarter로 새 것(IP를 돌려받음) → PortChecker로 그 IP에 응답 확인)
+   → LiveStateStore.Save → WebServerSync.SyncNow  (웹서버가 새 것을 가리킨다 — 설치형은 새 IP로)
+   → VersionSwapper.Retire    (그 뒤에야 옛 것을 끈다 · 맞추기가 실패했으면 둘 다 남긴다)
+   → DeployHistoryStore.Finish → OldVersionCleaner.Clean
    → EventPublisher.Publish(DeployFinished, SiteMapChanged)
 ```
 
@@ -879,6 +902,7 @@ WebServerSync (SiteMapChanged를 듣거나 30초마다)
 | R9 | 종류 이름으로 분기하는 코드는 `kinds`에만 |
 | R10 | `web`·`cli`는 `model.ServiceSecrets`·`model.PasswordHash`·`model.WebSettings`·`model.BasicLogin`을 쓰지 않는다 (그것을 주고받는 인터페이스도) |
 | R11 | 검사용 정규식은 `model`에만 |
+| R12 | 설정을 환경 변수에서 읽는 건(`os.Getenv`·`LookupEnv`) `app`·`cmd`뿐이다 — 그래서 설치 방식(`NARU_INSTALL`)에 따른 분기도 `app`에만 있다. 도구가 자식 프로세스(git)에 환경을 넘기는 `os.Environ`은 허용 |
 
 ---
 

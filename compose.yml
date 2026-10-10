@@ -30,6 +30,7 @@ services:
     container_name: naru
     restart: unless-stopped
     environment:
+      - NARU_INSTALL=docker                          # 설치 방식 — 바이너리를 직접 실행하면 host (설치형)
       - NARU_TLS=internal                            # 로컬: 공개 CA에 요청하지 않는다
       - NARU_HTTPS_PORT=8443                         # 로컬은 HTTPS를 8443으로 열었다 — HTTP에서 넘길 때 이 포트로
       - NARU_NETWORK=${NARU_NETWORK:-naru-net}       # 앱 컨테이너를 붙일 네트워크 (아래 apps와 같아야 한다)

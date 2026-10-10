@@ -424,6 +424,29 @@ func TestR11RegexpOnlyInModel(t *testing.T) {
 	}
 }
 
+// R12: 설정을 환경 변수에서 읽는 건 app(조립)뿐이다 — 그래서 설치 방식(NARU_INSTALL)에 따른 분기도 app에만 있다.
+// (도구가 자식 프로세스에 환경을 그대로 넘기는 os.Environ은 설정 읽기가 아니라 허용한다.)
+func TestR12EnvironmentOnlyInApp(t *testing.T) {
+	for _, f := range sources(t) {
+		if root[f.pkg] {
+			continue
+		}
+		ast.Inspect(f.ast, func(n ast.Node) bool {
+			if sel, ok := n.(*ast.SelectorExpr); ok {
+				if id, ok := sel.X.(*ast.Ident); ok && id.Name == "os" {
+					switch {
+					case sel.Sel.Name == "Getenv" || sel.Sel.Name == "LookupEnv":
+						t.Errorf("R12: %s reads a setting from the environment — pass the value in from app", f.path)
+					case sel.Sel.Name == "Environ" && !tools[f.pkg]:
+						t.Errorf("R12: %s uses os.Environ — only tools hand the environment to a child process", f.path)
+					}
+				}
+			}
+			return true
+		})
+	}
+}
+
 // 문서의 표(§7)와 조립이 어긋나지 않았는지 사람이 볼 수 있게, 패키지별 import를 남긴다 (-v로 본다).
 func TestPrintTheGraph(t *testing.T) {
 	graph := map[string]map[string]bool{}

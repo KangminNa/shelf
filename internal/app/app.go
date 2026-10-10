@@ -38,17 +38,19 @@ import (
 )
 
 // Config는 환경 변수에서 읽는다. 모두 비워 둬도 돈다 — 나머지는 첫 설정 화면에서 정한다.
+// 비워 둔 값은 설치 방식(Install)에 맞는 기본값으로 채운다 (resolved). 설치 방식을 아는 곳은 이 패키지 하나다 (R12).
 type Config struct {
-	Listen       string // NARU_LISTEN, 기본 :8080
+	Install      string // NARU_INSTALL — "host"(기본, 바이너리를 직접 실행) 또는 "docker"(compose)
+	Listen       string // NARU_LISTEN — 기본 host 127.0.0.1:8080 · docker :8080
 	DataDir      string // NARU_DATA_DIR, 기본 ./data
 	ProcDir      string // NARU_PROC_DIR, 기본 /proc
 	DockerSocket string // NARU_DOCKER_SOCKET, 기본 /var/run/docker.sock
-	CaddySocket  string // NARU_CADDY_ADMIN — 웹서버(Caddy) 관리 소켓, 기본 /run/caddy/admin.sock
-	SelfUpstream string // NARU_SELF_UPSTREAM — 웹서버가 관리 화면에 닿는 주소, 기본 naru:8080
+	CaddySocket  string // NARU_CADDY_ADMIN — 웹서버 관리 소켓. 기본 host /run/naru/caddy.sock · docker /run/caddy/admin.sock
+	SelfUpstream string // NARU_SELF_UPSTREAM — 웹서버가 관리 화면에 닿는 주소. 기본 host 127.0.0.1:8080 · docker naru:8080
 	InternalTLS  bool   // NARU_TLS=internal — 개발용. 공개 CA 대신 내부 CA로 인증서
-	Network      string // NARU_NETWORK — 앱 컨테이너와 웹서버가 함께 있는 네트워크, 기본 naru-net
-	CaddySites   string // NARU_CADDY_SITES — 웹서버 컨테이너에서 본 정적 사이트 폴더, 기본 /srv/sites
-	CaddyCerts   string // NARU_CADDY_CERTS — 웹서버가 받은 인증서 (Naru가 읽기만), 기본 <데이터>/caddy/data/caddy/certificates
+	Network      string // NARU_NETWORK — 앱 컨테이너가 붙는 Docker 네트워크, 기본 naru-net (설치형은 없으면 만든다)
+	CaddySites   string // NARU_CADDY_SITES — 웹서버가 본 정적 사이트 폴더. 기본 host <데이터>/sites · docker /srv/sites
+	CaddyCerts   string // NARU_CADDY_CERTS — 웹서버가 받은 인증서(Naru는 읽기만). 기본 host <데이터>/caddy/certificates · docker <데이터>/caddy/data/caddy/certificates
 	HTTPSPort    int    // NARU_HTTPS_PORT — 바깥에서 본 HTTPS 포트, 기본 443 (로컬처럼 다른 포트로 열었을 때만)
 	AdminDomain  string // ADMIN_DOMAIN — 있으면 화면 설정보다 우선
 	ACMEEmail    string // ACME_EMAIL — 있으면 화면 설정보다 우선
@@ -57,21 +59,79 @@ type Config struct {
 
 func ConfigFromEnv(version string) Config {
 	return Config{
-		Listen:       envOr("NARU_LISTEN", ":8080"),
+		Install:      envOr("NARU_INSTALL", "host"),
+		Listen:       os.Getenv("NARU_LISTEN"),
 		DataDir:      envOr("NARU_DATA_DIR", "./data"),
 		ProcDir:      envOr("NARU_PROC_DIR", "/proc"),
 		DockerSocket: envOr("NARU_DOCKER_SOCKET", "/var/run/docker.sock"),
-		CaddySocket:  envOr("NARU_CADDY_ADMIN", "/run/caddy/admin.sock"),
-		SelfUpstream: envOr("NARU_SELF_UPSTREAM", "naru:8080"),
+		CaddySocket:  os.Getenv("NARU_CADDY_ADMIN"),
+		SelfUpstream: os.Getenv("NARU_SELF_UPSTREAM"),
 		InternalTLS:  os.Getenv("NARU_TLS") == "internal",
 		Network:      envOr("NARU_NETWORK", "naru-net"),
-		CaddySites:   envOr("NARU_CADDY_SITES", "/srv/sites"),
+		CaddySites:   os.Getenv("NARU_CADDY_SITES"),
 		CaddyCerts:   os.Getenv("NARU_CADDY_CERTS"),
 		HTTPSPort:    envPort("NARU_HTTPS_PORT", 443),
 		AdminDomain:  os.Getenv("ADMIN_DOMAIN"),
 		ACMEEmail:    os.Getenv("ACME_EMAIL"),
 		Version:      version,
 	}
+}
+
+// mode는 설치 방식마다 다른 것 — 기본값과, 웹서버가 컨테이너·"이 서버"에 닿는 방법.
+type mode struct {
+	listen, socket, self string
+	sites, certs, store  func(data string) string
+	container            contract.DestinationFinder
+	thisServer           string
+}
+
+var modes = map[string]mode{
+	// Docker: Naru·Caddy가 앱 컨테이너와 같은 네트워크에 있다 — 별칭으로 보낸다. 데이터 폴더는 공유 볼륨이다.
+	"docker": {
+		listen: ":8080", socket: "/run/caddy/admin.sock", self: "naru:8080",
+		sites:     func(string) string { return "/srv/sites" },
+		certs:     func(d string) string { return filepath.Join(d, "caddy", "data", "caddy", "certificates") },
+		store:     func(string) string { return "" },
+		container: kinds.ContainerAliasDestination{}, thisServer: "",
+	},
+	// 설치형: Naru·Caddy가 호스트에 있다 — 컨테이너는 IP로, "이 서버"는 127.0.0.1로. Caddy 저장소를 데이터 폴더 안에 둔다.
+	"host": {
+		listen: "127.0.0.1:8080", socket: "/run/naru/caddy.sock", self: "127.0.0.1:8080",
+		sites:     func(d string) string { return filepath.Join(d, "sites") },
+		certs:     func(d string) string { return filepath.Join(d, "caddy", "certificates") },
+		store:     func(d string) string { return filepath.Join(d, "caddy") },
+		container: kinds.ContainerIPDestination{}, thisServer: "127.0.0.1",
+	},
+}
+
+// resolved는 비워 둔 값을 설치 방식의 기본값으로 채운다.
+func (c Config) resolved() (Config, mode, error) {
+	if c.Install == "" {
+		c.Install = "host"
+	}
+	m, ok := modes[c.Install]
+	if !ok {
+		return c, m, fmt.Errorf("NARU_INSTALL=%q: docker 또는 host / must be docker or host", c.Install)
+	}
+	if c.DataDir == "" {
+		c.DataDir = "./data"
+	}
+	abs, err := filepath.Abs(c.DataDir) // 웹서버는 다른 폴더에서 돈다 — 경로를 절대 경로로
+	if err != nil {
+		return c, m, err
+	}
+	c.DataDir = abs
+	fill := func(v *string, def string) {
+		if *v == "" {
+			*v = def
+		}
+	}
+	fill(&c.Listen, m.listen)
+	fill(&c.CaddySocket, m.socket)
+	fill(&c.SelfUpstream, m.self)
+	fill(&c.CaddySites, m.sites(c.DataDir))
+	fill(&c.CaddyCerts, m.certs(c.DataDir))
+	return c, m, nil
 }
 
 func envPort(key string, fallback int) int {
@@ -110,24 +170,18 @@ type Outside struct {
 	ReadyTimeout time.Duration // 새 컨테이너 응답을 기다리는 시간 (0이면 60초)
 }
 
-func certsDir(cfg Config) string {
-	if cfg.CaddyCerts != "" {
-		return cfg.CaddyCerts
-	}
-	return filepath.Join(cfg.DataDir, "caddy", "data", "caddy", "certificates")
-}
-
 // RealOutside는 진짜 Docker·git·DNS·Caddy 소켓이다.
 func RealOutside(cfg Config) Outside {
+	cfg, _, _ = cfg.resolved()
 	d := docker.New(cfg.DockerSocket)
-	containers := docker.NewContainers(d)
+	containers := docker.NewContainers(d, cfg.Network)
 	return Outside{
 		Builder: docker.NewBuilder(d), Puller: docker.NewPuller(d), Images: docker.NewImages(d),
 		Starter: containers, Remover: containers, Switch: containers, Watcher: containers,
 		Code: git.Downloader{}, Ports: netcheck.TCP{}, DNS: netcheck.NewDNS(nil),
 		Stats:   stats.NewProcSampler(cfg.ProcDir, cfg.DataDir),
 		Sender:  caddy.NewSocketSender(cfg.CaddySocket),
-		Certs:   caddy.NewCertificateFiles(certsDir(cfg)),
+		Certs:   caddy.NewCertificateFiles(cfg.CaddyCerts),
 		Snippet: caddy.NewAdaptCompiler(cfg.CaddySocket),
 		Clock:   system.Clock{}, Random: system.Random{},
 	}
@@ -140,6 +194,7 @@ type App struct {
 	db  *store.DB
 	out Outside
 
+	mode   mode
 	ctx    context.Context // 배포가 따르는 수명 — Close하면 끝난다
 	stop   context.CancelFunc
 	wait   func() // 진행 중인 배포를 기다린다
@@ -157,8 +212,12 @@ func Open(cfg Config, log *slog.Logger) (*App, error) { return OpenWith(cfg, log
 
 // OpenWith는 바깥 도구를 골라 조립한다 (테스트용).
 func OpenWith(cfg Config, log *slog.Logger, out Outside) (*App, error) {
-	if out.Certs == nil { // 테스트처럼 가짜를 주지 않으면 데이터 폴더의 Caddy 저장소를 읽는다
-		out.Certs = caddy.NewCertificateFiles(certsDir(cfg))
+	cfg, m, err := cfg.resolved()
+	if err != nil {
+		return nil, err
+	}
+	if out.Certs == nil { // 테스트처럼 가짜를 주지 않으면 웹서버 저장소를 읽는다
+		out.Certs = caddy.NewCertificateFiles(cfg.CaddyCerts)
 	}
 	if out.Snippet == nil {
 		out.Snippet = caddy.NewAdaptCompiler(cfg.CaddySocket)
@@ -170,7 +229,7 @@ func OpenWith(cfg Config, log *slog.Logger, out Outside) (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	a := &App{cfg: cfg, log: log, db: db, out: out}
+	a := &App{cfg: cfg, log: log, db: db, out: out, mode: m}
 	a.ctx, a.stop = context.WithCancel(context.Background())
 
 	// v1 데이터를 못 읽어도 v2는 뜬다 — 다음 실행에서 다시 시도한다.
@@ -226,14 +285,23 @@ func (a *App) assemble() error {
 		Dockerfile: files.DockerfileReader{}, Packer: files.TarPacker{}, Builder: out.Builder, Puller: out.Puller,
 		Images: out.Images, Starter: out.Starter, Remover: out.Remover, Switch: out.Switch, Watcher: out.Watcher,
 		Ports: out.Ports, Files: siteFiles, Network: cfg.Network, SitesShown: cfg.CaddySites, ReadyTimeout: out.ReadyTimeout,
+		ContainerDestination: a.mode.container, ExternalDestination: kinds.ExternalDestination{ThisServer: a.mode.thisServer},
 	})
+
+	// G. 웹서버
+	siteMap := webserver.NewSiteMapBuilder(webserver.Fixed{
+		AdminSocket: cfg.CaddySocket, AdminUpstream: cfg.SelfUpstream, InternalTLS: cfg.InternalTLS, HTTPSPort: cfg.HTTPSPort,
+		Storage: a.mode.store(cfg.DataDir),
+	}, serviceStore, lookup, webserver.Settings{Admin: adminDomain, Email: certEmail, Setup: setup}, out.Certs, out.Clock, webStore, out.Watcher)
+	sync, run := webserver.NewWebServerSync(siteMap, caddy.JSONWriter{}, caddy.NewAdminSocketGuard(out.Sender, cfg.CaddySocket), bus, a.log)
+	a.syncWS = run
 
 	// E. 배포
 	a.past = history
 	lock := deploy.NewMemoryDeployLock()
 	deployer, wait := deploy.NewDeployer(a.ctx, a.log, deploy.Parts{
 		Lock: lock, History: history, Past: history, Logs: deploy.NewDeployLog(history), Services: serviceStore,
-		Live: liveStates, Kinds: lookup, Cleaner: deploy.NewOldVersionCleaner(history, out.Images, siteFiles), Events: bus,
+		Live: liveStates, Kinds: lookup, Cleaner: deploy.NewOldVersionCleaner(history, out.Images, siteFiles), Events: bus, Sync: sync,
 	})
 	a.wait = wait
 	control := deploy.NewServiceControl(deploy.ControlParts{
@@ -251,13 +319,6 @@ func (a *App) assemble() error {
 	hooks := webhook.NewHookReceiver(serviceStore, secrets,
 		[]contract.SignatureChecker{webhook.GitHubSignature{}, webhook.GitLabToken{}, webhook.QuerySecret{}},
 		webhook.NewBranchFilter(), deployer, hookLogs, out.Clock)
-
-	// G. 웹서버
-	siteMap := webserver.NewSiteMapBuilder(webserver.Fixed{
-		AdminSocket: cfg.CaddySocket, AdminUpstream: cfg.SelfUpstream, InternalTLS: cfg.InternalTLS, HTTPSPort: cfg.HTTPSPort,
-	}, serviceStore, lookup, webserver.Settings{Admin: adminDomain, Email: certEmail, Setup: setup}, out.Certs, out.Clock, webStore)
-	sync, run := webserver.NewWebServerSync(siteMap, caddy.JSONWriter{}, caddy.NewAdminSocketGuard(out.Sender, cfg.CaddySocket), bus, a.log)
-	a.syncWS = run
 
 	// I. 웹서버 설정 — 적용하면 바로 맞춰 보고, 거절되면 되돌린다
 	webSettings := websettings.NewWebSettingsEditor(websettings.EditorParts{

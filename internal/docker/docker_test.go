@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/KangminNa/naru/internal/model"
 )
 
 // fakeDocker는 유닉스 소켓에서 Docker인 척한다.
@@ -99,5 +101,61 @@ func TestDemuxStripsFrameHeaders(t *testing.T) {
 	}
 	if got := demux([]byte("tty output\n")); got != "tty output\n" {
 		t.Fatalf("tty logs pass through: %q", got)
+	}
+}
+
+// 설치형에서는 compose가 네트워크를 만들어 주지 않는다 — 처음 띄울 때 없으면 만든다.
+// 실제 dockerd(27)는 없는 네트워크로도 create를 받고 start에서야 실패한다 — 그래서 먼저 확인한다.
+func TestStartCreatesTheNetworkAndReturnsTheIP(t *testing.T) {
+	var calls []string
+	networkExists := false
+	sock := fakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls = append(calls, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/networks/naru-net":
+			if !networkExists {
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte(`{"message":"network naru-net not found"}`))
+				return
+			}
+			w.Write([]byte(`{"Name":"naru-net"}`))
+		case r.URL.Path == "/networks/create":
+			networkExists = true
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"Id":"net1"}`))
+		case r.URL.Path == "/containers/create":
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"Id":"abc"}`))
+		case r.URL.Path == "/containers/naru-x-1/start":
+			if !networkExists {
+				w.WriteHeader(http.StatusNotFound)
+				w.Write([]byte(`{"message":"network naru-net not found"}`))
+				return
+			}
+			w.WriteHeader(http.StatusNoContent)
+		case r.URL.Path == "/containers/naru-x-1/json":
+			w.Write([]byte(`{"State":{"Running":true,"Status":"running"},"NetworkSettings":{"Networks":{"naru-net":{"IPAddress":"172.18.0.5"},"other":{"IPAddress":"10.1.1.1"}}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	c := NewContainers(New(sock), "naru-net")
+	spec := model.ContainerSpec{Name: "naru-x-1", Image: "img", Network: "naru-net", Aliases: []string{"naru-x"}}
+	ip, err := c.Start(context.Background(), spec)
+	if err != nil || ip != "172.18.0.5" {
+		t.Fatalf("ip=%q err=%v calls=%v", ip, err, calls)
+	}
+	if strings.Count(strings.Join(calls, " "), "/networks/create") != 1 {
+		t.Fatalf("the network is created once: %v", calls)
+	}
+}
+
+func TestStatesCarryTheIPOnTheAppNetwork(t *testing.T) {
+	sock := fakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`[{"Names":["/naru-x-1"],"State":"running","Status":"Up","NetworkSettings":{"Networks":{"bridge":{"IPAddress":"172.17.0.2"},"naru-net":{"IPAddress":"172.18.0.5"}}}}]`))
+	}))
+	all, err := NewContainers(New(sock), "naru-net").All(context.Background())
+	if err != nil || all["naru-x-1"].IP != "172.18.0.5" {
+		t.Fatalf("%+v %v", all, err)
 	}
 }

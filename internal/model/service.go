@@ -105,9 +105,12 @@ func (s Service) PrimaryDomain() string {
 type LiveState struct {
 	Alias    string // 네트워크에서 서비스를 부르는 이름 — 웹서버가 여기로 보낸다
 	Instance string // 지금 요청을 받는 실제 컨테이너
-	Release  string // 정적 사이트: 지금 서빙 중인 배포 번호
-	Port     Port
-	Stopped  bool // 직접 멈췄다 — 장애가 아니다
+	// InstanceIP는 그 컨테이너의 앱 네트워크 IP — 배포 때 기록한다. 재시작하면 바뀔 수 있어
+	// 사이트 지도를 그릴 때 지금 IP로 덮어쓴다 (설치형은 이 IP로 보낸다).
+	InstanceIP string
+	Release    string // 정적 사이트: 지금 서빙 중인 배포 번호
+	Port       Port
+	Stopped    bool // 직접 멈췄다 — 장애가 아니다
 }
 
 // CurrentContainer는 지금 요청을 받는 컨테이너다 (v1에서 넘겨받은 것은 Alias 그 자체).
