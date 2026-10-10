@@ -255,7 +255,7 @@ func (a *App) assemble() error {
 	// H. 보여주기
 	viewer := views.NewServiceViewer(views.Parts{
 		Services: serviceStore, Secrets: secrets, History: history, Containers: out.Watcher, Kinds: lookup,
-		Admin: adminDomain, Deployer: deployer, Certs: out.Certs, Clock: out.Clock,
+		Admin: adminDomain, Deployer: deployer, Certs: out.Certs, Clock: out.Clock, HTTPSPort: cfg.HTTPSPort,
 	}, a.log)
 
 	srv, err := web.New(web.Deps{

@@ -24,6 +24,7 @@ type Parts struct {
 	Deployer   contract.Deployer
 	Certs      contract.CertificateReader
 	Clock      contract.Clock
+	HTTPSPort  int // 바깥에서 본 HTTPS 포트 — 443이 아니면 웹훅 주소에 붙인다 (로컬 개발)
 }
 
 type serviceViewer struct {
@@ -125,7 +126,11 @@ func (v serviceViewer) Detail(ctx context.Context, id model.ServiceID) (model.Se
 		view.LiveID = s.Live.LiveDeployment()
 		view.Webhook.Secret = sec.WebhookSecret
 		if domain, _ := v.p.Admin.Get(ctx); !domain.IsZero() {
-			view.Webhook.URL = fmt.Sprintf("https://%s/hooks/%d", domain, id)
+			host := domain.String()
+			if v.p.HTTPSPort != 0 && v.p.HTTPSPort != 443 {
+				host = fmt.Sprintf("%s:%d", host, v.p.HTTPSPort)
+			}
+			view.Webhook.URL = fmt.Sprintf("https://%s/hooks/%d", host, id)
 		}
 	}
 	return view, nil
