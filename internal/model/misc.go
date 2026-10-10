@@ -52,6 +52,7 @@ type ServiceCard struct {
 	Kind   KindName
 	Domain string
 	Status ServiceStatus
+	Usage  *ResourceUsage // 지켜보기가 읽은 CPU·메모리 (실행 중인 컨테이너만, 없으면 nil)
 }
 
 // HomeView는 홈 화면이다.
@@ -102,7 +103,8 @@ type ServiceView struct {
 	Webhook    WebhookView
 	Form       ServiceForm
 	Web        WebSettingsView
-	Findings   []Finding // 지켜보기가 찾은 이 서비스의 문제
+	Findings   []Finding      // 지켜보기가 찾은 이 서비스의 문제
+	Usage      *ResourceUsage // CPU·메모리 (없으면 nil)
 }
 
 // StepView는 배포 단계 하나다. State: done · doing · failed

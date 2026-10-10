@@ -44,6 +44,10 @@
     {{if $.Data.Container}}
     <dt>{{t "service.container"}}</dt><dd><code>{{$s.Live.CurrentContainer}}</code></dd>
     {{end}}
+    {{with .Data.Usage}}
+    <dt>CPU</dt><dd>{{cpu .CPUPercent}} <span class="muted small">{{t "service.cpu.whole"}}</span></dd>
+    <dt>{{t "home.memory"}}</dt><dd>{{bytes .MemUsed}} <span class="muted small">/ {{bytes .MemLimit}}</span><progress class="meter" max="{{.MemLimit}}" value="{{.MemUsed}}"></progress></dd>
+    {{end}}
   </dl>
 </section>
 

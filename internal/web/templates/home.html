@@ -36,6 +36,7 @@
     </div>
     <div class="svc-domain">{{if .Domain}}{{.Domain}}{{else}}<span class="muted">{{t "home.noaddress"}}</span>{{end}}</div>
     <div class="svc-foot"><span class="state {{.StateClass}}">{{t .StateKey}}</span>{{with .Detail}}<span>· {{.}}</span>{{end}}</div>
+    {{with .Usage}}<div class="svc-usage"><span>CPU <b>{{cpu .CPUPercent}}</b></span><span>{{t "home.memory"}} <b>{{bytes .MemUsed}}</b></span></div>{{end}}
   </a>
   {{end}}
 </div>

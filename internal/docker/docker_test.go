@@ -191,3 +191,28 @@ func TestRecentLogsKeepTimeAndStream(t *testing.T) {
 		t.Fatalf("%+v", lines[2])
 	}
 }
+
+func TestUsage(t *testing.T) {
+	sock := fakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/containers/naru-blog-1/stats" || r.URL.Query().Get("stream") != "false" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write([]byte(`{"cpu_stats":{"cpu_usage":{"total_usage":3500000000},"system_cpu_usage":120000000000,"online_cpus":4},
+			"precpu_stats":{"cpu_usage":{"total_usage":3000000000},"system_cpu_usage":116000000000},
+			"memory_stats":{"usage":157286400,"limit":8238469120,"stats":{"inactive_file":52428800}}}`))
+	}))
+	u, err := NewContainers(New(sock), "naru-net").Usage(context.Background(), "naru-blog-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.CPUPercent < 12.49 || u.CPUPercent > 12.51 {
+		t.Fatalf("0.5s of CPU in 4s of the whole machine is 12.5%%: %v", u.CPUPercent)
+	}
+	if u.MemUsed != 104857600 || u.MemLimit != 8238469120 {
+		t.Fatalf("file cache is not counted as used: %+v", u)
+	}
+	if _, err := NewContainers(New(sock), "naru-net").Usage(context.Background(), "nope"); err == nil {
+		t.Fatal("unknown container")
+	}
+}

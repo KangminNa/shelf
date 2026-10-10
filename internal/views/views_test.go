@@ -150,13 +150,21 @@ func TestFindingsReachHomeAndTheirService(t *testing.T) {
 	parts.Watch = fakeWatch{model.WatchSnapshot{CheckedAt: time.Now(), Findings: []model.Finding{
 		{Service: a, Name: "api", Key: "find.port", Level: model.FindingUrgent, FixPort: 8080},
 		{Service: b, Name: "blog", Key: "find.webhook", Level: model.FindingHint},
-	}}}
+	}, Usage: map[model.ServiceID]model.ResourceUsage{a: {CPUPercent: 3, MemUsed: 1 << 20}}}}
 	v := NewServiceViewer(parts, quiet)
 	h, _ := v.Home(ctx)
 	if !h.Checked || len(h.Findings) != 2 || h.Findings[0].Key != "find.port" {
 		t.Fatalf("home shows them all, heaviest first: %+v", h)
 	}
-	if d, _ := v.Detail(ctx, b); len(d.Findings) != 1 || d.Findings[0].Key != "find.webhook" {
+	if d, _ := v.Detail(ctx, b); len(d.Findings) != 1 || d.Findings[0].Key != "find.webhook" || d.Usage != nil {
 		t.Fatalf("a service shows only its own: %+v", d.Findings)
+	}
+	if d, _ := v.Detail(ctx, a); d.Usage == nil || d.Usage.CPUPercent != 3 {
+		t.Fatal("usage from the watcher")
+	}
+	for _, c := range h.Cards {
+		if (c.ID == a) != (c.Usage != nil) {
+			t.Fatalf("cards carry usage when there is one: %+v", c)
+		}
 	}
 }

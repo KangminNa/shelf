@@ -14,7 +14,15 @@ type WatchSnapshot struct {
 	Down        []DownService // 멈춘 컨테이너 서비스 (두 번 연속 문제였던 것)
 	WebServerUp bool
 	DockerUp    bool
-	Findings    []Finding // 서비스·인증서의 문제 (웹서버·Docker에 닿는지는 화면이 지금 상태로 본다)
+	Findings    []Finding                   // 서비스·인증서의 문제 (웹서버·Docker에 닿는지는 화면이 지금 상태로 본다)
+	Usage       map[ServiceID]ResourceUsage // 실행 중인 컨테이너 서비스의 CPU·메모리
+}
+
+// ResourceUsage는 컨테이너 하나의 CPU·메모리 사용량이다.
+type ResourceUsage struct {
+	CPUPercent float64 // 서버 전체를 100%로 본다 (홈의 서버 CPU와 같은 눈금)
+	MemUsed    uint64  // 바이트 — 다시 읽을 수 있는 파일 캐시는 뺀다 (docker stats와 같다)
+	MemLimit   uint64  // 제한이 없으면 서버 전체 메모리
 }
 
 // FindingLevel은 문제의 무게다 — 무거운 것부터 보인다.

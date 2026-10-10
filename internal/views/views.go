@@ -79,13 +79,13 @@ func (v serviceViewer) Home(ctx context.Context) (model.HomeView, error) {
 		containers = v.containers(ctx)
 		h.DockerDown = containers == nil
 	}
+	snap := v.p.Watch.Snapshot()
 	for _, e := range list {
 		h.Cards = append(h.Cards, model.ServiceCard{
 			ID: e.s.ID, Name: e.s.Name.String(), Kind: e.s.Kind, Domain: e.s.PrimaryDomain(),
-			Status: e.tools.Status.Read(e.s, containers),
+			Status: e.tools.Status.Read(e.s, containers), Usage: usageOf(snap, e.s),
 		})
 	}
-	snap := v.p.Watch.Snapshot()
 	h.Findings, h.Checked = snap.Findings, !snap.CheckedAt.IsZero()
 	return h, nil
 }
@@ -131,11 +131,13 @@ func (v serviceViewer) Detail(ctx context.Context, id model.ServiceID) (model.Se
 	if view.Web, err = v.webView(ctx, s); err != nil {
 		return model.ServiceView{}, err
 	}
-	for _, f := range v.p.Watch.Snapshot().Findings {
+	snap := v.p.Watch.Snapshot()
+	for _, f := range snap.Findings {
 		if f.Service == id {
 			view.Findings = append(view.Findings, f)
 		}
 	}
+	view.Usage = usageOf(snap, s)
 	if view.Deployable {
 		view.Deploys, _ = v.p.History.Recent(ctx, id, 10)
 		view.LiveID = s.Live.LiveDeployment()
@@ -149,6 +151,15 @@ func (v serviceViewer) Detail(ctx context.Context, id model.ServiceID) (model.Se
 		}
 	}
 	return view, nil
+}
+
+// usageOf는 지켜보기가 읽은 CPU·메모리다. 직접 멈춘 서비스는 마지막 값이 남아 있어도 보이지 않는다.
+func usageOf(snap model.WatchSnapshot, s model.Service) *model.ResourceUsage {
+	u, ok := snap.Usage[s.ID]
+	if !ok || s.Live.Stopped {
+		return nil
+	}
+	return &u
 }
 
 // webView는 화면에 보일 웹서버 설정이다 — 비밀번호 해시 대신 "있음"만, 경로 대상은 서비스 이름으로.

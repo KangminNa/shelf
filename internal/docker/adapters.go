@@ -144,6 +144,11 @@ func (k Containers) Recent(ctx context.Context, name string, n int) ([]model.Log
 	return k.c.logLines(ctx, name, n)
 }
 
+// Usage는 컨테이너 하나의 CPU·메모리다 (UsageReader).
+func (k Containers) Usage(ctx context.Context, name string) (model.ResourceUsage, error) {
+	return k.c.usage(ctx, name)
+}
+
 func (k Containers) BelongingTo(ctx context.Context, id model.ServiceID) ([]string, error) {
 	return k.c.byLabel(ctx, labelService, strconv.FormatInt(int64(id), 10))
 }

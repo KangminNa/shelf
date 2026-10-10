@@ -459,6 +459,11 @@ type ContainerLogReader interface {
 	Recent(ctx context.Context, container string, n int) ([]model.LogLine, error)
 }
 
+// UsageReader는 컨테이너 하나의 CPU·메모리 사용량을 읽는다. 1초쯤 걸린다 — 지켜보기 고리에서만 부른다.
+type UsageReader interface {
+	Usage(ctx context.Context, container string) (model.ResourceUsage, error)
+}
+
 // AccessLogReader는 웹서버가 남긴 요청 기록에서 그 주소들의 최근 n개를 읽는다. 아직 기록이 없으면 빈 목록.
 type AccessLogReader interface {
 	Recent(ctx context.Context, hosts []string, n int) ([]model.LogLine, error)

@@ -192,6 +192,13 @@ func funcsFor(lang string) template.FuncMap {
 			return fmt.Sprintf(msg, vals...)
 		},
 		"pct": func(v float64) string { return fmt.Sprintf("%.0f%%", v) },
+		// cpu는 서비스 하나의 CPU다 — 대개 몇 %라 10% 아래는 소수 한 자리까지
+		"cpu": func(v float64) string {
+			if v < 10 {
+				return fmt.Sprintf("%.1f%%", v)
+			}
+			return fmt.Sprintf("%.0f%%", v)
+		},
 		"ago": func(t time.Time) string { return ago(lang, t) },
 		"dur": func(d time.Duration) string { return d.String() },
 		"trigger": func(t string) string {

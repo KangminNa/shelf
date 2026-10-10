@@ -171,6 +171,7 @@
 | `ContainerSwitch` | 컨테이너를 멈추고 켠다 | `docker.Containers` |
 | `ContainerWatcher` | 컨테이너 상태·로그, 이 서비스의 컨테이너 목록을 본다 | `docker.Containers` |
 | `ContainerLogReader` | 컨테이너가 찍은 최근 줄을 시각·stdout/stderr와 함께 읽는다 | `docker.Containers` |
+| `UsageReader` | 컨테이너 하나의 CPU·메모리 사용량을 읽는다 (Docker stats 한 번 — 1초쯤 걸려 지켜보기 고리에서만 부른다) | `docker.Containers` |
 | `AccessLogReader` | 웹서버가 남긴 요청 기록 파일에서 그 주소들의 최근 요청을 읽는다 (파일 끝 4MB만) | `caddy.AccessLogFile` |
 | `AlertSender` | 알림 하나를 그 주소의 형식으로 보낸다 (10초 제한, 응답 본문은 읽고 버린다) | `httppost.AlertPoster` |
 | `SnippetCompiler` | 고급 칸의 Caddyfile 지시어를 웹서버 형식으로 바꾼다 — 그 사이트의 경로 처리만 꺼내고 나머지는 "적용되지 않음"으로 알린다 | `caddy.AdaptCompiler` (Caddy 관리 API `/adapt`) |
@@ -207,6 +208,10 @@ Naru가 막 켜졌을 때 이미 멈춰 있던 것은 알리지 않고 기준으
 | 인증서가 곧 끝남 | 남은 기간이 수명의 1/6 미만 — 90일짜리면 15일, 개발용 내부 인증서(12시간)면 2시간 (알림은 하루 한 번, 목록에는 계속) | 주의 |
 | 웹훅이 한 번도 오지 않음 | 소스가 저장소 주소(`Service.FromGit` — 저장소·정적 사이트) + 자동 배포 켜짐 + 만든 지 하루가 지남 + 받은 적 없음 (GitHub의 ping도 받은 것) | 확인 · 웹훅 설정 보기 |
 | 웹서버·Docker에 닿지 않음 | 화면을 열 때의 지금 상태 (지켜보기를 기다리지 않는다) | 급함 — 목록 맨 위 |
+
+**CPU·메모리 (M6-4)** — 지켜보기 고리가 실행 중인 컨테이너 서비스의 사용량을 읽어(동시에 4개까지) Snapshot에 담는다.
+화면은 그것을 보여주기만 한다 — 서비스 화면 상태 칸에 CPU %와 메모리(사용/제한), 홈 카드에 작게.
+CPU %는 **서버 전체를 100%로** 본다 (홈의 서버 CPU와 같은 눈금 — `docker stats`는 코어 하나를 100%로 본다).
 
 **이 서버의 IP:** `NARU_PUBLIC_IP`가 있으면 그것, 없으면 관리 주소를 조회한 IP. 둘 다 없으면 DNS 진단을 하지 않는다.
 비싼 확인(다른 포트 찔러 보기, DNS 조회)은 **지켜보기 고리에서만** 한다 — 화면은 기다리지 않는다.
@@ -354,7 +359,8 @@ Naru가 막 켜졌을 때 이미 멈춰 있던 것은 알리지 않고 기준으
 
 | 이름 | 무엇 |
 |---|---|
-| `WatchSnapshot` · `DownService` | 마지막으로 본 것 — 멈춘 서비스(왜), 웹서버·Docker에 닿는지, 찾은 문제, 본 시각 · 멈춘 서비스 하나 |
+| `WatchSnapshot` · `DownService` | 마지막으로 본 것 — 멈춘 서비스(왜), 웹서버·Docker에 닿는지, 찾은 문제, 서비스별 CPU·메모리, 본 시각 · 멈춘 서비스 하나 |
+| `ResourceUsage` | 컨테이너 하나의 CPU %(서버 전체가 100%)·메모리 사용량·제한 (제한이 없으면 서버 전체 메모리) |
 | `Finding` · `FindingLevel` | 찾은 문제 하나 — 서비스, 문구 키와 끼울 값, 기술적인 이유, 고칠 포트 · 급함·주의·확인 |
 | `Alert` · `AlertLevel` | 보낼 알림 — 사건 이름, 문제·복구·알림, 제목, 내용, 서비스 이름 |
 | `AlertChannel` · `ChannelID` | 알림 주소 — 이름, 주소, 시크릿. **`web`·`cli`는 이 타입을 쓸 수 없다** (주소가 비밀) |
@@ -376,8 +382,8 @@ Naru가 막 켜졌을 때 이미 멈춰 있던 것은 알리지 않고 기준으
 | 이름 | 무엇 |
 |---|---|
 | `ServiceStatus` | 화면 상태 — 문구 키(실행 중 · 멈춤 · 죽음 · 컨테이너 없음 · 파일 서빙 …)와 색 |
-| `ServiceCard` · `HomeView` | 홈의 카드 하나 · 홈 화면 (Docker에 닿지 못했는지, 주의가 필요한 것 포함) |
-| `ServiceView` · `ServiceForm` · `WebhookView` | 서비스 상세 (그 서비스의 찾은 문제 포함) · 설정 폼에 채울 값(토큰 원문 없음, 있는지만) · 웹훅 주소와 시크릿 |
+| `ServiceCard` · `HomeView` | 홈의 카드 하나(CPU·메모리 포함) · 홈 화면 (Docker에 닿지 못했는지, 주의가 필요한 것 포함) |
+| `ServiceView` · `ServiceForm` · `WebhookView` | 서비스 상세 (그 서비스의 찾은 문제, CPU·메모리 포함) · 설정 폼에 채울 값(토큰 원문 없음, 있는지만) · 웹훅 주소와 시크릿 |
 | `DomainView` | 서비스 상세의 주소 하나와 그 인증서 상태 |
 | `DeploymentView` · `StepView` | 배포 화면 · 배포 단계 하나 |
 | `ServerSnapshot` | 서버의 CPU·메모리·디스크 |
@@ -850,6 +856,11 @@ type ContainerLogReader interface {
 	Recent(ctx context.Context, container string, n int) ([]model.LogLine, error)
 }
 
+// UsageReader는 컨테이너 하나의 CPU·메모리 사용량을 읽는다. 1초쯤 걸린다 — 지켜보기 고리에서만 부른다.
+type UsageReader interface {
+	Usage(ctx context.Context, container string) (model.ResourceUsage, error)
+}
+
 // AccessLogReader는 웹서버가 남긴 요청 기록에서 그 주소들의 최근 n개를 읽는다. 아직 기록이 없으면 빈 목록.
 type AccessLogReader interface {
 	Recent(ctx context.Context, hosts []string, n int) ([]model.LogLine, error)
@@ -926,7 +937,7 @@ type RandomTokens interface {
 | `webServerSync` | SiteMapBuilder · ConfigWriter · ConfigSender(`AdminSocketGuard`로 감싼 것) · EventSubscriber |
 | `serviceViewer` | ServiceReader · SecretStore · DeployHistoryReader · ContainerWatcher · KindLookup · AdminDomainSetting · Deployer · CertificateReader · Clock · WebSettingsStore · ContainerLogReader · AccessLogReader · HealthWatcher |
 | `webSettingsEditor` | ServiceReader · WebSettingsStore · SnippetCompiler · LoginHasher · WebServerSync |
-| `healthWatcher` | ServiceReader · KindLookup · ContainerWatcher · PortChecker · Deployer · WebServerSync · CertificateReader · AdminDomainSetting · Diagnoser · Clock · EventPublisher |
+| `healthWatcher` | ServiceReader · KindLookup · ContainerWatcher · PortChecker · Deployer · WebServerSync · CertificateReader · AdminDomainSetting · Diagnoser · UsageReader · Clock · EventPublisher |
 | `diagnoser` | KindLookup · PortChecker · DNSChecker · AdminDomainSetting · CertificateReader · Clock (+ `NARU_PUBLIC_IP` 값은 만들 때 받는다) |
 | `alerts` | ChannelStore · DeliveryLog · AlertSender · ServiceReader · EventSubscriber · Clock |
 | `web` | LoginManager · AccountManager · SetupKey · AdminDomainSetting · CertEmailSetting · SetupProgress · ServiceLauncher · ServiceEditor · ServiceViewer · Deployer · ServiceControl · HookReceiver · ServerStats · WebServerSync · DNSChecker · CertificateReader · Clock · WebSettingsEditor · NginxTranslator · AlertSettings |

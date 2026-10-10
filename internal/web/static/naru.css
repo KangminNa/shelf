@@ -285,3 +285,7 @@ details.reveal code { display: block; margin-top: 6px; overflow-wrap: anywhere; 
 .finding-text span { color: var(--text-2); font-size: 13px; }
 .finding .why { display: block; margin-top: 6px; font-size: 12px; color: var(--text-3); overflow-wrap: anywhere; }
 .allgood { display: flex; align-items: center; gap: 10px; color: var(--text-2); font-size: 14px; margin: 0 0 20px; }
+
+/* 서비스 CPU·메모리 (M6-4) */
+.svc-usage { display: flex; gap: 12px; margin-top: 8px; font-size: 12px; color: var(--text-3); }
+.svc-usage b { color: var(--text-2); font-weight: 600; }

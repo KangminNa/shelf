@@ -186,6 +186,7 @@ type Outside struct {
 	Alerts  contract.AlertSender     // 알림을 보낸다 (HTTP)
 	AppLogs contract.ContainerLogReader
 	Access  contract.AccessLogReader // 비면 데이터 폴더의 웹서버 접근 로그를 읽는다
+	Usage   contract.UsageReader     // 컨테이너 CPU·메모리 (Docker stats)
 
 	WatchEvery time.Duration // 지켜보는 간격 (0이면 30초)
 	Clock      contract.Clock
@@ -201,7 +202,7 @@ func RealOutside(cfg Config) Outside {
 	containers := docker.NewContainers(d, cfg.Network)
 	return Outside{
 		Builder: docker.NewBuilder(d), Puller: docker.NewPuller(d), Images: docker.NewImages(d),
-		Starter: containers, Remover: containers, Switch: containers, Watcher: containers, AppLogs: containers,
+		Starter: containers, Remover: containers, Switch: containers, Watcher: containers, AppLogs: containers, Usage: containers,
 		Code: git.Downloader{}, Ports: netcheck.TCP{}, DNS: netcheck.NewDNS(nil),
 		Stats:   stats.NewProcSampler(cfg.ProcDir, cfg.DataDir),
 		Sender:  caddy.NewSocketSender(cfg.CaddySocket),
@@ -368,7 +369,7 @@ func (a *App) assemble() error {
 	})
 	watcher, runWatch := watch.NewHealthWatcher(watch.Parts{
 		Services: serviceStore, Kinds: lookup, Containers: out.Watcher, Ports: out.Ports, Deployer: deployer,
-		WebServer: sync, Certs: out.Certs, Admin: adminDomain, Diagnoser: diagnoser, Clock: out.Clock, Events: bus, Every: out.WatchEvery, Log: a.log,
+		WebServer: sync, Certs: out.Certs, Admin: adminDomain, Diagnoser: diagnoser, Usage: out.Usage, Clock: out.Clock, Events: bus, Every: out.WatchEvery, Log: a.log,
 	})
 	a.alerts, a.watch = runAlerts, runWatch
 

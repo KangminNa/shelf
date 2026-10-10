@@ -32,6 +32,7 @@ type Parts struct {
 	Certs      contract.CertificateReader
 	Admin      contract.AdminDomainSetting
 	Diagnoser  contract.Diagnoser
+	Usage      contract.UsageReader
 	Clock      contract.Clock
 	Events     contract.EventPublisher
 	Every      time.Duration // 0이면 30초
@@ -162,7 +163,47 @@ func (w *healthWatcher) check(ctx context.Context) {
 	}
 	findings := w.diagnose(ctx, all, states)
 	findings = append(findings, w.warnCertificates(ctx, all, now)...)
-	w.publishSnapshot(all, findings, now)
+	usage := w.readUsage(ctx, all, states)
+	w.publishSnapshot(all, findings, usage, now)
+}
+
+// readUsage는 실행 중인 컨테이너 서비스의 CPU·메모리를 읽는다. 하나에 1초쯤 걸려 동시에 넷까지.
+// 못 읽은 것은 빼 둔다 — 화면에 "—"로 보인다.
+func (w *healthWatcher) readUsage(ctx context.Context, all []model.Service, states model.ContainerStates) map[model.ServiceID]model.ResourceUsage {
+	out := map[model.ServiceID]model.ResourceUsage{}
+	if states == nil {
+		return out
+	}
+	var (
+		mu    sync.Mutex
+		wg    sync.WaitGroup
+		slots = make(chan struct{}, 4)
+	)
+	for _, s := range all {
+		tools, ok := w.p.Kinds.Find(s.Kind)
+		if !ok || !tools.Destination.Find(s).Container || s.Live.Stopped {
+			continue
+		}
+		name := s.Live.CurrentContainer()
+		if st, ok := states[name]; !ok || st.State != "running" {
+			continue
+		}
+		wg.Add(1)
+		go func(id model.ServiceID) {
+			defer wg.Done()
+			slots <- struct{}{}
+			defer func() { <-slots }()
+			uctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			if u, err := w.p.Usage.Usage(uctx, name); err == nil {
+				mu.Lock()
+				out[id] = u
+				mu.Unlock()
+			}
+		}(s.ID)
+	}
+	wg.Wait()
+	return out
 }
 
 func (w *healthWatcher) judgeServices(ctx context.Context, all []model.Service, states model.ContainerStates, now time.Time) {
@@ -305,8 +346,8 @@ func (w *healthWatcher) warnCertificates(ctx context.Context, all []model.Servic
 	return out
 }
 
-func (w *healthWatcher) publishSnapshot(all []model.Service, findings []model.Finding, now time.Time) {
-	snap := model.WatchSnapshot{CheckedAt: now, DockerUp: !w.docker.down, WebServerUp: !w.webServer.down}
+func (w *healthWatcher) publishSnapshot(all []model.Service, findings []model.Finding, usage map[model.ServiceID]model.ResourceUsage, now time.Time) {
+	snap := model.WatchSnapshot{CheckedAt: now, DockerUp: !w.docker.down, WebServerUp: !w.webServer.down, Usage: usage}
 	for _, s := range all {
 		if f := w.services[s.ID]; f != nil && f.down {
 			snap.Down = append(snap.Down, model.DownService{Service: s.ID, Name: s.Name.String(), Why: f.why, Since: f.since})

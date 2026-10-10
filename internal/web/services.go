@@ -19,6 +19,7 @@ type card struct {
 	StateKey   string
 	StateClass string // ok | warn | bad | muted
 	Detail     string // Docker가 말하는 상태 ("Up 3 hours")
+	Usage      *model.ResourceUsage
 }
 
 // colorFor는 서비스 이름마다 늘 같은 색 클래스(c0~c6)를 준다.
@@ -41,7 +42,7 @@ func initialOf(name string) string {
 func cardOf(c model.ServiceCard) card {
 	return card{
 		ID: c.ID, Name: c.Name, Initial: initialOf(c.Name), Color: colorFor(c.Name), KindKey: "kind." + string(c.Kind), Domain: c.Domain,
-		StateKey: "state." + c.Status.Key, StateClass: c.Status.Tone, Detail: c.Status.Detail,
+		StateKey: "state." + c.Status.Key, StateClass: c.Status.Tone, Detail: c.Status.Detail, Usage: c.Usage,
 	}
 }
 

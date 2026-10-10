@@ -337,6 +337,7 @@ type serviceScreen struct {
 	WebRefused    string              // 웹서버가 거절한 이유 (그 말 그대로)
 	Form          string              // 오류가 난 폼
 	Findings      []finding           // 지켜보기가 찾은 이 서비스의 문제
+	Usage         *model.ResourceUsage
 }
 
 func (s *Server) servicePage(w http.ResponseWriter, r *http.Request) {
@@ -368,7 +369,7 @@ func (s *Server) serviceView(r *http.Request, u model.Account, sv model.ServiceV
 		Service: sv.Service, Card: cardOf(sc), Target: sv.Target, Container: sv.Container, Deployable: sv.Deployable,
 		Deploys: sv.Deploys, LiveID: sv.LiveID, Running: sv.Deploying, Form: form,
 		WebhookURL: sv.Webhook.URL, WebhookSecret: sv.Webhook.Secret, HasToken: sv.Form.HasToken,
-		Domains: s.domainRows(r, sv.Domains), Web: webFormOf(sv.Web),
+		Domains: s.domainRows(r, sv.Domains), Web: webFormOf(sv.Web), Usage: sv.Usage,
 	}
 	for _, f := range sv.Findings {
 		row := findingOf(f)

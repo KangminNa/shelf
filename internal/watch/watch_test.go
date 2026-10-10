@@ -3,6 +3,7 @@ package watch
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"sync"
@@ -52,6 +53,22 @@ func (f *fakePorts) Answers(_ context.Context, host string, port model.Port) err
 		return errors.New("connection refused")
 	}
 	return nil
+}
+
+type fakeUsage struct {
+	mu    sync.Mutex
+	read  []string
+	fails map[string]bool
+}
+
+func (f *fakeUsage) Usage(_ context.Context, name string) (model.ResourceUsage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.read = append(f.read, name)
+	if f.fails[name] {
+		return model.ResourceUsage{}, errors.New("no such container")
+	}
+	return model.ResourceUsage{CPUPercent: 12.5, MemUsed: 100 << 20, MemLimit: 8 << 30}, nil
 }
 
 type fakeDeployer struct{ busy map[model.ServiceID]bool }
@@ -114,6 +131,7 @@ type rig struct {
 	clock      *fakeClock
 	events     *recorder
 	dns        *fakeDNS
+	usage      *fakeUsage
 }
 
 func name(s string) model.ServiceName { n, _ := model.ParseServiceName(s); return n }
@@ -134,10 +152,12 @@ func newRig() *rig {
 		events:     &recorder{},
 	}
 	r.dns = &fakeDNS{ips: map[string][]string{}}
+	r.usage = &fakeUsage{fails: map[string]bool{}}
 	lookup := kinds.NewLookup(kinds.Tools{})
 	w, _ := NewHealthWatcher(Parts{
 		Services: r.services, Kinds: lookup, Containers: r.containers, Ports: r.ports,
 		Deployer: r.deployer, WebServer: r.web, Certs: r.certs, Admin: &fakeAdmin{}, Clock: r.clock, Events: r.events,
+		Usage:     r.usage,
 		Diagnoser: NewDiagnoser(DiagnoserParts{Kinds: lookup, Ports: r.ports, DNS: r.dns, Admin: &fakeAdmin{}, Certs: r.certs, Clock: r.clock, PublicIP: "198.51.100.24"}),
 		Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
@@ -299,4 +319,74 @@ func TestCertificateEndingSoonOncePerDay(t *testing.T) {
 	if ev := r.check(); len(ev) != 1 {
 		t.Fatalf("again the next day: %v", ev)
 	}
+}
+
+func TestUsageOfRunningContainerServices(t *testing.T) {
+	r := newRig()
+	r.check()
+	snap := r.w.Snapshot()
+	if u, ok := snap.Usage[1]; !ok || u.CPUPercent != 12.5 || u.MemUsed != 100<<20 {
+		t.Fatalf("%+v", snap.Usage)
+	}
+	if len(snap.Usage) != 1 || len(r.usage.read) != 1 || r.usage.read[0] != "naru-blog-3" {
+		t.Fatalf("only running containers are read (not static sites or external services): %v", r.usage.read)
+	}
+
+	r.crash()
+	r.usage.read = nil
+	r.check()
+	if len(r.w.Snapshot().Usage) != 0 || len(r.usage.read) != 0 {
+		t.Fatal("a stopped container has no usage")
+	}
+
+	r.containers.states["naru-blog-3"] = model.ContainerState{Name: "naru-blog-3", Running: true, State: "running", IP: "10.0.0.3"}
+	r.usage.fails["naru-blog-3"] = true
+	r.check()
+	if len(r.w.Snapshot().Usage) != 0 {
+		t.Fatal("a failed read leaves it out")
+	}
+
+	r.usage.fails["naru-blog-3"] = false
+	r.containers.err = errors.New("docker down")
+	r.check()
+	if len(r.w.Snapshot().Usage) != 0 {
+		t.Fatal("without Docker there is nothing to read")
+	}
+}
+
+func TestUsageIsReadFourAtATime(t *testing.T) {
+	r := newRig()
+	r.services.all = nil
+	for i := 1; i <= 9; i++ {
+		c := fmt.Sprintf("naru-app%d-1", i)
+		r.services.all = append(r.services.all, model.Service{ID: model.ServiceID(i), Name: name(fmt.Sprintf("app%d", i)), Kind: model.KindImage, Port: 80,
+			Live: model.LiveState{Alias: fmt.Sprintf("naru-app%d", i), Instance: c}})
+		r.containers.states[c] = model.ContainerState{Name: c, Running: true, State: "running"}
+	}
+	slow := &slowUsage{}
+	r.w.p.Usage = slow
+	r.check()
+	if got := len(r.w.Snapshot().Usage); got != 9 {
+		t.Fatalf("all nine: %d", got)
+	}
+	if slow.peak > 4 || slow.peak < 2 {
+		t.Fatalf("read in parallel, at most four at once: peak %d", slow.peak)
+	}
+}
+
+type slowUsage struct {
+	mu        sync.Mutex
+	now, peak int
+}
+
+func (s *slowUsage) Usage(context.Context, string) (model.ResourceUsage, error) {
+	s.mu.Lock()
+	s.now++
+	s.peak = max(s.peak, s.now)
+	s.mu.Unlock()
+	time.Sleep(20 * time.Millisecond)
+	s.mu.Lock()
+	s.now--
+	s.mu.Unlock()
+	return model.ResourceUsage{CPUPercent: 1}, nil
 }

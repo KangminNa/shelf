@@ -122,6 +122,16 @@ func (d *fakeDocker) Answers(_ context.Context, host string, port model.Port) er
 	return nil
 }
 
+// Usage는 실행 중인 컨테이너의 사용량인 척한다.
+func (d *fakeDocker) Usage(_ context.Context, name string) (model.ResourceUsage, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if st, ok := d.states[name]; !ok || st.State != "running" {
+		return model.ResourceUsage{}, errors.New("no such container")
+	}
+	return model.ResourceUsage{CPUPercent: 3.25, MemUsed: 150 << 20, MemLimit: 2 << 30}, nil
+}
+
 func (d *fakeDocker) listen(host string, p model.Port) {
 	d.mu.Lock()
 	if d.listens == nil {
@@ -263,7 +273,7 @@ func newHarnessWith(t *testing.T, o harnessOpts) *harness {
 	}
 	a, err := OpenWith(cfg, slog.New(slog.NewTextHandler(io.Discard, nil)), Outside{
 		Builder: fakeRegistry{}, Puller: fakeRegistry{}, Images: fakeImages{},
-		Starter: h.docker, Remover: h.docker, Switch: h.docker, Watcher: h.docker, Ports: h.docker, AppLogs: h.docker,
+		Starter: h.docker, Remover: h.docker, Switch: h.docker, Watcher: h.docker, Ports: h.docker, AppLogs: h.docker, Usage: h.docker,
 		Code: fakeGit{}, DNS: netcheck.NewDNS(lookup), Stats: fakeStats{}, Sender: h.caddy, Certs: h.certs, Snippet: fakeSnippet{},
 		Clock: system.Clock{}, Random: system.Random{}, ReadyTimeout: 5 * time.Second, WatchEvery: o.watchEvery,
 	})
@@ -1240,6 +1250,39 @@ func TestWrongPortIsDiagnosedAndFixedFromHome(t *testing.T) {
 
 	if code, _, _ := h.post(fmt.Sprintf("/services/%d/port", id), url.Values{"port": {"0"}}); code != http.StatusBadRequest {
 		t.Fatalf("a port is required: %d", code)
+	}
+}
+
+// ── CPU·메모리 (M6-4) ─────────────────────────
+
+func TestServiceUsageOnHomeAndServicePage(t *testing.T) {
+	h := newHarnessWith(t, harnessOpts{install: "docker", watchEvery: 20 * time.Millisecond})
+	h.signedIn()
+	id := h.createService(model.NewService{Name: name("blog"), Kind: model.KindImage, Source: "me/blog", Alias: "naru-blog", Port: 80}, model.ServiceSecrets{})
+	store.NewLiveStates(h.app.db).Save(ctx, id, model.LiveState{Alias: "naru-blog", Instance: "naru-blog-1", Port: 80})
+	h.docker.set("naru-blog-1", model.ContainerState{Name: "naru-blog-1", Running: true, State: "running"})
+
+	var body string
+	for i := 0; i < 300; i++ {
+		if _, _, body = h.get("/"); strings.Contains(body, "svc-usage") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(body, "3.2%") || !strings.Contains(body, "150.0 MB") {
+		t.Fatalf("the home card shows CPU and memory:\n%s", body)
+	}
+	_, _, page := h.get(fmt.Sprintf("/services/%d", id))
+	for _, want := range []string{"3.2%", "서버 전체 기준", "150.0 MB", "2.0 GB"} {
+		if !strings.Contains(page, want) {
+			t.Errorf("service page is missing %q", want)
+		}
+	}
+
+	// 직접 멈추면 사용량은 보이지 않는다
+	h.post(fmt.Sprintf("/services/%d/stop", id), nil)
+	if _, _, page := h.get(fmt.Sprintf("/services/%d", id)); strings.Contains(page, "서버 전체 기준") {
+		t.Fatal("a stopped service shows no usage")
 	}
 }
 
