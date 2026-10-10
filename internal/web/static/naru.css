@@ -92,6 +92,13 @@ h2 { margin: 0; font-size: 16px; font-weight: 600; }
 .flash { margin: 0 0 16px; padding: 11px 14px; border-radius: 12px; font-size: 14px; }
 .flash.ok { background: var(--ok-soft); color: var(--ok); }
 .flash.bad { background: var(--bad-soft); color: var(--bad); }
+.flash.warn { background: var(--warn-soft); color: var(--warn); }
+ul.plain { margin: 6px 0 0; padding-left: 18px; }
+ul.plain li { margin: 2px 0; overflow-wrap: anywhere; }
+.nginx { color: var(--text-3); font-family: var(--mono); font-size: 11.5px; margin-left: 4px; }
+.pair { display: flex; gap: 8px; flex-wrap: wrap; }
+.pair .input { flex: 1 1 180px; width: auto; }
+pre.code.why { margin-top: -8px; }
 .check { margin: 0; padding: 11px 14px; border-radius: 12px; font-size: 14px; display: flex; flex-direction: column; gap: 2px; }
 .check.ok { background: var(--ok-soft); color: var(--ok); }
 .check.warn { background: var(--warn-soft); color: var(--warn); }

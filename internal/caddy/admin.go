@@ -33,24 +33,26 @@ func NewSocketSender(socket string) *SocketSender {
 
 // Send는 설정 전체를 교체한다 (POST /load).
 func (a *SocketSender) Send(ctx context.Context, cfg []byte) error {
-	_, err := a.do(ctx, http.MethodPost, "/load", cfg)
-	return err
+	if _, err := a.do(ctx, http.MethodPost, "/load", "application/json", cfg); err != nil {
+		return caddySaid(err)
+	}
+	return nil
 }
 
 // Ping은 Caddy에 닿는가.
 func (a *SocketSender) Ping(ctx context.Context) error {
-	_, err := a.do(ctx, http.MethodGet, "/config/admin", nil)
+	_, err := a.do(ctx, http.MethodGet, "/config/admin", "", nil)
 	return err
 }
 
-func (a *SocketSender) do(ctx context.Context, method, path string, body []byte) ([]byte, error) {
+func (a *SocketSender) do(ctx context.Context, method, path, contentType string, body []byte) ([]byte, error) {
 	// 유닉스 소켓의 관리 API는 Host가 127.0.0.1(또는 빈 값)일 때만 받는다.
 	req, err := http.NewRequestWithContext(ctx, method, "http://127.0.0.1"+path, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
 	}
 	res, err := a.http.Do(req)
 	if err != nil {

@@ -5,11 +5,14 @@ import (
 	"context"
 	"encoding/json"
 	"flag"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -49,6 +52,27 @@ var fixtures = map[string]model.SiteMap{
 	"redirects-dev-port": {
 		AdminSocket: sock, AdminUpstream: "naru:8080", AdminHosts: []string{"naru.localhost"}, AdminHTTPS: true, InternalTLS: true, HTTPSPort: 8443,
 		Sites: []model.Site{{Hosts: []string{"site.localhost"}, Destination: model.Destination{Folder: "/srv/sites/site/3"}, HTTPS: true, RedirectHTTP: true}},
+	},
+	// 웹서버 설정이 모두 켜진 사이트 — 순서: IP 제한 → 점검 중 → 비밀번호 → 헤더·압축 → 고급 → 경로 → 기본 목적지
+	"web-settings": {
+		AdminSocket: sock, AdminUpstream: "naru:8080", ACMEEmail: "me@example.com",
+		Sites: []model.Site{{
+			Hosts: []string{"shop.example.com"}, Destination: model.Destination{Address: "naru-shop:3000"}, HTTPS: true, HSTS: true,
+			Settings: model.SiteSettings{
+				Headers:     []model.HeaderRule{{Name: "X-Frame-Options", Value: "DENY"}, {Name: "Server", Value: ""}},
+				AllowFrom:   []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("192.168.1.5/32")},
+				Login:       model.BasicLogin{User: "admin", Hash: "$2a$10$Ar0a1Qe5b8fTkNw0XQ3WKu3m1bcEw7oZp6qeD4JW9mH8l2sXh9mLu"},
+				Maintenance: false,
+				Paths: []model.SitePath{
+					{Prefix: mustPrefix("/api"), Destination: model.Destination{Address: "naru-api:8080"}, StripPrefix: true},
+					{Prefix: mustPrefix("/docs"), Destination: model.Destination{Folder: "/srv/sites/docs/4"}},
+				},
+				Compiled: []byte(`[{"match":[{"path":["/health"]}],"handle":[{"handler":"static_response","status_code":200}]}]`),
+			},
+		}, {
+			Hosts: []string{"down.example.com"}, Destination: model.Destination{Address: "naru-down:80"},
+			Settings: model.SiteSettings{Maintenance: true},
+		}},
 	},
 	"internal-tls": {
 		AdminSocket: sock, AdminUpstream: "naru:8080", AdminHosts: []string{"naru.localhost"}, AdminHTTPS: true, InternalTLS: true,
@@ -154,11 +178,138 @@ func TestInvariantsHoldForEveryFixture(t *testing.T) {
 			}
 		}
 		raw, _ := (JSONWriter{}).Write(p)
-		for _, secret := range []string{"whsec", "ghp_", "password"} {
+		for _, secret := range []string{"whsec", "ghp_"} {
 			if strings.Contains(string(raw), secret) {
 				t.Errorf("%s: secrets never go into the Caddy config (invariant 5)", name)
 			}
 		}
+		// 예외 하나: 기본 인증은 Caddy가 검사하므로 bcrypt 해시만 들어간다 — 원문은 안 된다
+		for _, m := range regexp.MustCompile(`"password": "([^"]*)"`).FindAllStringSubmatch(string(raw), -1) {
+			if !strings.HasPrefix(m[1], "$2") {
+				t.Errorf("%s: only bcrypt hashes may appear as passwords (invariant 5), got %q", name, m[1])
+			}
+		}
+	}
+}
+
+func mustPrefix(s string) model.PathPrefix {
+	p, err := model.ParsePathPrefix(s)
+	if err != nil {
+		panic(err)
+	}
+	return p
+}
+
+// siteHandlers는 그 주소의 :443(없으면 :80) 경로가 거치는 처리기 이름을 순서대로 — 하위 경로까지 펼친다.
+func siteHandlers(t *testing.T, cfg []byte, host string) []string {
+	t.Helper()
+	var c struct {
+		Apps struct {
+			HTTP struct {
+				Servers map[string]struct{ Routes []json.RawMessage }
+			}
+		}
+	}
+	json.Unmarshal(cfg, &c)
+	var walk func(routes []json.RawMessage) []string
+	walk = func(routes []json.RawMessage) []string {
+		var out []string
+		for _, raw := range routes {
+			var r struct {
+				Match  []map[string]any
+				Handle []map[string]any
+			}
+			json.Unmarshal(raw, &r)
+			for _, h := range r.Handle {
+				name := h["handler"].(string)
+				if name == "subroute" {
+					b, _ := json.Marshal(h["routes"])
+					var sub []json.RawMessage
+					json.Unmarshal(b, &sub)
+					out = append(out, walk(sub)...)
+					continue
+				}
+				if name == "static_response" {
+					name += fmt.Sprint(h["status_code"])
+				}
+				out = append(out, name)
+			}
+		}
+		return out
+	}
+	for _, server := range []string{"https", "http"} {
+		for _, raw := range c.Apps.HTTP.Servers[server].Routes {
+			var flat bytes.Buffer
+			json.Compact(&flat, raw)
+			if strings.Contains(flat.String(), `"host":["`+host+`"]`) && !strings.Contains(flat.String(), `"Location"`) {
+				return walk([]json.RawMessage{raw})
+			}
+		}
+	}
+	return nil
+}
+
+func TestWebSettingsAreDrawnInOrder(t *testing.T) {
+	cfg, err := (JSONWriter{}).Write(fixtures["web-settings"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(siteHandlers(t, cfg, "shop.example.com"), " ")
+	want := "static_response403 authentication headers encode static_response200 rewrite reverse_proxy file_server reverse_proxy"
+	if got != want {
+		t.Fatalf("handlers:\n got %s\nwant %s", got, want)
+	}
+	if got := strings.Join(siteHandlers(t, cfg, "down.example.com"), " "); got != "static_response503 encode reverse_proxy" {
+		t.Fatalf("maintenance answers before anything else: %s", got)
+	}
+}
+
+func TestEverySiteIsCompressed(t *testing.T) {
+	for name, m := range fixtures {
+		cfg, _ := (JSONWriter{}).Write(m)
+		for _, s := range m.Sites {
+			if !strings.Contains(strings.Join(siteHandlers(t, cfg, s.Hosts[0]), " "), "encode") {
+				t.Errorf("%s/%s: compression is always on", name, s.Hosts[0])
+			}
+		}
+	}
+}
+
+// 인증서 확인 요청을 막으면 발급·갱신이 실패한다 — IP 제한·점검 중·비밀번호는 그 경로를 빼고 건다 (불변식 4의 연장).
+func TestGuardsNeverBlockCertificateChallenges(t *testing.T) {
+	cfg, _ := (JSONWriter{}).Write(fixtures["web-settings"])
+	var walk func(v any)
+	guards := 0
+	walk = func(v any) {
+		switch x := v.(type) {
+		case map[string]any:
+			if hs, ok := x["handle"].([]any); ok && len(hs) > 0 {
+				h := hs[0].(map[string]any)
+				guard := h["handler"] == "authentication" || (h["handler"] == "static_response" && (h["status_code"] == float64(403) || h["status_code"] == float64(503)))
+				if guard {
+					guards++
+					if !strings.Contains(fmt.Sprint(x["match"]), acmeChallenge) {
+						t.Errorf("a guard must skip %s: %v", acmeChallenge, x["match"])
+					}
+				}
+			}
+			for _, e := range x {
+				walk(e)
+			}
+		case []any:
+			for _, e := range x {
+				walk(e)
+			}
+		}
+	}
+	var root any
+	json.Unmarshal(cfg, &root)
+	walk(root)
+	if guards < 4 { // 403·인증이 :80과 :443에, 503이 :80에
+		t.Fatalf("expected guards on both ports, found %d", guards)
+	}
+	if strings.Contains(string(cfg), "admin\",\"password") {
+		t.Fatal("only the bcrypt hash goes in")
 	}
 }
 
@@ -343,7 +494,7 @@ func TestSenderTalksToTheSocketAsLocalhost(t *testing.T) {
 		t.Fatal("the guard never lets a config without the admin socket through")
 	}
 	f.fail = true
-	if err := s.Send(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "loading config") {
+	if err := s.Send(context.Background(), cfg); err == nil || err.Error() != "caddy: bad" {
 		t.Fatalf("a refused config is an error: %v", err)
 	}
 }

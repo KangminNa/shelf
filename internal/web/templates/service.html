@@ -102,6 +102,49 @@
   </form>
 </section>
 
+<section class="section" id="web">
+  <h2>{{t "web.heading"}}</h2>
+  <p class="desc">{{t "web.desc"}}</p>
+  {{if eq .Data.Form "web"}}{{template "error" .}}{{with .Data.WebRefused}}<pre class="code why">{{.}}</pre>{{end}}{{end}}
+  {{with .Data.WebWarnings}}<div class="flash warn"><b>{{t "web.warnings"}}</b><ul class="plain">{{range .}}<li><code>{{.}}</code></li>{{end}}</ul></div>{{end}}
+  {{with .Data.NginxSkipped}}<div class="flash warn"><b>{{t "web.nginx.skipped"}}</b><ul class="plain">{{range .}}<li><code>{{.Line}}: {{.Text}}</code> — {{.Why}}</li>{{end}}</ul></div>{{end}}
+  {{$w := .Data.Web}}
+  {{with $w.SentHereBy}}<p class="flash ok">{{t "web.senthere"}} {{range $i, $n := .}}{{if $i}}, {{end}}<b>{{$n}}</b>{{end}}</p>{{end}}
+  <form method="post" action="/services/{{$id}}/web" class="form">
+    <label class="check-label"><input type="checkbox" name="maintenance" value="1" {{if $w.Maintenance}}checked{{end}}> {{t "web.maintenance"}} <small class="nginx">nginx: return 503</small></label>
+    <label class="field"><span>{{t "web.headers"}}</span>
+      <textarea class="input mono" name="headers" rows="3" placeholder="X-Frame-Options: DENY">{{$w.Headers}}</textarea>
+      <small>{{t "web.headers.hint"}} <span class="nginx">nginx: add_header</span></small></label>
+    <label class="field"><span>{{t "web.allow"}}</span>
+      <textarea class="input mono" name="allow" rows="2" placeholder="192.168.0.0/24">{{$w.Allow}}</textarea>
+      <small>{{t "web.allow.hint"}} <span class="nginx">nginx: allow … / deny all</span></small></label>
+    <div class="field"><span>{{t "web.login"}}</span>
+      <div class="pair">
+        <input class="input mono" name="login_user" value="{{$w.LoginUser}}" placeholder="{{t "field.username"}}" autocomplete="off" aria-label="{{t "field.username"}}">
+        <input class="input" type="password" name="login_password" placeholder="{{if $w.HasPassword}}{{t "web.login.kept"}}{{else}}{{t "field.password"}}{{end}}" autocomplete="new-password" aria-label="{{t "field.password"}}">
+      </div>
+      <small>{{t "web.login.hint"}} <span class="nginx">nginx: auth_basic</span></small>
+      {{if $w.HasPassword}}<label class="check-label"><input type="checkbox" name="remove_login" value="1"> {{t "web.login.remove"}}</label>{{end}}</div>
+    <label class="field"><span>{{t "web.paths"}}</span>
+      <textarea class="input mono" name="paths" rows="3" placeholder="/api api 떼기&#10;/nas 192.168.0.20:5000">{{$w.Paths}}</textarea>
+      <small>{{t "web.paths.hint"}} <span class="nginx">nginx: location /api { proxy_pass … }</span></small></label>
+    <details class="more"{{if $w.Advanced}} open{{end}}><summary>{{t "web.advanced"}}</summary><div class="form">
+      <label class="field"><span>{{t "web.advanced"}}</span>
+        <textarea class="input mono" name="advanced" rows="6" placeholder="respond /health 200&#10;redir /old /new 301">{{$w.Advanced}}</textarea>
+        <small>{{t "web.advanced.hint"}}</small></label>
+    </div></details>
+    <div><button class="btn primary" type="submit">{{t "web.apply"}}</button></div>
+  </form>
+  <details class="more"><summary>{{t "web.nginx"}}</summary>
+    <form method="post" action="/services/{{$id}}/web/nginx" class="form">
+      <label class="field"><span>{{t "web.nginx"}}</span>
+        <textarea class="input mono" name="nginx" rows="8" placeholder="server {&#10;    add_header X-Frame-Options DENY;&#10;    location /api/ { proxy_pass http://api:8080/; }&#10;}"></textarea>
+        <small>{{t "web.nginx.hint"}}</small></label>
+      <div><button class="btn" type="submit">{{t "web.nginx.read"}}</button></div>
+    </form>
+  </details>
+</section>
+
 <section class="section" id="settings">
   <h2>{{t "service.settings"}}</h2>
   {{if eq .Data.Form "settings"}}{{template "error" .}}{{end}}

@@ -47,7 +47,7 @@ func TestWebhookAddressKeepsANonStandardHTTPSPort(t *testing.T) {
 	for port, want := range map[int]string{0: "https://naru.localhost/hooks/1", 443: "https://naru.localhost/hooks/1", 8443: "https://naru.localhost:8443/hooks/1"} {
 		v := NewServiceViewer(Parts{
 			Services: services, Secrets: store.NewSecrets(db), History: history, Containers: noContainers{},
-			Kinds: kinds.NewLookup(kinds.Tools{}), Admin: admin, Deployer: deployer, Certs: noCerts{}, Clock: system.Clock{}, HTTPSPort: port,
+			Kinds: kinds.NewLookup(kinds.Tools{}), Admin: admin, Deployer: deployer, Certs: noCerts{}, Clock: system.Clock{}, HTTPSPort: port, Web: store.NewWebSettings(db),
 		}, quiet)
 		view, err := v.Detail(ctx, id)
 		if err != nil || view.Webhook.URL != want {

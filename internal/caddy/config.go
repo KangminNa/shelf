@@ -13,6 +13,11 @@ import (
 	"github.com/KangminNa/naru/internal/model"
 )
 
+const (
+	deniedBody      = "Naru: 이 주소는 허용된 곳에서만 열 수 있어요. / Access is limited to allowed addresses.\n"
+	maintenanceBody = "Naru: 점검 중이에요. 잠시 뒤에 다시 와 주세요. / Down for maintenance — please come back soon.\n"
+)
+
 const notFoundBody = "Naru: 이 주소에 연결된 서비스가 없어요. / No service is configured for this address.\n"
 
 // HSTS 기간 — 2년 (v1과 같다)
@@ -43,6 +48,13 @@ type route struct {
 	Match    []match  `json:"match,omitempty"`
 	Handle   []module `json:"handle"`
 	Terminal bool     `json:"terminal,omitempty"`
+}
+
+// innerRoute는 사이트 안쪽(subroute)의 경로다 — 매처 모양이 여러 가지(not·path·client_ip)라 그대로 쓴다.
+type innerRoute struct {
+	Match    []map[string]any `json:"match,omitempty"`
+	Handle   []module         `json:"handle"`
+	Terminal bool             `json:"terminal,omitempty"`
 }
 
 type match struct {
@@ -116,7 +128,7 @@ func (JSONWriter) Write(p model.SiteMap) ([]byte, error) {
 		if s.HTTPS && s.RedirectHTTP {
 			plain.Routes = append(plain.Routes, redirectRoute(s.Hosts, p.HTTPSPort))
 		}
-		plain.Routes = append(plain.Routes, hostRoute(s.Hosts, serve(s)))
+		plain.Routes = append(plain.Routes, hostRoute(s.Hosts, site(s, false)))
 	}
 	if p.OpenFallback {
 		plain.Routes = append(plain.Routes, route{Handle: []module{proxyTo(p.AdminUpstream)}})
@@ -132,14 +144,9 @@ func (JSONWriter) Write(p model.SiteMap) ([]byte, error) {
 		secure.Routes = append(secure.Routes, hostRoute(p.AdminHosts, proxyTo(p.AdminUpstream)))
 	}
 	for _, s := range sites {
-		if !s.HTTPS {
-			continue
+		if s.HTTPS {
+			secure.Routes = append(secure.Routes, hostRoute(s.Hosts, site(s, true)))
 		}
-		hs := []module{}
-		if s.HSTS {
-			hs = append(hs, module{"handler": "headers", "response": map[string]any{"set": map[string][]string{"Strict-Transport-Security": {hstsValue}}}})
-		}
-		secure.Routes = append(secure.Routes, hostRoute(s.Hosts, append(hs, serve(s))...))
 	}
 	if len(secure.Routes) > 0 {
 		secure.Routes = append(secure.Routes, route{Handle: []module{notFound()}})
@@ -163,6 +170,81 @@ func hostRoute(hosts []string, handlers ...module) route {
 		lower[i] = strings.ToLower(h)
 	}
 	return route{Match: []match{{Host: lower}}, Handle: handlers, Terminal: true}
+}
+
+// site는 사이트 하나의 처리 순서다 (v2-objects §4 I):
+// IP 제한 → 점검 중 → 비밀번호 → 헤더·압축 → 고급 → 경로별 연결 → 서비스 기본 목적지.
+// IP 제한·점검 중·비밀번호는 인증서 확인 경로를 빼고 건다 — 막으면 발급·갱신이 실패한다.
+func site(s model.Site, secure bool) module {
+	w := s.Settings
+	var routes []innerRoute
+	notChallenge := func(more ...map[string]any) []map[string]any {
+		return []map[string]any{{"not": append(more, map[string]any{"path": []string{acmeChallenge}})}}
+	}
+	if len(w.AllowFrom) > 0 {
+		ranges := make([]string, len(w.AllowFrom))
+		for i, p := range w.AllowFrom {
+			ranges[i] = p.String()
+		}
+		routes = append(routes, innerRoute{Match: notChallenge(map[string]any{"client_ip": map[string]any{"ranges": ranges}}),
+			Handle: []module{plainText(403, deniedBody)}, Terminal: true})
+	}
+	if w.Maintenance {
+		m := plainText(503, maintenanceBody)
+		m["headers"].(map[string][]string)["Retry-After"] = []string{"300"}
+		routes = append(routes, innerRoute{Match: notChallenge(), Handle: []module{m}, Terminal: true})
+	}
+	if w.Login.User != "" {
+		routes = append(routes, innerRoute{Match: notChallenge(), Handle: []module{{
+			"handler": "authentication",
+			"providers": map[string]any{"http_basic": map[string]any{
+				"accounts": []map[string]string{{"username": w.Login.User, "password": w.Login.Hash}},
+				"hash":     map[string]string{"algorithm": "bcrypt"},
+			}},
+		}}})
+	}
+	set, del := map[string][]string{}, []string{}
+	if secure && s.HSTS {
+		set["Strict-Transport-Security"] = []string{hstsValue}
+	}
+	for _, h := range w.Headers {
+		if h.Value == "" {
+			del = append(del, h.Name)
+		} else {
+			set[h.Name] = append(set[h.Name], h.Value)
+		}
+	}
+	early := []module{}
+	if len(set) > 0 || len(del) > 0 {
+		response := map[string]any{}
+		if len(set) > 0 {
+			response["set"] = set
+		}
+		if len(del) > 0 {
+			response["delete"] = del
+		}
+		early = append(early, module{"handler": "headers", "response": response})
+	}
+	early = append(early, module{"handler": "encode", "encodings": map[string]any{"zstd": map[string]any{}, "gzip": map[string]any{}}, "prefer": []string{"zstd", "gzip"}})
+	routes = append(routes, innerRoute{Handle: early})
+	if len(w.Compiled) > 0 {
+		routes = append(routes, innerRoute{Handle: []module{{"handler": "subroute", "routes": json.RawMessage(w.Compiled)}}})
+	}
+	for _, p := range w.Paths {
+		hs := []module{}
+		if p.StripPrefix {
+			hs = append(hs, module{"handler": "rewrite", "strip_path_prefix": p.Prefix.String()})
+		}
+		hs = append(hs, serve(model.Site{Destination: p.Destination}))
+		routes = append(routes, innerRoute{Match: []map[string]any{{"path": []string{p.Prefix.String(), p.Prefix.String() + "/*"}}}, Handle: hs, Terminal: true})
+	}
+	routes = append(routes, innerRoute{Handle: []module{serve(s)}})
+	return module{"handler": "subroute", "routes": routes}
+}
+
+func plainText(status int, body string) module {
+	return module{"handler": "static_response", "status_code": status,
+		"headers": map[string][]string{"Content-Type": {"text/plain; charset=utf-8"}}, "body": body}
 }
 
 // redirectRoute는 그 주소들의 :80 요청을 HTTPS로 넘긴다. 307 — 브라우저가 영구히 기억하지 않아

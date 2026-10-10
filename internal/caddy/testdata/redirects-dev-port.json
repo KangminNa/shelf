@@ -72,8 +72,32 @@
               ],
               "handle": [
                 {
-                  "handler": "file_server",
-                  "root": "/srv/sites/site/3"
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "handle": [
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "file_server",
+                          "root": "/srv/sites/site/3"
+                        }
+                      ]
+                    }
+                  ]
                 }
               ],
               "terminal": true
@@ -136,8 +160,32 @@
               ],
               "handle": [
                 {
-                  "handler": "file_server",
-                  "root": "/srv/sites/site/3"
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "handle": [
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "file_server",
+                          "root": "/srv/sites/site/3"
+                        }
+                      ]
+                    }
+                  ]
                 }
               ],
               "terminal": true

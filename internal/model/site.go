@@ -20,6 +20,7 @@ type Site struct {
 	HSTS        bool
 	// RedirectHTTP는 :80으로 온 요청을 HTTPS로 넘기는가 — 쓸 수 있는 인증서가 있을 때만 참이다 (불변식 4).
 	RedirectHTTP bool
+	Settings     SiteSettings // 그 서비스의 웹서버 설정 (M5)
 }
 
 // SiteMap은 웹서버에 줄 지도다 — 주소마다 어디로 보내고, HTTPS를 쓰는지.

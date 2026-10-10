@@ -21,7 +21,7 @@ var (
 	core      = set("model", "contract")
 	tools     = set("docker", "git", "files", "caddy", "netcheck", "stats", "events", "system")
 	storage   = set("store")
-	behaviors = set("access", "settings", "services", "kinds", "deploy", "webhook", "webserver", "views")
+	behaviors = set("access", "settings", "services", "kinds", "deploy", "webhook", "webserver", "views", "websettings")
 	entries   = set("web", "cli")
 	root      = set("app")
 )
@@ -368,7 +368,7 @@ func TestR9KindsBranchOnlyInKinds(t *testing.T) {
 // R10: 화면·셸 명령은 비밀(ServiceSecrets)과 비밀번호 해시(PasswordHash)를 쓰지 않는다 —
 // 직접 쓰지도 않고, 그것을 주고받는 인터페이스를 갖지도 않는다.
 func TestR10NoSecretsOnScreen(t *testing.T) {
-	secret := set("ServiceSecrets", "PasswordHash")
+	secret := set("ServiceSecrets", "PasswordHash", "WebSettings", "BasicLogin")
 	carries := map[string]bool{} // 비밀을 주고받는 contract 인터페이스
 	for _, f := range sources(t) {
 		if f.pkg != "contract" {

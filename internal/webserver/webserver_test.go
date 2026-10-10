@@ -59,8 +59,9 @@ func TestSiteMapFollowsServicesAndSettings(t *testing.T) {
 
 	certs := &fakeCerts{}
 	clock := &fakeClock{now: time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)}
+	web := store.NewWebSettings(db)
 	b := NewSiteMapBuilder(Fixed{AdminSocket: "/run/caddy/admin.sock", AdminUpstream: "naru:8080"}, services,
-		kinds.NewLookup(kinds.Tools{}), Settings{admin, settings.NewCertEmailSetting(model.Email{}, set, bus), setup}, certs, clock)
+		kinds.NewLookup(kinds.Tools{}), Settings{admin, settings.NewCertEmailSetting(model.Email{}, set, bus), setup}, certs, clock, web)
 
 	m, err := b.Build(ctx)
 	if err != nil {
@@ -91,6 +92,28 @@ func TestSiteMapFollowsServicesAndSettings(t *testing.T) {
 	}
 	if _, err := (caddy.JSONWriter{}).Write(m); err != nil {
 		t.Fatal("the map is writable:", err)
+	}
+
+	// 웹서버 설정 — 경로 목적지는 그 서비스의 실제 목적지로 바뀌어 실린다
+	api, _ := model.ParsePathPrefix("/api")
+	files, _ := model.ParsePathPrefix("/files")
+	ext, _ := model.ParseExternalAddress("localhost:9000")
+	web.Set(ctx, blog, model.WebSettings{Maintenance: true, Paths: []model.PathRoute{
+		{Prefix: api, Service: site, StripPrefix: true}, {Prefix: files, External: ext}, {Prefix: api, Service: 999},
+	}})
+	m, _ = b.Build(ctx)
+	for _, s := range m.Sites {
+		if s.Hosts[0] != "blog.example.com" {
+			if s.Settings.Maintenance {
+				t.Fatal("settings belong to one service")
+			}
+			continue
+		}
+		p := s.Settings.Paths
+		if !s.Settings.Maintenance || len(p) != 3 || p[0].Destination.Folder != "/srv/sites/landing/12" || !p[0].StripPrefix ||
+			p[1].Destination.Address != "host.docker.internal:9000" || p[2].Destination != (model.Destination{}) {
+			t.Fatalf("paths resolve to real destinations (a deleted target goes nowhere): %+v", s.Settings)
+		}
 	}
 
 	// 인증서 — 생기면 넘기고, 끝나거나 못 읽으면 넘기지 않는다 (불변식 4)

@@ -24,6 +24,7 @@ type Parts struct {
 	Deployer   contract.Deployer
 	Certs      contract.CertificateReader
 	Clock      contract.Clock
+	Web        contract.WebSettingsStore
 	HTTPSPort  int // 바깥에서 본 HTTPS 포트 — 443이 아니면 웹훅 주소에 붙인다 (로컬 개발)
 }
 
@@ -121,6 +122,9 @@ func (v serviceViewer) Detail(ctx context.Context, id model.ServiceID) (model.Se
 		}
 		view.Domains = append(view.Domains, dv)
 	}
+	if view.Web, err = v.webView(ctx, s); err != nil {
+		return model.ServiceView{}, err
+	}
 	if view.Deployable {
 		view.Deploys, _ = v.p.History.Recent(ctx, id, 10)
 		view.LiveID = s.Live.LiveDeployment()
@@ -134,6 +138,50 @@ func (v serviceViewer) Detail(ctx context.Context, id model.ServiceID) (model.Se
 		}
 	}
 	return view, nil
+}
+
+// webView는 화면에 보일 웹서버 설정이다 — 비밀번호 해시 대신 "있음"만, 경로 대상은 서비스 이름으로.
+func (v serviceViewer) webView(ctx context.Context, s model.Service) (model.WebSettingsView, error) {
+	w, err := v.p.Web.Get(ctx, s.ID)
+	if err != nil {
+		return model.WebSettingsView{}, err
+	}
+	all, err := v.p.Services.List(ctx)
+	if err != nil {
+		return model.WebSettingsView{}, err
+	}
+	names := map[model.ServiceID]string{}
+	for _, other := range all {
+		names[other.ID] = other.Name.String()
+	}
+	out := model.WebSettingsView{
+		Headers: w.Headers, AllowFrom: w.AllowFrom, LoginUser: w.Login.User, HasPassword: w.Login.Hash != "",
+		Maintenance: w.Maintenance, Advanced: w.Advanced,
+	}
+	for _, p := range w.Paths {
+		target := p.External.String()
+		if p.Service != 0 {
+			target = names[p.Service]
+		}
+		out.Paths = append(out.Paths, model.PathRouteInput{Prefix: p.Prefix, Target: target, StripPrefix: p.StripPrefix})
+	}
+	// 다른 서비스가 경로별 연결로 이 서비스에 보내고 있으면 알려준다 — 지우기 전에 알아야 한다
+	for _, other := range all {
+		if other.ID == s.ID {
+			continue
+		}
+		ow, err := v.p.Web.Get(ctx, other.ID)
+		if err != nil {
+			continue
+		}
+		for _, p := range ow.Paths {
+			if p.Service == s.ID {
+				out.SentHereBy = append(out.SentHereBy, other.Name.String())
+				break
+			}
+		}
+	}
+	return out, nil
 }
 
 func (v serviceViewer) Deployment(ctx context.Context, id model.ServiceID, did model.DeploymentID) (model.DeploymentView, error) {

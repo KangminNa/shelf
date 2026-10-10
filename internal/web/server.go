@@ -52,6 +52,8 @@ type Deps struct {
 	Stats       contract.ServerStats
 	WebServer   contract.WebServerSync
 	DNS         contract.DNSChecker
+	WebSettings contract.WebSettingsEditor
+	Nginx       contract.NginxTranslator
 	Certs       contract.CertificateReader
 	Clock       contract.Clock
 	Log         *slog.Logger
@@ -116,6 +118,8 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /services/{id}/domains", s.addDomain)
 	s.mux.HandleFunc("POST /services/{id}/domains/{did}/delete", s.removeDomain)
 	s.mux.HandleFunc("POST /services/{id}/delete", s.deleteService)
+	s.mux.HandleFunc("POST /services/{id}/web", s.saveWebSettings)
+	s.mux.HandleFunc("POST /services/{id}/web/nginx", s.importNginx)
 	s.mux.HandleFunc("GET /services/{id}/deploys/{did}", s.deployPage)
 	s.mux.HandleFunc("POST /hooks/{id}", s.webhook)
 	s.mux.HandleFunc("GET /settings", s.settingsPage)

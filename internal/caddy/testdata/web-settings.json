@@ -1,0 +1,545 @@
+{
+  "admin": {
+    "listen": "unix//run/caddy/admin.sock"
+  },
+  "apps": {
+    "http": {
+      "servers": {
+        "http": {
+          "listen": [
+            ":80"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "down.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "match": [
+                        {
+                          "not": [
+                            {
+                              "path": [
+                                "/.well-known/acme-challenge/*"
+                              ]
+                            }
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "body": "Naru: 점검 중이에요. 잠시 뒤에 다시 와 주세요. / Down for maintenance — please come back soon.\n",
+                          "handler": "static_response",
+                          "headers": {
+                            "Content-Type": [
+                              "text/plain; charset=utf-8"
+                            ],
+                            "Retry-After": [
+                              "300"
+                            ]
+                          },
+                          "status_code": 503
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
+                      "handle": [
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "load_balancing": {
+                            "try_duration": "5s",
+                            "try_interval": "250ms"
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "naru-down:80"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "match": [
+                {
+                  "host": [
+                    "shop.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "match": [
+                        {
+                          "not": [
+                            {
+                              "client_ip": {
+                                "ranges": [
+                                  "10.0.0.0/8",
+                                  "192.168.1.5/32"
+                                ]
+                              }
+                            },
+                            {
+                              "path": [
+                                "/.well-known/acme-challenge/*"
+                              ]
+                            }
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "body": "Naru: 이 주소는 허용된 곳에서만 열 수 있어요. / Access is limited to allowed addresses.\n",
+                          "handler": "static_response",
+                          "headers": {
+                            "Content-Type": [
+                              "text/plain; charset=utf-8"
+                            ]
+                          },
+                          "status_code": 403
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
+                      "match": [
+                        {
+                          "not": [
+                            {
+                              "path": [
+                                "/.well-known/acme-challenge/*"
+                              ]
+                            }
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "authentication",
+                          "providers": {
+                            "http_basic": {
+                              "accounts": [
+                                {
+                                  "password": "$2a$10$Ar0a1Qe5b8fTkNw0XQ3WKu3m1bcEw7oZp6qeD4JW9mH8l2sXh9mLu",
+                                  "username": "admin"
+                                }
+                              ],
+                              "hash": {
+                                "algorithm": "bcrypt"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "headers",
+                          "response": {
+                            "delete": [
+                              "Server"
+                            ],
+                            "set": {
+                              "X-Frame-Options": [
+                                "DENY"
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "subroute",
+                          "routes": [
+                            {
+                              "match": [
+                                {
+                                  "path": [
+                                    "/health"
+                                  ]
+                                }
+                              ],
+                              "handle": [
+                                {
+                                  "handler": "static_response",
+                                  "status_code": 200
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "match": [
+                        {
+                          "path": [
+                            "/api",
+                            "/api/*"
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "rewrite",
+                          "strip_path_prefix": "/api"
+                        },
+                        {
+                          "handler": "reverse_proxy",
+                          "load_balancing": {
+                            "try_duration": "5s",
+                            "try_interval": "250ms"
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "naru-api:8080"
+                            }
+                          ]
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
+                      "match": [
+                        {
+                          "path": [
+                            "/docs",
+                            "/docs/*"
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "file_server",
+                          "root": "/srv/sites/docs/4"
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "load_balancing": {
+                            "try_duration": "5s",
+                            "try_interval": "250ms"
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "naru-shop:3000"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "handle": [
+                {
+                  "body": "Naru: 이 주소에 연결된 서비스가 없어요. / No service is configured for this address.\n",
+                  "handler": "static_response",
+                  "headers": {
+                    "Content-Type": [
+                      "text/plain; charset=utf-8"
+                    ]
+                  },
+                  "status_code": 404
+                }
+              ]
+            }
+          ],
+          "automatic_https": {
+            "disable_redirects": true
+          }
+        },
+        "https": {
+          "listen": [
+            ":443"
+          ],
+          "routes": [
+            {
+              "match": [
+                {
+                  "host": [
+                    "shop.example.com"
+                  ]
+                }
+              ],
+              "handle": [
+                {
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "match": [
+                        {
+                          "not": [
+                            {
+                              "client_ip": {
+                                "ranges": [
+                                  "10.0.0.0/8",
+                                  "192.168.1.5/32"
+                                ]
+                              }
+                            },
+                            {
+                              "path": [
+                                "/.well-known/acme-challenge/*"
+                              ]
+                            }
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "body": "Naru: 이 주소는 허용된 곳에서만 열 수 있어요. / Access is limited to allowed addresses.\n",
+                          "handler": "static_response",
+                          "headers": {
+                            "Content-Type": [
+                              "text/plain; charset=utf-8"
+                            ]
+                          },
+                          "status_code": 403
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
+                      "match": [
+                        {
+                          "not": [
+                            {
+                              "path": [
+                                "/.well-known/acme-challenge/*"
+                              ]
+                            }
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "authentication",
+                          "providers": {
+                            "http_basic": {
+                              "accounts": [
+                                {
+                                  "password": "$2a$10$Ar0a1Qe5b8fTkNw0XQ3WKu3m1bcEw7oZp6qeD4JW9mH8l2sXh9mLu",
+                                  "username": "admin"
+                                }
+                              ],
+                              "hash": {
+                                "algorithm": "bcrypt"
+                              }
+                            }
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "headers",
+                          "response": {
+                            "delete": [
+                              "Server"
+                            ],
+                            "set": {
+                              "Strict-Transport-Security": [
+                                "max-age=63072000"
+                              ],
+                              "X-Frame-Options": [
+                                "DENY"
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "subroute",
+                          "routes": [
+                            {
+                              "match": [
+                                {
+                                  "path": [
+                                    "/health"
+                                  ]
+                                }
+                              ],
+                              "handle": [
+                                {
+                                  "handler": "static_response",
+                                  "status_code": 200
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "match": [
+                        {
+                          "path": [
+                            "/api",
+                            "/api/*"
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "rewrite",
+                          "strip_path_prefix": "/api"
+                        },
+                        {
+                          "handler": "reverse_proxy",
+                          "load_balancing": {
+                            "try_duration": "5s",
+                            "try_interval": "250ms"
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "naru-api:8080"
+                            }
+                          ]
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
+                      "match": [
+                        {
+                          "path": [
+                            "/docs",
+                            "/docs/*"
+                          ]
+                        }
+                      ],
+                      "handle": [
+                        {
+                          "handler": "file_server",
+                          "root": "/srv/sites/docs/4"
+                        }
+                      ],
+                      "terminal": true
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "load_balancing": {
+                            "try_duration": "5s",
+                            "try_interval": "250ms"
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "naru-shop:3000"
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ],
+              "terminal": true
+            },
+            {
+              "handle": [
+                {
+                  "body": "Naru: 이 주소에 연결된 서비스가 없어요. / No service is configured for this address.\n",
+                  "handler": "static_response",
+                  "headers": {
+                    "Content-Type": [
+                      "text/plain; charset=utf-8"
+                    ]
+                  },
+                  "status_code": 404
+                }
+              ]
+            }
+          ],
+          "automatic_https": {
+            "disable_redirects": true
+          }
+        }
+      }
+    },
+    "tls": {
+      "automation": {
+        "policies": [
+          {
+            "issuers": [
+              {
+                "email": "me@example.com",
+                "module": "acme"
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

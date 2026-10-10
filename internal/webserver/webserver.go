@@ -39,11 +39,12 @@ type siteMapBuilder struct {
 	settings Settings
 	certs    contract.CertificateReader
 	clock    contract.Clock
+	web      contract.WebSettingsStore
 }
 
 func NewSiteMapBuilder(fixed Fixed, services contract.ServiceReader, kinds contract.KindLookup, settings Settings,
-	certs contract.CertificateReader, clock contract.Clock) contract.SiteMapBuilder {
-	return siteMapBuilder{fixed, services, kinds, settings, certs, clock}
+	certs contract.CertificateReader, clock contract.Clock, web contract.WebSettingsStore) contract.SiteMapBuilder {
+	return siteMapBuilder{fixed, services, kinds, settings, certs, clock, web}
 }
 
 func (b siteMapBuilder) Build(ctx context.Context) (model.SiteMap, error) {
@@ -71,21 +72,46 @@ func (b siteMapBuilder) Build(ctx context.Context) (model.SiteMap, error) {
 		m.AdminHosts, m.AdminHTTPS = []string{domain.String()}, true
 		m.AdminRedirectHTTP = ready(domain)
 	}
+	// 경로별 연결의 목적지를 실제 주소로 바꾸려면 모든 서비스의 목적지를 먼저 알아야 한다
+	destinations := map[model.ServiceID]model.Destination{}
 	for _, s := range all {
-		tools, ok := b.kinds.Find(s.Kind)
+		if tools, ok := b.kinds.Find(s.Kind); ok {
+			destinations[s.ID] = tools.Destination.Find(s)
+		}
+	}
+	for _, s := range all {
+		to, ok := destinations[s.ID]
 		if !ok {
 			continue
 		}
-		to := tools.Destination.Find(s)
+		web, err := b.web.Get(ctx, s.ID)
+		if err != nil {
+			return model.SiteMap{}, err
+		}
+		settings := siteSettings(web, destinations)
 		for _, d := range s.Domains {
 			if d.Domain == domain {
 				continue // 관리 주소가 우선
 			}
 			m.Sites = append(m.Sites, model.Site{Hosts: []string{d.Domain.String()}, Destination: to, HTTPS: d.HTTPS, HSTS: d.HSTS,
-				RedirectHTTP: d.HTTPS && ready(d.Domain)})
+				RedirectHTTP: d.HTTPS && ready(d.Domain), Settings: settings})
 		}
 	}
 	return m, nil
+}
+
+// siteSettings는 서비스의 웹서버 설정을 사이트 지도에 싣는 모양으로 바꾼다.
+// 경로의 대상 서비스가 지워졌으면 목적지가 비어 웹서버가 "연결할 곳이 없어요"(502)로 답한다.
+func siteSettings(w model.WebSettings, destinations map[model.ServiceID]model.Destination) model.SiteSettings {
+	out := model.SiteSettings{Headers: w.Headers, AllowFrom: w.AllowFrom, Login: w.Login, Maintenance: w.Maintenance, Compiled: w.Compiled}
+	for _, p := range w.Paths {
+		to := model.Destination{Address: p.External.String()}
+		if p.Service != 0 {
+			to = destinations[p.Service]
+		}
+		out.Paths = append(out.Paths, model.SitePath{Prefix: p.Prefix, Destination: to, StripPrefix: p.StripPrefix})
+	}
+	return out
 }
 
 // ── 맞추기 ────────────────────────────────

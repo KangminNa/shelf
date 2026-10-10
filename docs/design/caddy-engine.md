@@ -211,6 +211,7 @@ JSON이 아니라 Caddyfile인 이유: Caddy를 아는 사람의 지식과 인�
 5. **비밀은 Caddy 설정에 넣지 않는다.**
    설정은 `autosave.json`에 평문으로 남는다. 업로드 인증서는 파일 경로(`load_files`)로, DNS 토큰은 `{env.CF_API_TOKEN}` 같은 환경변수 자리표시자로 넘긴다.
    (덤으로 F-41 "시크릿 평문 저장"이 일부 풀린다.)
+   → (v2 M5) **예외 하나:** 기본 인증(비밀번호 보호)은 Caddy가 직접 검사해야 해서 bcrypt **해시**를 설정에 넣는다. 원문은 어디에도 남지 않고, 화면·로그에는 해시도 나가지 않는다.
 
 6. **Caddy 컨테이너 이름에 `shelf-`를 쓰지 않는다.**
    Shelf는 `shelf-`로 시작하는 컨테이너를 앱으로 본다 (`listContainers('shelf-')`). 이름은 `caddy`.

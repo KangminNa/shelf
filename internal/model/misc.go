@@ -99,6 +99,7 @@ type ServiceView struct {
 	Deploying  bool
 	Webhook    WebhookView
 	Form       ServiceForm
+	Web        WebSettingsView
 }
 
 // StepView는 배포 단계 하나다. State: done · doing · failed

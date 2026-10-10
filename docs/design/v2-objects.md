@@ -11,7 +11,7 @@
 
 ## 1. Naru가 하는 일
 
-사용자 눈으로 본 Naru의 일은 여덟 가지다. 모든 객체는 이 중 하나에 속한다.
+사용자 눈으로 본 Naru의 일은 아홉 가지다. 모든 객체는 이 중 하나에 속한다.
 
 | | 하는 일 | 사용자가 보는 것 |
 |---|---|---|
@@ -23,6 +23,7 @@
 | **F** | push 받아 배포하기 | 웹훅 확인, 브랜치 확인, 배포 시작 |
 | **G** | 웹서버 맞추기 | 주소마다 어디로 보낼지 정하고 웹서버(Caddy)에 반영 |
 | **H** | 보여주기 | 홈, 서비스 상세, 배포 기록, 서버 상태 |
+| **I** | 웹서버 설정 정하기 | 서비스마다 헤더·IP 제한·비밀번호·점검 중·경로별 연결·고급(Caddyfile), nginx 설정 가져오기 (M5) |
 
 그리고 이 일들이 바깥 세계(Docker, git, Caddy, DB, 파일, 네트워크)를 쓰는 데 필요한 **도구**가 있다.
 
@@ -143,6 +144,19 @@
 | `ServiceViewer` | 화면에 보여줄 서비스 모습(홈 카드·상세·배포 기록)을 모은다. 비밀은 담지 않는다 | `serviceViewer` |
 | `ServerStats` | 서버의 CPU·메모리·디스크를 알려준다 | `stats.ProcSampler` |
 
+### I. 웹서버 설정 정하기 — `websettings` (M5)
+
+서비스 하나의 웹서버 설정은 그 서비스의 모든 주소에 똑같이 적용된다. 관리 주소에는 적용하지 않는다.
+한 요청이 지나가는 순서: **IP 제한 → 점검 중 → 비밀번호 → 헤더·압축 → 고급 → 경로별 연결 → 서비스 기본 목적지.** 압축은 칸 없이 늘 켠다.
+
+| 인터페이스 | 하는 일 | 구현 |
+|---|---|---|
+| `WebSettingsEditor` | 설정을 적용한다 — 저장하고 바로 웹서버에 맞춰 보고, 거절되면 되돌린다 | `webSettingsEditor` |
+| `NginxTranslator` | nginx server 블록을 설정 칸으로 옮긴다. 옮기지 못한 줄과 이유를 함께 | `NginxReader` |
+| `LoginHasher` | 기본 인증 비밀번호를 bcrypt로 해시한다 | `BcryptHasher` |
+
+**잘못된 설정 하나가 웹서버 전체를 멈추게 하지 않는다.** 틀린 설정이 저장돼 있으면 이후 모든 맞추기가 실패한다 — 그래서 `Apply`는 저장 직후 `WebServerSync.SyncNow`로 맞춰 보고, 거절되면 저장을 되돌린다.
+
 ### 도구 — 바깥 세계에 닿는 것 (각자 자기 패키지)
 
 | 인터페이스 | 하는 일 | 구현 |
@@ -154,6 +168,7 @@
 | `ContainerRemover` | 컨테이너를 없앤다 | `docker.Containers` |
 | `ContainerSwitch` | 컨테이너를 멈추고 켠다 | `docker.Containers` |
 | `ContainerWatcher` | 컨테이너 상태·로그, 이 서비스의 컨테이너 목록을 본다 | `docker.Containers` |
+| `SnippetCompiler` | 고급 칸의 Caddyfile 지시어를 웹서버 형식으로 바꾼다 — 그 사이트의 경로 처리만 꺼내고 나머지는 "적용되지 않음"으로 알린다 | `caddy.AdaptCompiler` (Caddy 관리 API `/adapt`) |
 | `CodeDownloader` | 저장소 코드를 내려받는다 (토큰은 인자·설정 파일에 남기지 않는다) | `git.Downloader` |
 | `WorkFolder` | 잠깐 쓸 작업 폴더를 빌려주고 돌려받는다. 그 안의 경로를 심볼릭 링크로 빠져나가지 않게 찾아 준다 | `files.TempFolders` |
 | `BuildContextPacker` | 빌드할 폴더를 묶는다 (`.git`·`.dockerignore` 제외) | `files.TarPacker` |
@@ -177,6 +192,7 @@
 | `LiveStateStore` | 지금 도는 것(컨테이너·서빙 폴더·포트·멈춤)을 저장한다 |
 | `DeployHistoryStore` · `DeployHistoryReader` | 배포 기록을 저장한다 · 읽는다 |
 | `HookLogStore` | 웹훅을 받은 기록을 저장한다 |
+| `WebSettingsStore` | 서비스의 웹서버 설정을 저장한다 (비밀번호는 bcrypt 해시만) |
 
 ### 들어오는 쪽
 
@@ -255,6 +271,20 @@
 | `SetBy` | 설정 값을 누가 정했나 — 환경 변수 · 화면 · 아무도 |
 | `HookRequest` · `HookResult` | 받은 웹훅(헤더·쿼리·본문) · 처리 결과(HTTP 상태·문구·배포 번호) |
 | `InputError` | 어느 칸이 왜 틀렸나 (코드 — 문구는 화면이 만든다) |
+
+### 웹서버 설정 (M5)
+
+| 이름 | 무엇 |
+|---|---|
+| `WebSettings` | 서비스 하나의 웹서버 설정 — 헤더, 허용 IP, 기본 인증, 점검 중, 경로 규칙, 고급(원문과 바꾼 것). **`web`·`cli`는 이 타입을 쓸 수 없다** (해시가 들어 있다) |
+| `HeaderRule` | 응답 헤더 하나 — 값이 비면 지운다 |
+| `BasicLogin` | 기본 인증 계정 — 아이디와 bcrypt 해시. **`web`·`cli`는 이 타입을 쓸 수 없다** |
+| `PathRoute` · `PathPrefix` | 경로 규칙 — `/api`를 다른 서비스나 외부 주소로, 앞부분 떼기 · `/`로 시작하는 경로 앞부분 (`..`·`*` 없음, `/` 하나는 안 됨) |
+| `WebSettingsInput` · `PathRouteInput` | 화면에서 받은 설정 (비밀번호는 원문 — 저장 전에 해시) · 경로 규칙 (대상은 서비스 이름이나 주소) |
+| `WebSettingsView` | 화면에 보일 설정 — 비밀번호는 "있음"만, 이 서비스로 보내는 다른 서비스 목록 |
+| `NginxImport` · `SkippedLine` | nginx 설정을 옮긴 결과 · 옮기지 못한(또는 필요 없는) 줄과 이유 |
+| `SiteSettings` · `SitePath` | 사이트 지도에 실리는 설정 — 경로 목적지가 이미 실제 주소로 바뀐 것 |
+| `RefusedError` | 웹서버가 설정을 받아들이지 않았다 — 이유는 웹서버가 한 말 그대로 |
 
 ### 화면에 보여줄 모습 (`ServiceViewer`가 모은다)
 
@@ -574,6 +604,31 @@ type CertificateReader interface {
 	Read(ctx context.Context) (model.Certificates, error)
 }
 
+// ── I. 웹서버 설정 정하기 ─────────────────────
+
+// WebSettingsEditor는 서비스의 웹서버 설정을 적용한다. 저장한 뒤 바로 웹서버에 맞춰 보고,
+// 웹서버가 거절하면 저장을 되돌리고 model.RefusedError로 그 이유를 돌려준다.
+// warnings는 적용은 됐지만 알려야 할 것 — 고급 칸에서 사이트 밖이라 버린 지시어 같은 것.
+type WebSettingsEditor interface {
+	Apply(ctx context.Context, id model.ServiceID, in model.WebSettingsInput) (warnings []string, err error)
+}
+
+// WebSettingsStore는 서비스의 웹서버 설정을 저장한다. 없으면 빈 설정이다.
+type WebSettingsStore interface {
+	Get(ctx context.Context, id model.ServiceID) (model.WebSettings, error)
+	Set(ctx context.Context, id model.ServiceID, s model.WebSettings) error
+}
+
+// NginxTranslator는 nginx server 블록을 웹서버 설정 칸으로 옮긴다. 저장하지 않는다 — 화면이 미리 보여주고 사람이 적용한다.
+type NginxTranslator interface {
+	Translate(text string) model.NginxImport
+}
+
+// LoginHasher는 기본 인증 비밀번호를 웹서버가 아는 해시(bcrypt)로 만든다.
+type LoginHasher interface {
+	Hash(password string) (string, error)
+}
+
 // ── H. 보여주기 ────────────────────────────
 
 // ServiceViewer는 화면에 보여줄 서비스 모습을 모은다. 비밀(토큰·비밀번호)은 담지 않는다.
@@ -660,6 +715,12 @@ type SiteFiles interface {
 	RemoveSite(site model.ServiceName) error
 }
 
+// SnippetCompiler는 고급 칸의 Caddyfile 지시어(사이트 블록 안쪽)를 웹서버 형식으로 바꾼다.
+// 그 사이트의 경로 처리만 꺼내고, 그 밖(TLS·관리·포트·다른 사이트)은 ignored로 알려준다.
+type SnippetCompiler interface {
+	Compile(ctx context.Context, caddyfile string) (compiled []byte, ignored []string, err error)
+}
+
 // PortChecker는 그 주소의 포트가 응답하는지 본다.
 type PortChecker interface {
 	Answers(ctx context.Context, host string, port model.Port) error
@@ -716,10 +777,11 @@ type RandomTokens interface {
 | `FolderSwapper` | SiteFiles |
 | `oldVersionCleaner` | DeployHistoryReader · ImageCleaner · SiteFiles |
 | `hookReceiver` | ServiceReader · SecretStore · SignatureChecker(차례로) · BranchFilter · Deployer · HookLogStore · Clock |
-| `siteMapBuilder` | ServiceReader · KindLookup · AdminDomainSetting · CertEmailSetting · SetupProgress · CertificateReader · Clock |
+| `siteMapBuilder` | ServiceReader · KindLookup · AdminDomainSetting · CertEmailSetting · SetupProgress · CertificateReader · Clock · WebSettingsStore |
 | `webServerSync` | SiteMapBuilder · ConfigWriter · ConfigSender(`AdminSocketGuard`로 감싼 것) · EventSubscriber |
-| `serviceViewer` | ServiceReader · SecretStore · DeployHistoryReader · ContainerWatcher · KindLookup · AdminDomainSetting · Deployer · CertificateReader · Clock |
-| `web` | LoginManager · AccountManager · SetupKey · AdminDomainSetting · CertEmailSetting · SetupProgress · ServiceLauncher · ServiceEditor · ServiceViewer · Deployer · ServiceControl · HookReceiver · ServerStats · WebServerSync · DNSChecker · CertificateReader · Clock |
+| `serviceViewer` | ServiceReader · SecretStore · DeployHistoryReader · ContainerWatcher · KindLookup · AdminDomainSetting · Deployer · CertificateReader · Clock · WebSettingsStore |
+| `webSettingsEditor` | ServiceReader · WebSettingsStore · SnippetCompiler · LoginHasher · WebServerSync |
+| `web` | LoginManager · AccountManager · SetupKey · AdminDomainSetting · CertEmailSetting · SetupProgress · ServiceLauncher · ServiceEditor · ServiceViewer · Deployer · ServiceControl · HookReceiver · ServerStats · WebServerSync · DNSChecker · CertificateReader · Clock · WebSettingsEditor · NginxTranslator |
 
 ---
 
@@ -753,6 +815,17 @@ Deployer.Deploy
    → VersionSwapper.Swap      (ContainerSwapper: ContainerStarter로 새 것 → PortChecker로 응답 확인 → ContainerSwitch로 옛 것 끔)
    → LiveStateStore.Save → DeployHistoryStore.Finish → OldVersionCleaner.Clean
    → EventPublisher.Publish(DeployFinished, SiteMapChanged)
+```
+
+### 웹서버 설정 적용 (M5)
+
+```
+web → WebSettingsEditor.Apply
+        ├ 경로 대상: 서비스 이름이면 그 서비스 번호, 아니면 ExternalAddress
+        ├ LoginHasher.Hash (새 비밀번호가 있을 때만)
+        ├ SnippetCompiler.Compile (고급 칸이 있을 때) — 버린 지시어는 warnings로
+        ├ WebSettingsStore.Set
+        └ WebServerSync.SyncNow — 거절되면 옛 설정으로 Set · SyncNow 후 RefusedError
 ```
 
 ### 웹서버 맞추기
@@ -804,7 +877,7 @@ WebServerSync (SiteMapChanged를 듣거나 30초마다)
 | R7 | SQL은 `store`에만 |
 | R8 | 바깥 세계에 닿는 것 — `os/exec`·`syscall`·`archive/tar` import, 파일 읽고 쓰기(`os.WriteFile`…), 연결(`net.Dial`…, `http.Client`…) — 은 도구·저장·조립(`app`)에만 |
 | R9 | 종류 이름으로 분기하는 코드는 `kinds`에만 |
-| R10 | `web`·`cli`는 `model.ServiceSecrets`·`model.PasswordHash`를 쓰지 않는다 |
+| R10 | `web`·`cli`는 `model.ServiceSecrets`·`model.PasswordHash`·`model.WebSettings`·`model.BasicLogin`을 쓰지 않는다 (그것을 주고받는 인터페이스도) |
 | R11 | 검사용 정규식은 `model`에만 |
 
 ---
@@ -873,6 +946,5 @@ M4 전에 한다. 지금의 화면·배포 테스트가 회귀 테스트다 — 
 | 기능 | 왜 아직인가 | 들어갈 곳 |
 |---|---|---|
 | 인증서 발급 실패 이유 (M4-2) | Caddy는 실패를 로그에만 남긴다 — Naru가 그리는 설정에 로그 파일 출력을 넣고 읽는 쪽을 권한다. 실제 문구는 staging에서 모은다 | `CertificateReader` 옆에 실패 읽기 (설계 노트) |
-| 웹서버 고급 설정 | 설정을 `SiteMap`에 싣는 모양을 먼저 정해야 설정 쓰기가 분기 덩어리가 되지 않는다 | `SiteMap`에 사이트 옵션, 옵션마다 작은 설정 쓰기 객체 (M5 설계 노트) |
 | 비공개 레지스트리 | 레지스트리 자격 증명을 어디에 둘지 정하지 않았다 | `SecretStore` + `ImagePuller` (설계 노트) |
 | 빌드가 필요한 정적 사이트 | 빌드를 어떤 컨테이너에서 돌릴지 정하지 않았다 | `StaticBuilder` 앞에 사이트 빌드 단계 (설계 노트) |

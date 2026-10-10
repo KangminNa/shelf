@@ -141,15 +141,30 @@ func (c *fakeCerts) issue(names ...string) {
 		NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(90 * 24 * time.Hour)})
 }
 
+// fakeSnippet은 Caddy의 /adapt인 척한다 — "nonsense"는 모르는 지시어.
+type fakeSnippet struct{}
+
+func (fakeSnippet) Compile(_ context.Context, text string) ([]byte, []string, error) {
+	if strings.Contains(text, "nonsense") {
+		return nil, nil, errors.New("Caddyfile:2: unrecognized directive: nonsense")
+	}
+	var ignored []string
+	if strings.Contains(text, "tls") {
+		ignored = []string{"tls — 이 설정은 Naru가 정해요 / Naru manages tls"}
+	}
+	return []byte(`[{"match":[{"path":["/health"]}],"handle":[{"handler":"static_response","status_code":200}]}]`), ignored, nil
+}
+
 type fakeStats struct{}
 
 func (fakeStats) Now() model.ServerSnapshot { return model.ServerSnapshot{Cores: 2} }
 
 // fakeCaddy는 받은 설정을 기록한다.
 type fakeCaddy struct {
-	mu    sync.Mutex
-	loads []string
-	fail  error
+	mu       sync.Mutex
+	loads    []string
+	fail     error
+	refuseIf string // 설정에 이 글자가 있으면 거절한다 (웹서버가 틀린 설정을 거절하는 것처럼)
 }
 
 func (c *fakeCaddy) Send(_ context.Context, cfg []byte) error {
@@ -157,6 +172,9 @@ func (c *fakeCaddy) Send(_ context.Context, cfg []byte) error {
 	defer c.mu.Unlock()
 	if c.fail != nil {
 		return c.fail
+	}
+	if c.refuseIf != "" && strings.Contains(string(cfg), c.refuseIf) {
+		return errors.New(`caddy: POST /load: 400 {"error":"loading new config: bad header"}`)
 	}
 	c.loads = append(c.loads, string(cfg))
 	return nil
@@ -208,7 +226,7 @@ func newHarness(t *testing.T, envDomain string) *harness {
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)), Outside{
 		Builder: fakeRegistry{}, Puller: fakeRegistry{}, Images: fakeImages{},
 		Starter: h.docker, Remover: h.docker, Switch: h.docker, Watcher: h.docker, Ports: h.docker,
-		Code: fakeGit{}, DNS: netcheck.NewDNS(lookup), Stats: fakeStats{}, Sender: h.caddy, Certs: h.certs,
+		Code: fakeGit{}, DNS: netcheck.NewDNS(lookup), Stats: fakeStats{}, Sender: h.caddy, Certs: h.certs, Snippet: fakeSnippet{},
 		Clock: system.Clock{}, Random: system.Random{}, ReadyTimeout: 5 * time.Second,
 	})
 	if err != nil {
@@ -869,6 +887,90 @@ func TestHTTPSRedirectStartsOnceTheCertificateExists(t *testing.T) {
 	_, _, body = h.get("/settings")
 	if !strings.Contains(body, "HTTPS · ") {
 		t.Fatal("settings show the admin address certificate")
+	}
+}
+
+// ── 웹서버 설정 (M5) ──────────────────────────
+
+func TestWebServerSettingsFromTheScreen(t *testing.T) {
+	h := newHarness(t, "")
+	h.signedIn()
+	shop := h.createService(model.NewService{Name: name("shop"), Kind: model.KindImage, Source: "me/shop", Alias: "naru-shop", Port: 3000}, model.ServiceSecrets{})
+	api := h.createService(model.NewService{Name: name("api"), Kind: model.KindImage, Source: "me/api", Alias: "naru-api", Port: 8080}, model.ServiceSecrets{})
+	h.addDomain(shop, "shop.example.com", true, false)
+	page := fmt.Sprintf("/services/%d", shop)
+
+	code, loc, _ := h.post(page+"/web", url.Values{
+		"headers": {"X-Frame-Options: DENY"}, "allow": {"10.0.0.0/8\n192.168.1.5"}, "login_user": {"admin"}, "login_password": {"longenough"},
+		"paths": {"/api api 떼기"}, "advanced": {"respond /health 200"},
+	})
+	if code != http.StatusSeeOther || !strings.Contains(loc, "ok=web") {
+		t.Fatalf("%d %q", code, loc)
+	}
+	cfg := h.caddy.last()
+	for _, want := range []string{"X-Frame-Options", `"client_ip"`, "192.168.1.5/32", `"authentication"`, "$2a$", `"strip_path_prefix": "/api"`, "naru-api:8080", `"/health"`, `"encode"`} {
+		if !strings.Contains(cfg, want) {
+			t.Errorf("the web server got %s", want)
+		}
+	}
+	if strings.Contains(cfg, "longenough") {
+		t.Fatal("the password itself never reaches the web server")
+	}
+
+	_, _, body := h.get(page)
+	if !strings.Contains(body, "X-Frame-Options: DENY") || !strings.Contains(body, "/api api 떼기") || !strings.Contains(body, "비워 두면 지금 비밀번호 그대로") || strings.Contains(body, "$2a$") {
+		t.Fatal("the screen shows the settings, and only that a password exists")
+	}
+	if _, _, body := h.get(fmt.Sprintf("/services/%d", api)); !strings.Contains(body, "이 서비스에 보내는 서비스") || !strings.Contains(body, "<b>shop</b>") {
+		t.Fatal("the target service says who routes to it")
+	}
+
+	// 웹서버가 거절하면 되돌린다 — 이전 설정이 그대로 남고, 웹서버가 한 말이 보인다
+	h.caddy.mu.Lock()
+	h.caddy.refuseIf = "X-Refuse-Me"
+	h.caddy.mu.Unlock()
+	loads := len(h.caddy.loads)
+	code, _, body = h.post(page+"/web", url.Values{"headers": {"X-Refuse-Me: 1"}, "login_user": {"admin"}})
+	if code != http.StatusBadRequest || !strings.Contains(body, "되돌렸어요") || !strings.Contains(body, "bad header") || !strings.Contains(body, "X-Refuse-Me: 1") {
+		t.Fatalf("refused: %d", code)
+	}
+	if got, _ := store.NewWebSettings(h.app.db).Get(ctx, shop); len(got.Headers) != 1 || got.Headers[0].Name != "X-Frame-Options" || got.Login.User != "admin" {
+		t.Fatalf("the previous settings are restored: %+v", got)
+	}
+	if len(h.caddy.loads) != loads && !strings.Contains(h.caddy.last(), "X-Frame-Options") {
+		t.Fatal("the web server keeps serving the previous settings")
+	}
+
+	// 고급 칸의 틀린 지시어는 웹서버에 닿기 전에 막힌다
+	code, _, body = h.post(page+"/web", url.Values{"advanced": {"nonsense"}})
+	if code != http.StatusBadRequest || !strings.Contains(body, "unrecognized directive: nonsense") {
+		t.Fatalf("compile errors show Caddy's words: %d", code)
+	}
+	// 적용됐지만 반영되지 않은 지시어는 알려 준다
+	if code, _, body := h.post(page+"/web", url.Values{"advanced": {"tls internal"}}); code != http.StatusOK || !strings.Contains(body, "반영되지 않았어요") {
+		t.Fatalf("ignored directives are reported: %d", code)
+	}
+	for form, want := range map[string]string{"/api nowhere": "대상을 찾지 못했어요", "/api shop": "자기 자신으로는", "api api": "/경로 대상"} {
+		if code, _, body := h.post(page+"/web", url.Values{"paths": {form}}); code != http.StatusBadRequest || !strings.Contains(body, want) {
+			t.Errorf("%q: %d, want %q", form, code, want)
+		}
+	}
+	if code, _, body := h.post(page+"/web", url.Values{"allow": {"not-an-ip"}}); code != http.StatusBadRequest || !strings.Contains(body, "대역") {
+		t.Errorf("bad IP: %d", code)
+	}
+}
+
+func TestImportFromNginxFillsTheFormWithoutSaving(t *testing.T) {
+	h := newHarness(t, "")
+	h.signedIn()
+	shop := h.createService(model.NewService{Name: name("shop"), Kind: model.KindImage, Source: "me/shop", Alias: "naru-shop", Port: 3000}, model.ServiceSecrets{})
+	nginx := "server {\n  server_name shop.example.com;\n  add_header X-Robots-Tag noindex;\n  location /api/ { proxy_pass http://api:8080/; }\n}"
+	code, _, body := h.post(fmt.Sprintf("/services/%d/web/nginx", shop), url.Values{"nginx": {nginx}})
+	if code != http.StatusOK || !strings.Contains(body, "X-Robots-Tag: noindex") || !strings.Contains(body, "/api api:8080 떼기") || !strings.Contains(body, "server_name") {
+		t.Fatalf("the form is filled and skipped lines are listed: %d", code)
+	}
+	if got, _ := store.NewWebSettings(h.app.db).Get(ctx, shop); len(got.Headers) != 0 {
+		t.Fatal("nothing is saved until the user applies")
 	}
 }
 

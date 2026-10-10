@@ -34,6 +34,7 @@ import (
 	"github.com/KangminNa/naru/internal/web"
 	"github.com/KangminNa/naru/internal/webhook"
 	"github.com/KangminNa/naru/internal/webserver"
+	"github.com/KangminNa/naru/internal/websettings"
 )
 
 // Config는 환경 변수에서 읽는다. 모두 비워 둬도 돈다 — 나머지는 첫 설정 화면에서 정한다.
@@ -102,6 +103,7 @@ type Outside struct {
 	Stats   contract.ServerStats
 	Sender  contract.ConfigSender // 관리 소켓 확인(AdminSocketGuard)은 app이 늘 감싼다
 	Certs   contract.CertificateReader
+	Snippet contract.SnippetCompiler // 고급 칸의 Caddyfile을 바꿔 준다 (Caddy 관리 소켓)
 	Clock   contract.Clock
 	Random  contract.RandomTokens
 
@@ -123,10 +125,11 @@ func RealOutside(cfg Config) Outside {
 		Builder: docker.NewBuilder(d), Puller: docker.NewPuller(d), Images: docker.NewImages(d),
 		Starter: containers, Remover: containers, Switch: containers, Watcher: containers,
 		Code: git.Downloader{}, Ports: netcheck.TCP{}, DNS: netcheck.NewDNS(nil),
-		Stats:  stats.NewProcSampler(cfg.ProcDir, cfg.DataDir),
-		Sender: caddy.NewSocketSender(cfg.CaddySocket),
-		Certs:  caddy.NewCertificateFiles(certsDir(cfg)),
-		Clock:  system.Clock{}, Random: system.Random{},
+		Stats:   stats.NewProcSampler(cfg.ProcDir, cfg.DataDir),
+		Sender:  caddy.NewSocketSender(cfg.CaddySocket),
+		Certs:   caddy.NewCertificateFiles(certsDir(cfg)),
+		Snippet: caddy.NewAdaptCompiler(cfg.CaddySocket),
+		Clock:   system.Clock{}, Random: system.Random{},
 	}
 }
 
@@ -156,6 +159,9 @@ func Open(cfg Config, log *slog.Logger) (*App, error) { return OpenWith(cfg, log
 func OpenWith(cfg Config, log *slog.Logger, out Outside) (*App, error) {
 	if out.Certs == nil { // 테스트처럼 가짜를 주지 않으면 데이터 폴더의 Caddy 저장소를 읽는다
 		out.Certs = caddy.NewCertificateFiles(certsDir(cfg))
+	}
+	if out.Snippet == nil {
+		out.Snippet = caddy.NewAdaptCompiler(cfg.CaddySocket)
 	}
 	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
 		return nil, err
@@ -191,6 +197,7 @@ func (a *App) assemble() error {
 	accounts, sessions := store.NewAccounts(db), store.NewSessions(db)
 	serviceStore, domains, secrets := store.NewServices(db), store.NewDomains(db), store.NewSecrets(db)
 	liveStates, hookLogs, history := store.NewLiveStates(db), store.NewHookLogs(db), store.NewDeployments(db)
+	webStore := store.NewWebSettings(db)
 
 	// B. 서버 설정 — 환경 변수가 이긴다
 	envDomain, err := model.ParseOptionalDomainName(cfg.AdminDomain)
@@ -248,20 +255,26 @@ func (a *App) assemble() error {
 	// G. 웹서버
 	siteMap := webserver.NewSiteMapBuilder(webserver.Fixed{
 		AdminSocket: cfg.CaddySocket, AdminUpstream: cfg.SelfUpstream, InternalTLS: cfg.InternalTLS, HTTPSPort: cfg.HTTPSPort,
-	}, serviceStore, lookup, webserver.Settings{Admin: adminDomain, Email: certEmail, Setup: setup}, out.Certs, out.Clock)
+	}, serviceStore, lookup, webserver.Settings{Admin: adminDomain, Email: certEmail, Setup: setup}, out.Certs, out.Clock, webStore)
 	sync, run := webserver.NewWebServerSync(siteMap, caddy.JSONWriter{}, caddy.NewAdminSocketGuard(out.Sender, cfg.CaddySocket), bus, a.log)
 	a.syncWS = run
+
+	// I. 웹서버 설정 — 적용하면 바로 맞춰 보고, 거절되면 되돌린다
+	webSettings := websettings.NewWebSettingsEditor(websettings.EditorParts{
+		Services: serviceStore, Store: webStore, Compiler: out.Snippet, Hasher: websettings.BcryptHasher{}, Sync: sync,
+	})
 
 	// H. 보여주기
 	viewer := views.NewServiceViewer(views.Parts{
 		Services: serviceStore, Secrets: secrets, History: history, Containers: out.Watcher, Kinds: lookup,
-		Admin: adminDomain, Deployer: deployer, Certs: out.Certs, Clock: out.Clock, HTTPSPort: cfg.HTTPSPort,
+		Admin: adminDomain, Deployer: deployer, Certs: out.Certs, Clock: out.Clock, HTTPSPort: cfg.HTTPSPort, Web: webStore,
 	}, a.log)
 
 	srv, err := web.New(web.Deps{
 		Login: login, Accounts: a.Accounts, SetupKey: a.key, AdminDomain: adminDomain, CertEmail: certEmail, Setup: setup,
 		Launcher: launcher, Editor: editor, Viewer: viewer, Deployer: deployer, Control: control, Hooks: hooks,
-		Stats: out.Stats, WebServer: sync, DNS: out.DNS, Certs: out.Certs, Clock: out.Clock, Log: a.log, DataDir: cfg.DataDir, Version: cfg.Version,
+		Stats: out.Stats, WebServer: sync, DNS: out.DNS, Certs: out.Certs, Clock: out.Clock, Log: a.log,
+		WebSettings: webSettings, Nginx: websettings.NginxReader{}, DataDir: cfg.DataDir, Version: cfg.Version,
 	})
 	if err != nil {
 		return err

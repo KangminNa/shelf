@@ -44,14 +44,38 @@
               ],
               "handle": [
                 {
-                  "handler": "reverse_proxy",
-                  "load_balancing": {
-                    "try_duration": "5s",
-                    "try_interval": "250ms"
-                  },
-                  "upstreams": [
+                  "handler": "subroute",
+                  "routes": [
                     {
-                      "dial": "shelf-blog:3000"
+                      "handle": [
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "load_balancing": {
+                            "try_duration": "5s",
+                            "try_interval": "250ms"
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "shelf-blog:3000"
+                            }
+                          ]
+                        }
+                      ]
                     }
                   ]
                 }
@@ -68,14 +92,38 @@
               ],
               "handle": [
                 {
-                  "body": "Naru: 이 서비스는 연결할 곳이 없어요. / This service has nowhere to send requests.\n",
-                  "handler": "static_response",
-                  "headers": {
-                    "Content-Type": [
-                      "text/plain; charset=utf-8"
-                    ]
-                  },
-                  "status_code": 502
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "handle": [
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "body": "Naru: 이 서비스는 연결할 곳이 없어요. / This service has nowhere to send requests.\n",
+                          "handler": "static_response",
+                          "headers": {
+                            "Content-Type": [
+                              "text/plain; charset=utf-8"
+                            ]
+                          },
+                          "status_code": 502
+                        }
+                      ]
+                    }
+                  ]
                 }
               ],
               "terminal": true
@@ -90,14 +138,38 @@
               ],
               "handle": [
                 {
-                  "handler": "reverse_proxy",
-                  "load_balancing": {
-                    "try_duration": "5s",
-                    "try_interval": "250ms"
-                  },
-                  "upstreams": [
+                  "handler": "subroute",
+                  "routes": [
                     {
-                      "dial": "host.docker.internal:5000"
+                      "handle": [
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "load_balancing": {
+                            "try_duration": "5s",
+                            "try_interval": "250ms"
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "host.docker.internal:5000"
+                            }
+                          ]
+                        }
+                      ]
                     }
                   ]
                 }
@@ -114,18 +186,42 @@
               ],
               "handle": [
                 {
-                  "handler": "reverse_proxy",
-                  "load_balancing": {
-                    "try_duration": "5s",
-                    "try_interval": "250ms"
-                  },
-                  "transport": {
-                    "protocol": "http",
-                    "tls": {}
-                  },
-                  "upstreams": [
+                  "handler": "subroute",
+                  "routes": [
                     {
-                      "dial": "192.168.0.1:443"
+                      "handle": [
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "load_balancing": {
+                            "try_duration": "5s",
+                            "try_interval": "250ms"
+                          },
+                          "transport": {
+                            "protocol": "http",
+                            "tls": {}
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "192.168.0.1:443"
+                            }
+                          ]
+                        }
+                      ]
                     }
                   ]
                 }
@@ -142,8 +238,32 @@
               ],
               "handle": [
                 {
-                  "handler": "file_server",
-                  "root": "/srv/sites/landing/12"
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "handle": [
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "file_server",
+                          "root": "/srv/sites/landing/12"
+                        }
+                      ]
+                    }
+                  ]
                 }
               ],
               "terminal": true
@@ -158,14 +278,38 @@
               ],
               "handle": [
                 {
-                  "handler": "reverse_proxy",
-                  "load_balancing": {
-                    "try_duration": "5s",
-                    "try_interval": "250ms"
-                  },
-                  "upstreams": [
+                  "handler": "subroute",
+                  "routes": [
                     {
-                      "dial": "shelf-landing:4023"
+                      "handle": [
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "load_balancing": {
+                            "try_duration": "5s",
+                            "try_interval": "250ms"
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "shelf-landing:4023"
+                            }
+                          ]
+                        }
+                      ]
                     }
                   ]
                 }
@@ -230,14 +374,38 @@
               ],
               "handle": [
                 {
-                  "handler": "reverse_proxy",
-                  "load_balancing": {
-                    "try_duration": "5s",
-                    "try_interval": "250ms"
-                  },
-                  "upstreams": [
+                  "handler": "subroute",
+                  "routes": [
                     {
-                      "dial": "shelf-blog:3000"
+                      "handle": [
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "load_balancing": {
+                            "try_duration": "5s",
+                            "try_interval": "250ms"
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "shelf-blog:3000"
+                            }
+                          ]
+                        }
+                      ]
                     }
                   ]
                 }
@@ -254,18 +422,42 @@
               ],
               "handle": [
                 {
-                  "handler": "reverse_proxy",
-                  "load_balancing": {
-                    "try_duration": "5s",
-                    "try_interval": "250ms"
-                  },
-                  "transport": {
-                    "protocol": "http",
-                    "tls": {}
-                  },
-                  "upstreams": [
+                  "handler": "subroute",
+                  "routes": [
                     {
-                      "dial": "192.168.0.1:443"
+                      "handle": [
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "load_balancing": {
+                            "try_duration": "5s",
+                            "try_interval": "250ms"
+                          },
+                          "transport": {
+                            "protocol": "http",
+                            "tls": {}
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "192.168.0.1:443"
+                            }
+                          ]
+                        }
+                      ]
                     }
                   ]
                 }
@@ -282,8 +474,32 @@
               ],
               "handle": [
                 {
-                  "handler": "file_server",
-                  "root": "/srv/sites/landing/12"
+                  "handler": "subroute",
+                  "routes": [
+                    {
+                      "handle": [
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "file_server",
+                          "root": "/srv/sites/landing/12"
+                        }
+                      ]
+                    }
+                  ]
                 }
               ],
               "terminal": true
@@ -298,24 +514,48 @@
               ],
               "handle": [
                 {
-                  "handler": "headers",
-                  "response": {
-                    "set": {
-                      "Strict-Transport-Security": [
-                        "max-age=63072000"
-                      ]
-                    }
-                  }
-                },
-                {
-                  "handler": "reverse_proxy",
-                  "load_balancing": {
-                    "try_duration": "5s",
-                    "try_interval": "250ms"
-                  },
-                  "upstreams": [
+                  "handler": "subroute",
+                  "routes": [
                     {
-                      "dial": "shelf-landing:4023"
+                      "handle": [
+                        {
+                          "handler": "headers",
+                          "response": {
+                            "set": {
+                              "Strict-Transport-Security": [
+                                "max-age=63072000"
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "load_balancing": {
+                            "try_duration": "5s",
+                            "try_interval": "250ms"
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "shelf-landing:4023"
+                            }
+                          ]
+                        }
+                      ]
                     }
                   ]
                 }

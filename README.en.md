@@ -42,6 +42,9 @@ New containers are named `naru-*`. Containers carried over from v1 (`shelf-*`) a
   so a missing or expired certificate never locks you out of your own admin screen. Each address shows "HTTPS · until …", or where its DNS points while it waits.
 - HSTS per address. Unknown hosts get 404. Naru draws the whole Caddy config and pushes it over Caddy's admin unix socket — there is no config file to edit by hand.
 
+**Web server settings per service** — response headers, allowed IPs, password protection (basic auth), maintenance mode, path routing (`/api` to another service), and Caddyfile directives in an advanced box.
+Paste an nginx config and it is carried over into the fields. Applying checks with the web server right away and rolls back if it refuses. Compression is always on.
+
 **Services — four kinds**
 
 | Kind | What |
@@ -64,7 +67,7 @@ New containers are named `naru-*`. Containers carried over from v1 (`shelf-*`) a
 - No `.env`: a first-run wizard — account → admin address (with a DNS check) → HTTPS contact. The wizard link is printed only in the server log.
 - Korean and English screens. Server CPU / memory / disk. v1 data (accounts, apps, proxy hosts, deploy history) is imported on first start, keeping IDs so webhook URLs survive.
 
-**Not yet** — plain-language certificate failures (M4-2), advanced web server settings (M5), monitoring and alerts (M6), production switch-over (M7).
+**Not yet** — monitoring, alerts, diagnostics and the logs tab (M6), production switch-over (M7).
 
 ---
 

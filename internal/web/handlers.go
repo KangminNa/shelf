@@ -269,7 +269,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 var okKeys = map[string]string{
 	"setup": "ok.setup", "password": "ok.password", "domain": "ok.domain",
 	"queued": "ok.queued", "saved": "ok.saved", "redeploy": "ok.redeploy", "stopped": "ok.stopped", "started": "ok.started",
-	"domain-added": "ok.domainadded", "domain-removed": "ok.domainremoved", "deleted": "ok.deleted",
+	"domain-added": "ok.domainadded", "domain-removed": "ok.domainremoved", "deleted": "ok.deleted", "web": "ok.web",
 }
 
 // ── 설정 ───────────────────────────────────

@@ -316,7 +316,11 @@ type serviceScreen struct {
 	HasToken      bool
 	Domains       []domainRow
 	Settings      serviceForm
-	Form          string // 오류가 난 폼
+	Web           webForm
+	WebWarnings   []string            // 적용됐지만 알릴 것 (고급 칸에서 버린 지시어)
+	NginxSkipped  []model.SkippedLine // nginx에서 옮기지 못한 줄
+	WebRefused    string              // 웹서버가 거절한 이유 (그 말 그대로)
+	Form          string              // 오류가 난 폼
 }
 
 func (s *Server) servicePage(w http.ResponseWriter, r *http.Request) {
@@ -348,7 +352,7 @@ func (s *Server) serviceView(r *http.Request, u model.Account, sv model.ServiceV
 		Service: sv.Service, Card: cardOf(sc), Target: sv.Target, Container: sv.Container, Deployable: sv.Deployable,
 		Deploys: sv.Deploys, LiveID: sv.LiveID, Running: sv.Deploying, Form: form,
 		WebhookURL: sv.Webhook.URL, WebhookSecret: sv.Webhook.Secret, HasToken: sv.Form.HasToken,
-		Domains: s.domainRows(r, sv.Domains),
+		Domains: s.domainRows(r, sv.Domains), Web: webFormOf(sv.Web),
 	}
 	if len(d.Deploys) > 0 {
 		d.Latest = &d.Deploys[0]

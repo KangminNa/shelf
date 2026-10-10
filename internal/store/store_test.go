@@ -398,3 +398,28 @@ func TestNameCollisionsGetASuffix(t *testing.T) {
 		t.Fatalf("%+v", all)
 	}
 }
+
+func TestWebSettingsStorage(t *testing.T) {
+	db := open(t, t.TempDir())
+	id, _ := NewServices(db).Create(ctx, model.NewService{Name: name("shop"), Kind: model.KindImage})
+	w := NewWebSettings(db)
+	if got, err := w.Get(ctx, id); err != nil || got.Maintenance || len(got.Headers) != 0 {
+		t.Fatalf("no settings yet is the empty setting: %+v %v", got, err)
+	}
+	prefix, _ := model.ParsePathPrefix("/api")
+	in := model.WebSettings{Maintenance: true, Headers: []model.HeaderRule{{Name: "X", Value: "1"}},
+		Login: model.BasicLogin{User: "me", Hash: "$2a$10$abc"}, Paths: []model.PathRoute{{Prefix: prefix, Service: 2}}}
+	if err := w.Set(ctx, id, in); err != nil {
+		t.Fatal(err)
+	}
+	in.Maintenance = false
+	w.Set(ctx, id, in)
+	got, _ := w.Get(ctx, id)
+	if got.Maintenance || got.Login.Hash != "$2a$10$abc" || got.Paths[0].Prefix.String() != "/api" {
+		t.Fatalf("%+v", got)
+	}
+	NewServices(db).Delete(ctx, id)
+	if got, _ := w.Get(ctx, id); got.Login.User != "" {
+		t.Fatal("settings go with their service")
+	}
+}

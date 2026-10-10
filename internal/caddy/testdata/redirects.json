@@ -72,14 +72,38 @@
               ],
               "handle": [
                 {
-                  "handler": "reverse_proxy",
-                  "load_balancing": {
-                    "try_duration": "5s",
-                    "try_interval": "250ms"
-                  },
-                  "upstreams": [
+                  "handler": "subroute",
+                  "routes": [
                     {
-                      "dial": "naru-plain:80"
+                      "handle": [
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "load_balancing": {
+                            "try_duration": "5s",
+                            "try_interval": "250ms"
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "naru-plain:80"
+                            }
+                          ]
+                        }
+                      ]
                     }
                   ]
                 }
@@ -124,14 +148,38 @@
               ],
               "handle": [
                 {
-                  "handler": "reverse_proxy",
-                  "load_balancing": {
-                    "try_duration": "5s",
-                    "try_interval": "250ms"
-                  },
-                  "upstreams": [
+                  "handler": "subroute",
+                  "routes": [
                     {
-                      "dial": "naru-ready:80"
+                      "handle": [
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "load_balancing": {
+                            "try_duration": "5s",
+                            "try_interval": "250ms"
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "naru-ready:80"
+                            }
+                          ]
+                        }
+                      ]
                     }
                   ]
                 }
@@ -148,14 +196,38 @@
               ],
               "handle": [
                 {
-                  "handler": "reverse_proxy",
-                  "load_balancing": {
-                    "try_duration": "5s",
-                    "try_interval": "250ms"
-                  },
-                  "upstreams": [
+                  "handler": "subroute",
+                  "routes": [
                     {
-                      "dial": "naru-waiting:80"
+                      "handle": [
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "load_balancing": {
+                            "try_duration": "5s",
+                            "try_interval": "250ms"
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "naru-waiting:80"
+                            }
+                          ]
+                        }
+                      ]
                     }
                   ]
                 }
@@ -220,24 +292,48 @@
               ],
               "handle": [
                 {
-                  "handler": "headers",
-                  "response": {
-                    "set": {
-                      "Strict-Transport-Security": [
-                        "max-age=63072000"
-                      ]
-                    }
-                  }
-                },
-                {
-                  "handler": "reverse_proxy",
-                  "load_balancing": {
-                    "try_duration": "5s",
-                    "try_interval": "250ms"
-                  },
-                  "upstreams": [
+                  "handler": "subroute",
+                  "routes": [
                     {
-                      "dial": "naru-ready:80"
+                      "handle": [
+                        {
+                          "handler": "headers",
+                          "response": {
+                            "set": {
+                              "Strict-Transport-Security": [
+                                "max-age=63072000"
+                              ]
+                            }
+                          }
+                        },
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "load_balancing": {
+                            "try_duration": "5s",
+                            "try_interval": "250ms"
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "naru-ready:80"
+                            }
+                          ]
+                        }
+                      ]
                     }
                   ]
                 }
@@ -254,14 +350,38 @@
               ],
               "handle": [
                 {
-                  "handler": "reverse_proxy",
-                  "load_balancing": {
-                    "try_duration": "5s",
-                    "try_interval": "250ms"
-                  },
-                  "upstreams": [
+                  "handler": "subroute",
+                  "routes": [
                     {
-                      "dial": "naru-waiting:80"
+                      "handle": [
+                        {
+                          "encodings": {
+                            "gzip": {},
+                            "zstd": {}
+                          },
+                          "handler": "encode",
+                          "prefer": [
+                            "zstd",
+                            "gzip"
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "handle": [
+                        {
+                          "handler": "reverse_proxy",
+                          "load_balancing": {
+                            "try_duration": "5s",
+                            "try_interval": "250ms"
+                          },
+                          "upstreams": [
+                            {
+                              "dial": "naru-waiting:80"
+                            }
+                          ]
+                        }
+                      ]
                     }
                   ]
                 }

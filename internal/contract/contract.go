@@ -301,6 +301,31 @@ type CertificateReader interface {
 	Read(ctx context.Context) (model.Certificates, error)
 }
 
+// ── I. 웹서버 설정 정하기 ─────────────────────
+
+// WebSettingsEditor는 서비스의 웹서버 설정을 적용한다. 저장한 뒤 바로 웹서버에 맞춰 보고,
+// 웹서버가 거절하면 저장을 되돌리고 model.RefusedError로 그 이유를 돌려준다.
+// warnings는 적용은 됐지만 알려야 할 것 — 고급 칸에서 사이트 밖이라 버린 지시어 같은 것.
+type WebSettingsEditor interface {
+	Apply(ctx context.Context, id model.ServiceID, in model.WebSettingsInput) (warnings []string, err error)
+}
+
+// WebSettingsStore는 서비스의 웹서버 설정을 저장한다. 없으면 빈 설정이다.
+type WebSettingsStore interface {
+	Get(ctx context.Context, id model.ServiceID) (model.WebSettings, error)
+	Set(ctx context.Context, id model.ServiceID, s model.WebSettings) error
+}
+
+// NginxTranslator는 nginx server 블록을 웹서버 설정 칸으로 옮긴다. 저장하지 않는다 — 화면이 미리 보여주고 사람이 적용한다.
+type NginxTranslator interface {
+	Translate(text string) model.NginxImport
+}
+
+// LoginHasher는 기본 인증 비밀번호를 웹서버가 아는 해시(bcrypt)로 만든다.
+type LoginHasher interface {
+	Hash(password string) (string, error)
+}
+
 // ── H. 보여주기 ────────────────────────────
 
 // ServiceViewer는 화면에 보여줄 서비스 모습을 모은다. 비밀(토큰·비밀번호)은 담지 않는다.
@@ -385,6 +410,12 @@ type SiteFiles interface {
 	Exists(f model.SiteFolder) bool
 	Prune(site model.ServiceName, keep int, live model.DeploymentID)
 	RemoveSite(site model.ServiceName) error
+}
+
+// SnippetCompiler는 고급 칸의 Caddyfile 지시어(사이트 블록 안쪽)를 웹서버 형식으로 바꾼다.
+// 그 사이트의 경로 처리만 꺼내고, 그 밖(TLS·관리·포트·다른 사이트)은 ignored로 알려준다.
+type SnippetCompiler interface {
+	Compile(ctx context.Context, caddyfile string) (compiled []byte, ignored []string, err error)
 }
 
 // PortChecker는 그 주소의 포트가 응답하는지 본다.
