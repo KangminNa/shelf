@@ -336,6 +336,7 @@ type serviceScreen struct {
 	NginxSkipped  []model.SkippedLine // nginx에서 옮기지 못한 줄
 	WebRefused    string              // 웹서버가 거절한 이유 (그 말 그대로)
 	Form          string              // 오류가 난 폼
+	Findings      []finding           // 지켜보기가 찾은 이 서비스의 문제
 }
 
 func (s *Server) servicePage(w http.ResponseWriter, r *http.Request) {
@@ -369,6 +370,11 @@ func (s *Server) serviceView(r *http.Request, u model.Account, sv model.ServiceV
 		WebhookURL: sv.Webhook.URL, WebhookSecret: sv.Webhook.Secret, HasToken: sv.Form.HasToken,
 		Domains: s.domainRows(r, sv.Domains), Web: webFormOf(sv.Web),
 	}
+	for _, f := range sv.Findings {
+		row := findingOf(f)
+		row.Name = "" // 이 서비스 화면 안이다
+		d.Findings = append(d.Findings, row)
+	}
 	if len(d.Deploys) > 0 {
 		d.Latest = &d.Deploys[0]
 	}
@@ -382,3 +388,25 @@ func (s *Server) serviceView(r *http.Request, u model.Account, sv model.ServiceV
 
 // 리다이렉트 뒤 ?err= 로 받는 값도 이 목록으로만 바꾼다.
 var errKeys = map[string]string{"rollback": "err.rollback", "docker": "err.docker"}
+
+// setPort는 진단의 [포트를 N으로 바꾸기]다 — 다시 배포하지 않고 웹서버만 새 포트로 보낸다.
+func (s *Server) setPort(w http.ResponseWriter, r *http.Request) {
+	if _, _, ok := s.gate(w, r); !ok {
+		return
+	}
+	v, ok := s.detailFor(w, r)
+	if !ok {
+		return
+	}
+	id := v.Service.ID
+	p, err := model.ParsePort(r.FormValue("port"))
+	if err == nil {
+		err = s.d.Editor.SetPort(r.Context(), id, p)
+	}
+	if err != nil {
+		s.d.Log.Warn("set port", "service", v.Service.Name.String(), "err", err)
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+	redirect(w, r, fmt.Sprintf("/services/%d?ok=port", id))
+}

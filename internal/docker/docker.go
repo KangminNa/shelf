@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -43,6 +44,7 @@ type Container struct {
 	State  State
 	Status string            // "Up 3 hours", "Exited (1) 2 minutes ago"
 	IPs    map[string]string // 네트워크 이름 → 그 네트워크에서의 IP
+	Ports  []int             // 이미지가 연 TCP 포트 (EXPOSE — 바깥에 열지 않은 것도)
 }
 
 // Ping은 Docker에 닿는가.
@@ -54,10 +56,14 @@ func (c *Client) containers(ctx context.Context) (map[string]Container, error) {
 	}
 	defer res.Body.Close()
 	var raw []struct {
-		Names           []string
-		Image           string
-		State           string
-		Status          string
+		Names  []string
+		Image  string
+		State  string
+		Status string
+		Ports  []struct {
+			PrivatePort int
+			Type        string
+		}
 		NetworkSettings struct {
 			Networks map[string]struct{ IPAddress string }
 		}
@@ -73,7 +79,13 @@ func (c *Client) containers(ctx context.Context) (map[string]Container, error) {
 			for net, n := range r.NetworkSettings.Networks {
 				ips[net] = n.IPAddress
 			}
-			out[name] = Container{Name: name, Image: r.Image, State: State(r.State), Status: r.Status, IPs: ips}
+			var ports []int
+			for _, p := range r.Ports {
+				if p.Type == "tcp" && !slices.Contains(ports, p.PrivatePort) {
+					ports = append(ports, p.PrivatePort)
+				}
+			}
+			out[name] = Container{Name: name, Image: r.Image, State: State(r.State), Status: r.Status, IPs: ips, Ports: ports}
 		}
 	}
 	return out, nil

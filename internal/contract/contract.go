@@ -105,6 +105,7 @@ type ServiceEditor interface {
 	Update(ctx context.Context, id model.ServiceID, in model.ServiceInput) (needsRedeploy bool, err error)
 	AddDomain(ctx context.Context, id model.ServiceID, d model.DomainInput) error
 	RemoveDomain(ctx context.Context, id model.ServiceID, d model.DomainID) error
+	SetPort(ctx context.Context, id model.ServiceID, p model.Port) error // 앱 포트만 바꾼다 — 다시 배포하지 않고 웹서버만 따라간다
 }
 
 // ServiceLauncher는 서비스를 만들고 첫 배포까지 한 번에 한다.
@@ -334,6 +335,12 @@ type LoginHasher interface {
 // 바뀔 때만 이벤트(ServiceDown·ServiceUp·WebServerDown …)를 낸다 — 보내는 일은 알리기가 듣고 한다.
 type HealthWatcher interface {
 	Snapshot() model.WatchSnapshot
+}
+
+// Diagnoser는 서비스 하나의 문제와 고칠 방법을 찾는다. 지켜보기 고리가 부르고, 결과는 Snapshot에 담긴다.
+// 비싼 확인(다른 포트 찔러 보기, DNS 조회)은 여기에서만 한다 — 화면을 열 때는 하지 않는다.
+type Diagnoser interface {
+	Diagnose(ctx context.Context, s model.Service, states model.ContainerStates) []model.Finding
 }
 
 // ── K. 알리기 ─────────────────────────────

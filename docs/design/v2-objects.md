@@ -87,7 +87,7 @@
 
 | 인터페이스 | 하는 일 | 구현 |
 |---|---|---|
-| `ServiceEditor` | 서비스를 만들고·고치고, 주소를 붙이고 뗀다 (지우기는 컨테이너·파일까지 함께라 `ServiceControl`) | `serviceEditor` |
+| `ServiceEditor` | 서비스를 만들고·고치고, 주소를 붙이고 뗀다. 앱 포트만 바꾸기(`SetPort` — 진단의 [포트 바꾸기], 다시 배포하지 않는다) (지우기는 컨테이너·파일까지 함께라 `ServiceControl`) | `serviceEditor` |
 | `ServiceLauncher` | 서비스를 만들고 첫 배포까지 한 번에 한다 | `serviceLauncher` |
 | `NameChooser` | 이름을 비워 두면 지어 주고, 겹치는지 본다 | `nameChooser` |
 | `DomainChecker` | 주소가 다른 서비스나 관리 화면과 겹치는지 본다 | `domainChecker` |
@@ -190,11 +190,26 @@
 
 | 인터페이스 | 하는 일 | 구현 |
 |---|---|---|
-| `HealthWatcher` | 마지막으로 본 것(멈춘 서비스·웹서버·Docker·본 시각)을 알려준다. 도는 고리는 만들 때 함께 돌려준다 | `healthWatcher` |
+| `HealthWatcher` | 마지막으로 본 것(멈춘 서비스·웹서버·Docker·찾은 문제·본 시각)을 알려준다. 도는 고리는 만들 때 함께 돌려준다 | `healthWatcher` |
+| `Diagnoser` | 서비스 하나의 문제와 고칠 방법을 찾는다 — 앱이 다른 포트를 들음, DNS가 이 서버를 가리키지 않음, 웹훅이 한 번도 오지 않음 (M6-3) | `diagnoser` |
 
 **알림 폭탄을 막는 규칙:** 두 번 연속(약 1분) 문제일 때만 멈춤으로 본다 · 직접 멈춘 서비스와 배포 중인 서비스는 보지 않는다 ·
 Naru가 막 켜졌을 때 이미 멈춰 있던 것은 알리지 않고 기준으로만 삼는다 · 인증서 곧 끝남은 주소마다 하루 한 번.
 지켜보는 것은 **컨테이너 서비스**뿐이다 — 정적 사이트는 웹서버가 직접 서빙하고, 외부 연결은 감시하지 않기로 했다.
+
+**진단 (M6-3)** — 찾은 문제(`Finding`)는 Snapshot에 담기고, 홈 맨 위 "주의가 필요한 것"과 서비스 화면에 무거운 것부터 보인다.
+
+| 문제 | 어떻게 아나 | 무게 · 고칠 방법 |
+|---|---|---|
+| 멈춤 (죽음·계속 재시작·컨테이너 없음·응답 없음) | 지켜보기의 두 번 연속 규칙 그대로 | 급함 · 로그 보기 |
+| 앱이 다른 포트를 들음 | 앱 포트는 응답이 없는데, 이미지가 연 포트(EXPOSE)나 흔한 포트(80·3000·8080·8000·5000·4000) 중 하나가 응답 | 급함 · **[포트를 N으로 바꾸기]** (`ServiceEditor.SetPort`) — "응답 없음" 대신 이것을 보인다 |
+| DNS가 이 서버를 가리키지 않음 | 서비스 주소를 조회해 이 서버 IP와 비교 (10분에 한 번). 쓸 수 있는 인증서가 있는 주소는 건너뛴다 — 이미 여기로 온다는 뜻이고, 프록시(Cloudflare)를 쓰는 주소를 잘못 짚지 않는다 | 주의 |
+| 인증서가 곧 끝남 | 남은 기간이 수명의 1/6 미만 — 90일짜리면 15일, 개발용 내부 인증서(12시간)면 2시간 (알림은 하루 한 번, 목록에는 계속) | 주의 |
+| 웹훅이 한 번도 오지 않음 | 소스가 저장소 주소(`Service.FromGit` — 저장소·정적 사이트) + 자동 배포 켜짐 + 만든 지 하루가 지남 + 받은 적 없음 (GitHub의 ping도 받은 것) | 확인 · 웹훅 설정 보기 |
+| 웹서버·Docker에 닿지 않음 | 화면을 열 때의 지금 상태 (지켜보기를 기다리지 않는다) | 급함 — 목록 맨 위 |
+
+**이 서버의 IP:** `NARU_PUBLIC_IP`가 있으면 그것, 없으면 관리 주소를 조회한 IP. 둘 다 없으면 DNS 진단을 하지 않는다.
+비싼 확인(다른 포트 찔러 보기, DNS 조회)은 **지켜보기 고리에서만** 한다 — 화면은 기다리지 않는다.
 
 ### K. 알리기 — `notify` (M6)
 
@@ -293,13 +308,14 @@ Naru가 막 켜졌을 때 이미 멈춰 있던 것은 알리지 않고 기준으
 | `Service` | 서비스 하나의 지금 모습 — 비밀은 없다 |
 | `ServiceSecrets` | 배포에만 쓰는 비밀(env·볼륨·git 토큰·웹훅 시크릿). **`web`·`cli`는 이 타입을 쓸 수 없다** |
 | `Domain` · `DomainInput` | 서비스에 붙은 주소 하나 · 붙일 주소 |
+| `Service.Created` · `Service.FromGit` | 서비스를 만든 때 · 소스가 저장소 주소인가(git push 웹훅을 기다린다) — 진단이 "하루가 지나도록 웹훅이 오지 않음"을 보는 데 쓴다 |
 | `LiveState` | 지금 도는 것 — 서비스 별칭, 요청을 받는 컨테이너와 그 IP, 서빙 중인 배포본, 포트, 직접 멈췄는지 |
 | `HookLog` | 웹훅을 마지막으로 받은 때와 결과 |
 | `Version` | 배포할 수 있게 만든 것 — 이미지 ID 또는 배포본 폴더, 커밋, 찾은 포트 |
 | `Commit` · `ImageID` · `ImageDetails` | 가져온 커밋 · Docker 이미지 ID · 받은 이미지의 ID와 열어둔 포트 |
 | `SiteFolder` | 정적 사이트 배포본 하나 (서비스 이름 + 배포 번호) |
 | `CodeSource` | 내려받을 코드 — 저장소·브랜치·토큰 |
-| `ContainerSpec` · `ContainerState` · `ContainerStates` | 띄울 컨테이너 · 컨테이너 하나의 상태(앱 네트워크에서의 지금 IP 포함) · 이름별 상태 (nil이면 Docker를 읽지 못함) |
+| `ContainerSpec` · `ContainerState` · `ContainerStates` | 띄울 컨테이너 · 컨테이너 하나의 상태(앱 네트워크에서의 지금 IP, 이미지가 연 포트 포함) · 이름별 상태 (nil이면 Docker를 읽지 못함) |
 | `Deployment` | 배포 한 번의 기록 |
 | `DeployStatus` | 진행 중 · 성공 · 실패 |
 | `DeployReason` | 왜 배포했나 — 직접 · push · 처음 올림 · 되돌림 |
@@ -314,7 +330,7 @@ Naru가 막 켜졌을 때 이미 멈춰 있던 것은 알리지 않고 기준으
 | `SiteMap` | 웹서버에 줄 지도 — 사이트들, 관리 주소(와 그 넘기기), 관리 소켓, 모르는 주소 처리, 바깥 HTTPS 포트 |
 | `WebServerStatus` | 웹서버에 닿는지, 마지막 오류, 마지막으로 맞춘 때 |
 | `Certificate` · `Certificates` | 웹서버가 받아 둔 인증서 하나(덮는 이름·발급자·기간) · 전부. `Certificates.For(도메인, 지금)`이 그 도메인의 상태를 찾는다 (와일드카드는 한 단계) |
-| `CertificateState` | 도메인 하나의 인증서 상태 — 있음(만료일·발급자) · 아직 없음. `Usable`이면 HTTP를 HTTPS로 넘긴다, `EndsSoon`은 14일 안에 끝남. 실패 이유는 M4-2 |
+| `CertificateState` | 도메인 하나의 인증서 상태 — 있음(만료일·발급자) · 아직 없음. `Usable`이면 HTTP를 HTTPS로 넘긴다, `EndsSoon`은 남은 기간이 수명의 1/6 미만 (웹서버는 1/3 남으면 갱신하니 그 안이면 갱신이 막힌 것). 실패 이유는 M4-2 |
 | `DNSAnswer` | 도메인이 이 서버를 가리키는지의 답 |
 | `SetBy` | 설정 값을 누가 정했나 — 환경 변수 · 화면 · 아무도 |
 | `HookRequest` · `HookResult` | 받은 웹훅(헤더·쿼리·본문) · 처리 결과(HTTP 상태·문구·배포 번호) |
@@ -338,7 +354,8 @@ Naru가 막 켜졌을 때 이미 멈춰 있던 것은 알리지 않고 기준으
 
 | 이름 | 무엇 |
 |---|---|
-| `WatchSnapshot` · `DownService` | 마지막으로 본 것 — 멈춘 서비스(왜), 웹서버·Docker에 닿는지, 본 시각 · 멈춘 서비스 하나 |
+| `WatchSnapshot` · `DownService` | 마지막으로 본 것 — 멈춘 서비스(왜), 웹서버·Docker에 닿는지, 찾은 문제, 본 시각 · 멈춘 서비스 하나 |
+| `Finding` · `FindingLevel` | 찾은 문제 하나 — 서비스, 문구 키와 끼울 값, 기술적인 이유, 고칠 포트 · 급함·주의·확인 |
 | `Alert` · `AlertLevel` | 보낼 알림 — 사건 이름, 문제·복구·알림, 제목, 내용, 서비스 이름 |
 | `AlertChannel` · `ChannelID` | 알림 주소 — 이름, 주소, 시크릿. **`web`·`cli`는 이 타입을 쓸 수 없다** (주소가 비밀) |
 | `AlertURL` · `ChannelInput` · `ChannelView` | http(s) 주소 값 · 화면에서 받은 것 · 화면에 보일 것(가린 주소, 형식, 시크릿이 있는지) |
@@ -359,8 +376,8 @@ Naru가 막 켜졌을 때 이미 멈춰 있던 것은 알리지 않고 기준으
 | 이름 | 무엇 |
 |---|---|
 | `ServiceStatus` | 화면 상태 — 문구 키(실행 중 · 멈춤 · 죽음 · 컨테이너 없음 · 파일 서빙 …)와 색 |
-| `ServiceCard` · `HomeView` | 홈의 카드 하나 · 홈 화면 (Docker에 닿지 못했는지 포함) |
-| `ServiceView` · `ServiceForm` · `WebhookView` | 서비스 상세 · 설정 폼에 채울 값(토큰 원문 없음, 있는지만) · 웹훅 주소와 시크릿 |
+| `ServiceCard` · `HomeView` | 홈의 카드 하나 · 홈 화면 (Docker에 닿지 못했는지, 주의가 필요한 것 포함) |
+| `ServiceView` · `ServiceForm` · `WebhookView` | 서비스 상세 (그 서비스의 찾은 문제 포함) · 설정 폼에 채울 값(토큰 원문 없음, 있는지만) · 웹훅 주소와 시크릿 |
 | `DomainView` | 서비스 상세의 주소 하나와 그 인증서 상태 |
 | `DeploymentView` · `StepView` | 배포 화면 · 배포 단계 하나 |
 | `ServerSnapshot` | 서버의 CPU·메모리·디스크 |
@@ -374,7 +391,7 @@ Naru가 막 켜졌을 때 이미 멈춰 있던 것은 알리지 않고 기준으
 | `ServiceDeleted` | 서비스를 지웠을 때 |
 | `ServiceDown` · `ServiceUp` | 컨테이너 서비스가 (두 번 연속) 멈췄을 때 · 다시 응답할 때 |
 | `WebServerDown` · `WebServerUp` · `DockerDown` · `DockerUp` | 웹서버·Docker에 (두 번 연속) 닿지 않을 때 · 다시 닿을 때 |
-| `CertificateEndingSoon` | 인증서가 14일 안에 끝날 때 (주소마다 하루 한 번) |
+| `CertificateEndingSoon` | 인증서가 곧 끝날 때 — 수명의 1/6 미만 (주소마다 하루 한 번) |
 
 ---
 
@@ -479,6 +496,7 @@ type ServiceEditor interface {
 	Update(ctx context.Context, id model.ServiceID, in model.ServiceInput) (needsRedeploy bool, err error)
 	AddDomain(ctx context.Context, id model.ServiceID, d model.DomainInput) error
 	RemoveDomain(ctx context.Context, id model.ServiceID, d model.DomainID) error
+	SetPort(ctx context.Context, id model.ServiceID, p model.Port) error // 앱 포트만 바꾼다 — 다시 배포하지 않고 웹서버만 따라간다
 }
 
 // ServiceLauncher는 서비스를 만들고 첫 배포까지 한 번에 한다.
@@ -710,6 +728,12 @@ type HealthWatcher interface {
 	Snapshot() model.WatchSnapshot
 }
 
+// Diagnoser는 서비스 하나의 문제와 고칠 방법을 찾는다. 지켜보기 고리가 부르고, 결과는 Snapshot에 담긴다.
+// 비싼 확인(다른 포트 찔러 보기, DNS 조회)은 여기에서만 한다 — 화면을 열 때는 하지 않는다.
+type Diagnoser interface {
+	Diagnose(ctx context.Context, s model.Service, states model.ContainerStates) []model.Finding
+}
+
 // ── K. 알리기 ─────────────────────────────
 
 // AlertSettings는 알림 주소를 등록·삭제·시험하고, 보낸 결과를 보여준다. 화면에는 주소를 가린 모습만 준다.
@@ -900,9 +924,10 @@ type RandomTokens interface {
 | `hookReceiver` | ServiceReader · SecretStore · SignatureChecker(차례로) · BranchFilter · Deployer · HookLogStore · Clock |
 | `siteMapBuilder` | ServiceReader · KindLookup · AdminDomainSetting · CertEmailSetting · SetupProgress · CertificateReader · Clock · WebSettingsStore · ContainerWatcher |
 | `webServerSync` | SiteMapBuilder · ConfigWriter · ConfigSender(`AdminSocketGuard`로 감싼 것) · EventSubscriber |
-| `serviceViewer` | ServiceReader · SecretStore · DeployHistoryReader · ContainerWatcher · KindLookup · AdminDomainSetting · Deployer · CertificateReader · Clock · WebSettingsStore · ContainerLogReader · AccessLogReader |
+| `serviceViewer` | ServiceReader · SecretStore · DeployHistoryReader · ContainerWatcher · KindLookup · AdminDomainSetting · Deployer · CertificateReader · Clock · WebSettingsStore · ContainerLogReader · AccessLogReader · HealthWatcher |
 | `webSettingsEditor` | ServiceReader · WebSettingsStore · SnippetCompiler · LoginHasher · WebServerSync |
-| `healthWatcher` | ServiceReader · KindLookup · ContainerWatcher · PortChecker · Deployer · WebServerSync · CertificateReader · AdminDomainSetting · Clock · EventPublisher |
+| `healthWatcher` | ServiceReader · KindLookup · ContainerWatcher · PortChecker · Deployer · WebServerSync · CertificateReader · AdminDomainSetting · Diagnoser · Clock · EventPublisher |
+| `diagnoser` | KindLookup · PortChecker · DNSChecker · AdminDomainSetting · CertificateReader · Clock (+ `NARU_PUBLIC_IP` 값은 만들 때 받는다) |
 | `alerts` | ChannelStore · DeliveryLog · AlertSender · ServiceReader · EventSubscriber · Clock |
 | `web` | LoginManager · AccountManager · SetupKey · AdminDomainSetting · CertEmailSetting · SetupProgress · ServiceLauncher · ServiceEditor · ServiceViewer · Deployer · ServiceControl · HookReceiver · ServerStats · WebServerSync · DNSChecker · CertificateReader · Clock · WebSettingsEditor · NginxTranslator · AlertSettings |
 

@@ -54,6 +54,18 @@
 </body>
 </html>{{end}}
 
+{{/* 주의가 필요한 것 한 줄 — 홈과 서비스 화면이 함께 쓴다 */}}
+{{define "finding"}}<li class="finding {{.Tone}}">
+  <span class="dot {{.Tone}}"></span>
+  <div class="finding-text">
+    <b>{{if .Name}}<a href="/services/{{.Service}}">{{.Name}}</a> · {{end}}{{tv (print .Key ".title") .Args}}</b>
+    <span>{{tv (print .Key ".body") .Args}}</span>
+    {{with .Detail}}<code class="why">{{.}}</code>{{end}}
+  </div>
+  {{if .FixPort}}<form method="post" action="/services/{{.Service}}/port"><input type="hidden" name="port" value="{{.FixPort}}"><button class="btn small primary" type="submit">{{t "find.port.fix" .FixPort}}</button></form>
+  {{else if .Link}}<a class="btn small" href="{{.Link}}">{{t .LinkKey}}</a>{{end}}
+</li>{{end}}
+
 {{define "error"}}{{if .Err}}<p class="flash bad" role="alert">{{t .Err}}</p>{{end}}{{end}}
 
 {{define "steps"}}<ol class="steps">

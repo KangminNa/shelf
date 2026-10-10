@@ -204,6 +204,28 @@ func (e serviceEditor) RemoveDomain(ctx context.Context, id model.ServiceID, d m
 	return nil
 }
 
+// SetPort는 앱 포트만 바꾼다 — 진단의 [포트 바꾸기]. 다시 배포하지 않는다: 앱은 이미 그 포트로 듣고 있고, 웹서버만 따라가면 된다.
+func (e serviceEditor) SetPort(ctx context.Context, id model.ServiceID, p model.Port) error {
+	s, err := e.reader.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	tools, err := e.toolsFor(s.Kind)
+	if err != nil {
+		return err
+	}
+	if p == 0 || !tools.Destination.Find(s).Container {
+		return model.InputError{Field: "port", Code: "port"}
+	}
+	if err := e.store.Update(ctx, id, model.ServiceSettings{
+		Source: s.Source, Branch: s.Branch, BuildPath: s.BuildPath, Folder: s.Folder, External: s.External, Port: p, AutoDeploy: s.AutoDeploy,
+	}); err != nil {
+		return err
+	}
+	e.events.Publish(model.SiteMapChanged{Reason: "port changed"})
+	return nil
+}
+
 // ── 만들고 바로 배포 ─────────────────────────
 
 type serviceLauncher struct {

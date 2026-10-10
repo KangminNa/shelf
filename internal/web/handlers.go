@@ -271,6 +271,7 @@ var okKeys = map[string]string{
 	"queued": "ok.queued", "saved": "ok.saved", "redeploy": "ok.redeploy", "stopped": "ok.stopped", "started": "ok.started",
 	"alert-added": "ok.alertadded", "alert-removed": "ok.alertremoved", "alert-tested": "ok.alerttested",
 	"domain-added": "ok.domainadded", "domain-removed": "ok.domainremoved", "deleted": "ok.deleted", "web": "ok.web",
+	"port": "ok.port",
 }
 
 // ── 설정 ───────────────────────────────────

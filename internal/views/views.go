@@ -28,7 +28,8 @@ type Parts struct {
 	Web        contract.WebSettingsStore
 	AppLogs    contract.ContainerLogReader
 	Access     contract.AccessLogReader
-	HTTPSPort  int // 바깥에서 본 HTTPS 포트 — 443이 아니면 웹훅 주소에 붙인다 (로컬 개발)
+	Watch      contract.HealthWatcher // 지켜보기가 찾은 문제 — 여기서는 읽기만 한다
+	HTTPSPort  int                    // 바깥에서 본 HTTPS 포트 — 443이 아니면 웹훅 주소에 붙인다 (로컬 개발)
 }
 
 type serviceViewer struct {
@@ -84,6 +85,8 @@ func (v serviceViewer) Home(ctx context.Context) (model.HomeView, error) {
 			Status: e.tools.Status.Read(e.s, containers),
 		})
 	}
+	snap := v.p.Watch.Snapshot()
+	h.Findings, h.Checked = snap.Findings, !snap.CheckedAt.IsZero()
 	return h, nil
 }
 
@@ -127,6 +130,11 @@ func (v serviceViewer) Detail(ctx context.Context, id model.ServiceID) (model.Se
 	}
 	if view.Web, err = v.webView(ctx, s); err != nil {
 		return model.ServiceView{}, err
+	}
+	for _, f := range v.p.Watch.Snapshot().Findings {
+		if f.Service == id {
+			view.Findings = append(view.Findings, f)
+		}
 	}
 	if view.Deployable {
 		view.Deploys, _ = v.p.History.Recent(ctx, id, 10)

@@ -24,6 +24,10 @@
   </div>
 </div>
 
+{{with .Data.Findings}}
+<ul class="findings">{{range .}}{{template "finding" .}}{{end}}</ul>
+{{end}}
+
 {{if .Data.Running}}
 <div class="notice warn"><span class="notice-icon">…</span>
   <div class="notice-text"><b>{{t "service.deploying"}}</b></div>

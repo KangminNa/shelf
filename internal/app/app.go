@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -55,6 +56,7 @@ type Config struct {
 	CaddySites   string // NARU_CADDY_SITES — 웹서버가 본 정적 사이트 폴더. 기본 host <데이터>/sites · docker /srv/sites
 	CaddyCerts   string // NARU_CADDY_CERTS — 웹서버가 받은 인증서(Naru는 읽기만). 기본 host <데이터>/caddy/certificates · docker <데이터>/caddy/data/caddy/certificates
 	HTTPSPort    int    // NARU_HTTPS_PORT — 바깥에서 본 HTTPS 포트, 기본 443 (로컬처럼 다른 포트로 열었을 때만)
+	PublicIP     string // NARU_PUBLIC_IP — 이 서버의 공인 IP. 비면 관리 주소를 조회해 추정한다 (DNS 진단에만 쓴다)
 	AdminDomain  string // ADMIN_DOMAIN — 있으면 화면 설정보다 우선
 	ACMEEmail    string // ACME_EMAIL — 있으면 화면 설정보다 우선
 	Version      string
@@ -74,6 +76,7 @@ func ConfigFromEnv(version string) Config {
 		CaddySites:   os.Getenv("NARU_CADDY_SITES"),
 		CaddyCerts:   os.Getenv("NARU_CADDY_CERTS"),
 		HTTPSPort:    envPort("NARU_HTTPS_PORT", 443),
+		PublicIP:     os.Getenv("NARU_PUBLIC_IP"),
 		AdminDomain:  os.Getenv("ADMIN_DOMAIN"),
 		ACMEEmail:    os.Getenv("ACME_EMAIL"),
 		Version:      version,
@@ -140,6 +143,13 @@ func (c Config) resolved() (Config, mode, error) {
 	fill(&c.SelfUpstream, m.self)
 	fill(&c.CaddySites, m.sites(c.DataDir))
 	fill(&c.CaddyCerts, m.certs(c.DataDir))
+	if c.PublicIP != "" {
+		ip := net.ParseIP(c.PublicIP)
+		if ip == nil {
+			return c, m, fmt.Errorf("NARU_PUBLIC_IP=%q: IP 주소가 아니에요 / not an IP address", c.PublicIP)
+		}
+		c.PublicIP = ip.String()
+	}
 	return c, m, nil
 }
 
@@ -353,9 +363,12 @@ func (a *App) assemble() error {
 		Channels: store.NewChannels(db), Deliveries: store.NewDeliveries(db), Sender: out.Alerts,
 		Services: serviceStore, Events: bus, Clock: out.Clock, Log: a.log,
 	})
-	_, runWatch := watch.NewHealthWatcher(watch.Parts{
+	diagnoser := watch.NewDiagnoser(watch.DiagnoserParts{
+		Kinds: lookup, Ports: out.Ports, DNS: out.DNS, Admin: adminDomain, Certs: out.Certs, Clock: out.Clock, PublicIP: cfg.PublicIP,
+	})
+	watcher, runWatch := watch.NewHealthWatcher(watch.Parts{
 		Services: serviceStore, Kinds: lookup, Containers: out.Watcher, Ports: out.Ports, Deployer: deployer,
-		WebServer: sync, Certs: out.Certs, Admin: adminDomain, Clock: out.Clock, Events: bus, Every: out.WatchEvery, Log: a.log,
+		WebServer: sync, Certs: out.Certs, Admin: adminDomain, Diagnoser: diagnoser, Clock: out.Clock, Events: bus, Every: out.WatchEvery, Log: a.log,
 	})
 	a.alerts, a.watch = runAlerts, runWatch
 
@@ -363,7 +376,7 @@ func (a *App) assemble() error {
 	viewer := views.NewServiceViewer(views.Parts{
 		Services: serviceStore, Secrets: secrets, History: history, Containers: out.Watcher, Kinds: lookup,
 		Admin: adminDomain, Deployer: deployer, Certs: out.Certs, Clock: out.Clock, HTTPSPort: cfg.HTTPSPort, Web: webStore,
-		AppLogs: out.AppLogs, Access: out.Access,
+		AppLogs: out.AppLogs, Access: out.Access, Watch: watcher,
 	}, a.log)
 
 	srv, err := web.New(web.Deps{

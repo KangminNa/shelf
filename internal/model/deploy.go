@@ -129,6 +129,7 @@ type ContainerState struct {
 	Status   string // "Up 3 hours"
 	ExitCode int
 	IP       string // 앱 네트워크에서의 지금 IP (모르면 빈 값)
+	Ports    []Port // 이미지가 연 포트 (EXPOSE) — 진단이 앱 포트 대신 응답하는 포트를 찾을 때
 }
 
 // ContainerStates는 이름 → 상태. nil이면 Docker를 읽지 못했다.

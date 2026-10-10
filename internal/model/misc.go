@@ -58,6 +58,8 @@ type ServiceCard struct {
 type HomeView struct {
 	Cards      []ServiceCard
 	DockerDown bool
+	Findings   []Finding // 주의가 필요한 것 — 무거운 것부터
+	Checked    bool      // 지켜보기가 한 번이라도 봤다 (아니면 "모두 정상"이라 말하지 않는다)
 }
 
 // WebhookView는 웹훅 설정에 필요한 값이다 (시크릿은 GitHub에 넣어야 하므로 보여준다).
@@ -100,6 +102,7 @@ type ServiceView struct {
 	Webhook    WebhookView
 	Form       ServiceForm
 	Web        WebSettingsView
+	Findings   []Finding // 지켜보기가 찾은 이 서비스의 문제
 }
 
 // StepView는 배포 단계 하나다. State: done · doing · failed

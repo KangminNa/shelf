@@ -50,6 +50,7 @@ func TestWebhookAddressKeepsANonStandardHTTPSPort(t *testing.T) {
 		v := NewServiceViewer(Parts{
 			Services: services, Secrets: store.NewSecrets(db), History: history, Containers: noContainers{},
 			Kinds: kinds.NewLookup(kinds.Tools{}), Admin: admin, Deployer: deployer, Certs: noCerts{}, Clock: system.Clock{}, HTTPSPort: port, Web: store.NewWebSettings(db),
+			Watch: fakeWatch{},
 		}, quiet)
 		view, err := v.Detail(ctx, id)
 		if err != nil || view.Webhook.URL != want {
@@ -118,5 +119,44 @@ func TestLogsMergeAppOutputAndRequestsByTime(t *testing.T) {
 		AppLogs: fakeAppLogs{err: errors.New("docker: not found")}, Access: access}, quiet)
 	if half, _ := v.Logs(ctx, id, model.LogsAll); half.AppError == "" || len(half.Lines) != 1 {
 		t.Fatalf("one side failing still shows the other: %+v", half)
+	}
+}
+
+type fakeWatch struct{ snap model.WatchSnapshot }
+
+func (f fakeWatch) Snapshot() model.WatchSnapshot { return f.snap }
+
+func TestFindingsReachHomeAndTheirService(t *testing.T) {
+	ctx := context.Background()
+	db, err := store.Open(filepath.Join(t.TempDir(), "naru.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	services := store.NewServices(db)
+	blog, _ := model.ParseServiceName("blog")
+	api, _ := model.ParseServiceName("api")
+	b, _ := services.Create(ctx, model.NewService{Name: blog, Kind: model.KindExternal, External: "192.168.0.2:80"})
+	a, _ := services.Create(ctx, model.NewService{Name: api, Kind: model.KindExternal, External: "192.168.0.3:80"})
+	quiet := slog.New(slog.NewTextHandler(io.Discard, nil))
+	deployer, _ := deploy.NewDeployer(ctx, quiet, deploy.Parts{Lock: deploy.NewMemoryDeployLock()})
+	parts := Parts{Services: services, Secrets: store.NewSecrets(db), History: store.NewDeployments(db), Containers: noContainers{},
+		Kinds: kinds.NewLookup(kinds.Tools{}), Deployer: deployer, Certs: noCerts{}, Clock: system.Clock{}, Web: store.NewWebSettings(db),
+		Watch: fakeWatch{}}
+
+	if h, _ := NewServiceViewer(parts, quiet).Home(ctx); h.Checked || len(h.Findings) != 0 {
+		t.Fatal("before the first look nothing is claimed — not even \"all good\"")
+	}
+	parts.Watch = fakeWatch{model.WatchSnapshot{CheckedAt: time.Now(), Findings: []model.Finding{
+		{Service: a, Name: "api", Key: "find.port", Level: model.FindingUrgent, FixPort: 8080},
+		{Service: b, Name: "blog", Key: "find.webhook", Level: model.FindingHint},
+	}}}
+	v := NewServiceViewer(parts, quiet)
+	h, _ := v.Home(ctx)
+	if !h.Checked || len(h.Findings) != 2 || h.Findings[0].Key != "find.port" {
+		t.Fatalf("home shows them all, heaviest first: %+v", h)
+	}
+	if d, _ := v.Detail(ctx, b); len(d.Findings) != 1 || d.Findings[0].Key != "find.webhook" {
+		t.Fatalf("a service shows only its own: %+v", d.Findings)
 	}
 }

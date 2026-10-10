@@ -6,6 +6,8 @@
 //   - 직접 멈춘 서비스와 배포 중인 서비스는 보지 않는다.
 //   - 처음 보았을 때 이미 문제였던 것은 알리지 않고 기준으로만 삼는다 (Naru를 다시 켤 때마다 쏟아지지 않게).
 //   - 인증서 곧 끝남은 주소마다 하루 한 번.
+//
+// 본 것에 진단(Diagnoser)을 더해 "주의가 필요한 것"(Finding)을 무거운 것부터 담아 둔다 — 화면은 그것을 읽기만 한다.
 package watch
 
 import (
@@ -29,6 +31,7 @@ type Parts struct {
 	WebServer  contract.WebServerSync
 	Certs      contract.CertificateReader
 	Admin      contract.AdminDomainSetting
+	Diagnoser  contract.Diagnoser
 	Clock      contract.Clock
 	Events     contract.EventPublisher
 	Every      time.Duration // 0이면 30초
@@ -46,6 +49,7 @@ type healthWatcher struct {
 	docker     flag
 	webServer  flag
 	certWarned map[string]time.Time
+	diagnosed  map[model.ServiceID][]model.Finding // 서비스마다 마지막 진단 — 배포 중에는 이것을 그대로 둔다
 }
 
 // flag는 하나의 "괜찮은가"를 지켜본다 — 두 번 연속 나빠야 멈춤, 한 번 좋아지면 복구.
@@ -92,7 +96,7 @@ func NewHealthWatcher(p Parts) (contract.HealthWatcher, func(context.Context)) {
 	if p.Every == 0 {
 		p.Every = 30 * time.Second
 	}
-	w := &healthWatcher{p: p, services: map[model.ServiceID]*flag{}, certWarned: map[string]time.Time{}}
+	w := &healthWatcher{p: p, services: map[model.ServiceID]*flag{}, certWarned: map[string]time.Time{}, diagnosed: map[model.ServiceID][]model.Finding{}}
 	w.snap = model.WatchSnapshot{DockerUp: true, WebServerUp: true}
 	return w, w.run
 }
@@ -153,9 +157,12 @@ func (w *healthWatcher) check(ctx context.Context) {
 	}
 	if derr == nil { // Docker를 못 읽으면 서비스를 판정하지 않는다 — 모르는 것을 멈춤으로 보지 않는다
 		w.judgeServices(ctx, all, states, now)
+	} else {
+		states = nil
 	}
-	w.warnCertificates(ctx, all, now)
-	w.publishSnapshot(all, now)
+	findings := w.diagnose(ctx, all, states)
+	findings = append(findings, w.warnCertificates(ctx, all, now)...)
+	w.publishSnapshot(all, findings, now)
 }
 
 func (w *healthWatcher) judgeServices(ctx context.Context, all []model.Service, states model.ContainerStates, now time.Time) {
@@ -208,51 +215,97 @@ func (w *healthWatcher) problem(ctx context.Context, s model.Service, states mod
 	if s.Port == 0 {
 		return ""
 	}
-	host := st.IP
-	if host == "" {
-		host = s.Live.InstanceIP
-	}
-	if host == "" {
-		host = s.Live.CurrentContainer()
-	}
-	pctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	pctx, cancel := context.WithTimeout(ctx, answerAfter)
 	defer cancel()
-	if w.p.Ports.Answers(pctx, host, s.Port) != nil {
+	if w.p.Ports.Answers(pctx, reach(s, st), s.Port) != nil {
 		return "noanswer"
 	}
 	return ""
 }
 
-func (w *healthWatcher) warnCertificates(ctx context.Context, all []model.Service, now time.Time) {
+// diagnose는 서비스마다 진단을 받고, 멈춘 서비스는 그 이유를 앞에 더한다.
+// 직접 멈춘 서비스는 말하지 않고, 배포 중인 서비스는 마지막 진단을 그대로 둔다.
+func (w *healthWatcher) diagnose(ctx context.Context, all []model.Service, states model.ContainerStates) []model.Finding {
+	var out []model.Finding
+	seen := map[model.ServiceID]bool{}
+	for _, s := range all {
+		seen[s.ID] = true
+		if s.Live.Stopped {
+			delete(w.diagnosed, s.ID)
+			continue
+		}
+		if w.p.Deployer.IsDeploying(s.ID) {
+			out = append(out, w.diagnosed[s.ID]...)
+			continue
+		}
+		found := w.p.Diagnoser.Diagnose(ctx, s, states)
+		if f := w.services[s.ID]; f != nil && f.down && !(f.why == "noanswer" && hasKey(found, "find.port")) {
+			down := model.Finding{Service: s.ID, Name: s.Name.String(), Key: "find." + f.why, Level: model.FindingUrgent}
+			if f.why == "noanswer" {
+				down.Args = []string{portArg(s.Port)}
+			}
+			found = append([]model.Finding{down}, found...)
+		}
+		w.diagnosed[s.ID] = found
+		out = append(out, found...)
+	}
+	for id := range w.diagnosed {
+		if !seen[id] {
+			delete(w.diagnosed, id)
+		}
+	}
+	return out
+}
+
+func hasKey(fs []model.Finding, key string) bool {
+	for _, f := range fs {
+		if f.Key == key {
+			return true
+		}
+	}
+	return false
+}
+
+// warnCertificates는 곧 끝나는 인증서를 찾는다 — 알림은 주소마다 하루 한 번, 찾은 것은 매번 돌려준다.
+func (w *healthWatcher) warnCertificates(ctx context.Context, all []model.Service, now time.Time) []model.Finding {
 	certs, err := w.p.Certs.Read(ctx)
 	if err != nil || len(certs) == 0 {
-		return
+		return nil
 	}
-	var domains []model.DomainName
+	type owned struct {
+		d    model.DomainName
+		id   model.ServiceID
+		name string
+	}
+	var domains []owned
 	if d, _ := w.p.Admin.Get(ctx); !d.IsZero() {
-		domains = append(domains, d)
+		domains = append(domains, owned{d: d})
 	}
 	for _, s := range all {
 		for _, d := range s.Domains {
 			if d.HTTPS {
-				domains = append(domains, d.Domain)
+				domains = append(domains, owned{d.Domain, s.ID, s.Name.String()})
 			}
 		}
 	}
-	for _, d := range domains {
-		st := certs.For(d, now)
+	var out []model.Finding
+	for _, o := range domains {
+		st := certs.For(o.d, now)
 		if !st.EndsSoon(now) {
 			continue
 		}
-		if last, ok := w.certWarned[d.String()]; ok && now.Sub(last) < 24*time.Hour {
+		out = append(out, model.Finding{Service: o.id, Name: o.name, Key: "find.cert", Level: model.FindingWarning,
+			Args: []string{o.d.String(), st.NotAfter.Format("2006-01-02")}})
+		if last, ok := w.certWarned[o.d.String()]; ok && now.Sub(last) < 24*time.Hour {
 			continue
 		}
-		w.certWarned[d.String()] = now
-		w.p.Events.Publish(model.CertificateEndingSoon{Domain: d.String(), NotAfter: st.NotAfter})
+		w.certWarned[o.d.String()] = now
+		w.p.Events.Publish(model.CertificateEndingSoon{Domain: o.d.String(), NotAfter: st.NotAfter})
 	}
+	return out
 }
 
-func (w *healthWatcher) publishSnapshot(all []model.Service, now time.Time) {
+func (w *healthWatcher) publishSnapshot(all []model.Service, findings []model.Finding, now time.Time) {
 	snap := model.WatchSnapshot{CheckedAt: now, DockerUp: !w.docker.down, WebServerUp: !w.webServer.down}
 	for _, s := range all {
 		if f := w.services[s.ID]; f != nil && f.down {
@@ -260,6 +313,15 @@ func (w *healthWatcher) publishSnapshot(all []model.Service, now time.Time) {
 		}
 	}
 	sort.Slice(snap.Down, func(i, j int) bool { return snap.Down[i].Name < snap.Down[j].Name })
+	// 무거운 것부터, 같은 무게면 서비스 이름순 (서버 전체의 것이 먼저)
+	sort.SliceStable(findings, func(i, j int) bool {
+		a, b := findings[i], findings[j]
+		if a.Level != b.Level {
+			return a.Level < b.Level
+		}
+		return a.Name < b.Name
+	})
+	snap.Findings = findings
 	w.mu.Lock()
 	w.snap = snap
 	w.mu.Unlock()

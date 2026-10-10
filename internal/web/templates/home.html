@@ -9,17 +9,13 @@
   <a class="btn primary" href="/services/new">+ {{t "home.new"}}</a>
 </div>
 
-{{if not .Data.Engine.Connected}}
-<div class="notice bad">
-  <span class="notice-icon">!</span>
-  <div class="notice-text"><b>{{t "engine.down.title"}}</b><span>{{t "engine.down.body"}}</span>{{with .Data.Engine.LastError}}<code class="why">{{.}}</code>{{end}}</div>
-</div>
-{{end}}
-{{if .Data.DockerDown}}
-<div class="notice bad">
-  <span class="notice-icon">!</span>
-  <div class="notice-text"><b>{{t "docker.down.title"}}</b><span>{{t "docker.down.body"}}</span></div>
-</div>
+{{if .Data.Attention}}
+<section class="attention" aria-labelledby="attention-h">
+  <h2 id="attention-h">{{t "home.attention"}} <span class="count">{{len .Data.Attention}}</span></h2>
+  <ul class="findings">{{range .Data.Attention}}{{template "finding" .}}{{end}}</ul>
+</section>
+{{else if .Data.Checked}}
+<p class="allgood"><span class="dot ok"></span>{{t "home.allgood"}}</p>
 {{end}}
 {{if not .Data.AdminDomain}}
 <div class="notice warn">

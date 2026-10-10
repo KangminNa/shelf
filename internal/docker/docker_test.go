@@ -37,7 +37,8 @@ func TestContainers(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		w.Write([]byte(`[{"Names":["/shelf-blog"],"Image":"shelf-app-blog","State":"running","Status":"Up 3 hours"},
+		w.Write([]byte(`[{"Names":["/shelf-blog"],"Image":"shelf-app-blog","State":"running","Status":"Up 3 hours",
+			"Ports":[{"PrivatePort":3000,"Type":"tcp"},{"IP":"0.0.0.0","PrivatePort":3000,"PublicPort":3893,"Type":"tcp"},{"PrivatePort":53,"Type":"udp"}]},
 			{"Names":["/naru-api"],"Image":"ghcr.io/me/api","State":"restarting","Status":"Restarting (1) 5 seconds ago"}]`))
 	}))
 	got, err := New(sock).containers(context.Background())
@@ -46,6 +47,9 @@ func TestContainers(t *testing.T) {
 	}
 	if got["shelf-blog"].State != Running || got["naru-api"].State != "restarting" || len(got) != 2 {
 		t.Fatalf("%+v", got)
+	}
+	if p := got["shelf-blog"].Ports; len(p) != 1 || p[0] != 3000 {
+		t.Fatalf("exposed TCP ports, once each: %v", p)
 	}
 }
 

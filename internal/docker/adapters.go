@@ -118,7 +118,11 @@ func (k Containers) All(ctx context.Context) (model.ContainerStates, error) {
 	}
 	out := make(model.ContainerStates, len(raw))
 	for name, c := range raw {
-		out[name] = model.ContainerState{Name: name, Running: c.State == Running, State: string(c.State), Status: c.Status, IP: c.IPs[k.network]}
+		var ports []model.Port
+		for _, p := range c.Ports {
+			ports = append(ports, model.Port(p))
+		}
+		out[name] = model.ContainerState{Name: name, Running: c.State == Running, State: string(c.State), Status: c.Status, IP: c.IPs[k.network], Ports: ports}
 	}
 	return out, nil
 }

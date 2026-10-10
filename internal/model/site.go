@@ -49,17 +49,23 @@ type WebServerStatus struct {
 
 // CertificateState는 도메인 하나의 인증서 상태다.
 type CertificateState struct {
-	Issued   bool
-	NotAfter time.Time
-	Issuer   string
+	Issued    bool
+	NotBefore time.Time
+	NotAfter  time.Time
+	Issuer    string
 }
 
 // Usable은 지금 쓸 수 있는 인증서가 있는가 — 있고, 아직 끝나지 않았다.
 func (s CertificateState) Usable(now time.Time) bool { return s.Issued && now.Before(s.NotAfter) }
 
-// EndsSoon은 14일 안에 끝나는가. 보통은 웹서버가 30일 전에 갱신하니, 이 안으로 들어왔다면 갱신이 막힌 것이다.
+// EndsSoon은 남은 기간이 전체 수명의 1/6보다 적은가 (90일짜리면 15일, 개발용 내부 인증서 12시간짜리면 2시간).
+// 웹서버는 1/3이 남으면 갱신하니, 이 안으로 들어왔다면 갱신이 막힌 것이다. 수명을 모르면 14일로 본다.
 func (s CertificateState) EndsSoon(now time.Time) bool {
-	return s.Usable(now) && s.NotAfter.Sub(now) < 14*24*time.Hour
+	window := 14 * 24 * time.Hour
+	if life := s.NotAfter.Sub(s.NotBefore); !s.NotBefore.IsZero() && life > 0 {
+		window = life / 6
+	}
+	return s.Usable(now) && s.NotAfter.Sub(now) < window
 }
 
 // Certificate는 웹서버가 받아 둔 인증서 하나다 — 공개 정보만 담는다.
@@ -82,7 +88,7 @@ func (c Certificates) For(d DomainName, now time.Time) CertificateState {
 			continue
 		}
 		if !best.Issued || cert.NotAfter.After(best.NotAfter) {
-			best = CertificateState{Issued: true, NotAfter: cert.NotAfter, Issuer: cert.Issuer}
+			best = CertificateState{Issued: true, NotBefore: cert.NotBefore, NotAfter: cert.NotAfter, Issuer: cert.Issuer}
 		}
 	}
 	return best

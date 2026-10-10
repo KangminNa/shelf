@@ -91,6 +91,13 @@ type Service struct {
 	Live       LiveState
 	HookLog    HookLog
 	Domains    []Domain
+	Created    time.Time
+}
+
+// FromGit은 저장소에서 코드를 받는 서비스인가 — 소스가 저장소 주소다. git push 웹훅으로 배포한다.
+func (s Service) FromGit() bool {
+	_, err := ParseRepoURL(s.Source)
+	return err == nil
 }
 
 // PrimaryDomain은 먼저 붙인 주소다.

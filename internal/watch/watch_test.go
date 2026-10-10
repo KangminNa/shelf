@@ -37,10 +37,18 @@ func (f *fakeContainers) BelongingTo(context.Context, model.ServiceID) ([]string
 	return nil, nil
 }
 
-type fakePorts struct{ deaf map[string]bool }
+type fakePorts struct {
+	deaf  map[string]bool       // 아무 포트도 응답하지 않는 주소
+	only  map[string]model.Port // 이 포트만 응답하는 주소
+	tried []model.Port
+}
 
-func (f *fakePorts) Answers(_ context.Context, host string, _ model.Port) error {
+func (f *fakePorts) Answers(_ context.Context, host string, port model.Port) error {
+	f.tried = append(f.tried, port)
 	if f.deaf[host] {
+		return errors.New("connection refused")
+	}
+	if p, ok := f.only[host]; ok && p != port {
 		return errors.New("connection refused")
 	}
 	return nil
@@ -105,6 +113,7 @@ type rig struct {
 	certs      *fakeCerts
 	clock      *fakeClock
 	events     *recorder
+	dns        *fakeDNS
 }
 
 func name(s string) model.ServiceName { n, _ := model.ParseServiceName(s); return n }
@@ -117,17 +126,20 @@ func newRig() *rig {
 			{ID: 3, Name: name("nas"), Kind: model.KindExternal, External: "192.168.0.20:5000"},
 		}},
 		containers: &fakeContainers{states: model.ContainerStates{"naru-blog-3": {Name: "naru-blog-3", Running: true, State: "running", IP: "10.0.0.3"}}},
-		ports:      &fakePorts{deaf: map[string]bool{}},
+		ports:      &fakePorts{deaf: map[string]bool{}, only: map[string]model.Port{}},
 		deployer:   &fakeDeployer{busy: map[model.ServiceID]bool{}},
 		web:        &fakeWebServer{up: true},
 		certs:      &fakeCerts{},
 		clock:      &fakeClock{now: time.Date(2026, 10, 10, 9, 0, 0, 0, time.UTC)},
 		events:     &recorder{},
 	}
+	r.dns = &fakeDNS{ips: map[string][]string{}}
+	lookup := kinds.NewLookup(kinds.Tools{})
 	w, _ := NewHealthWatcher(Parts{
-		Services: r.services, Kinds: kinds.NewLookup(kinds.Tools{}), Containers: r.containers, Ports: r.ports,
+		Services: r.services, Kinds: lookup, Containers: r.containers, Ports: r.ports,
 		Deployer: r.deployer, WebServer: r.web, Certs: r.certs, Admin: &fakeAdmin{}, Clock: r.clock, Events: r.events,
-		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Diagnoser: NewDiagnoser(DiagnoserParts{Kinds: lookup, Ports: r.ports, DNS: r.dns, Admin: &fakeAdmin{}, Certs: r.certs, Clock: r.clock, PublicIP: "198.51.100.24"}),
+		Log:       slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	r.w = w.(*healthWatcher)
 	return r

@@ -151,6 +151,9 @@ func TestCertificatesCoverDomains(t *testing.T) {
 		{Names: []string{"old.example.com"}, NotBefore: now.Add(-90 * day), NotAfter: now.Add(-day)},
 		{Names: []string{"soon.example.com"}, NotBefore: now.Add(-80 * day), NotAfter: now.Add(5 * day)},
 		{Names: []string{"future.example.com"}, NotBefore: now.Add(day), NotAfter: now.Add(90 * day)},
+		{Names: []string{"dev.localhost"}, NotBefore: now.Add(-6 * time.Hour), NotAfter: now.Add(6 * time.Hour)}, // 내부 CA 12시간짜리
+		{Names: []string{"stuck.localhost"}, NotBefore: now.Add(-11 * time.Hour), NotAfter: now.Add(time.Hour)},  // 갱신이 막힘
+		{Names: []string{"short.example.com"}, NotBefore: now.Add(-40 * day), NotAfter: now.Add(5 * day)},        // 45일짜리
 	}
 	d := func(s string) DomainName { v, _ := ParseDomainName(s); return v }
 
@@ -170,6 +173,12 @@ func TestCertificatesCoverDomains(t *testing.T) {
 	}
 	if certs.For(d("blog.example.com"), now).EndsSoon(now) {
 		t.Fatal("eighty days left is not soon")
+	}
+	if certs.For(d("dev.localhost"), now).EndsSoon(now) {
+		t.Fatal("a short-lived certificate halfway through is not ending soon — soon is relative to its lifetime")
+	}
+	if !certs.For(d("stuck.localhost"), now).EndsSoon(now) || !certs.For(d("short.example.com"), now).EndsSoon(now) {
+		t.Fatal("under a sixth of the lifetime left is soon")
 	}
 	if (CertificateState{}).Usable(now) {
 		t.Fatal("no certificate is not usable")

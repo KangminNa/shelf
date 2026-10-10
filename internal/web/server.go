@@ -117,6 +117,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /services/{id}/start", s.startService)
 	s.mux.HandleFunc("POST /services/{id}/settings", s.saveSettings)
 	s.mux.HandleFunc("POST /services/{id}/domains", s.addDomain)
+	s.mux.HandleFunc("POST /services/{id}/port", s.setPort)
 	s.mux.HandleFunc("POST /services/{id}/domains/{did}/delete", s.removeDomain)
 	s.mux.HandleFunc("POST /services/{id}/delete", s.deleteService)
 	s.mux.HandleFunc("POST /services/{id}/web", s.saveWebSettings)
@@ -174,6 +175,21 @@ func funcsFor(lang string) template.FuncMap {
 				return fmt.Sprintf(msg, args...)
 			}
 			return msg
+		},
+		// tv는 값 목록을 끼우는 t다 — 지켜보기가 찾은 문제(Finding)의 문구. 끼울 자리가 없는 문구는 그대로.
+		"tv": func(key string, args []string) string {
+			msg, ok := catalog[key]
+			if !ok {
+				return key
+			}
+			if !strings.Contains(msg, "%") {
+				return msg
+			}
+			vals := make([]any, len(args))
+			for i, a := range args {
+				vals[i] = a
+			}
+			return fmt.Sprintf(msg, vals...)
 		},
 		"pct": func(v float64) string { return fmt.Sprintf("%.0f%%", v) },
 		"ago": func(t time.Time) string { return ago(lang, t) },

@@ -53,10 +53,11 @@ func (fakeImages) Remove(context.Context, string) error       { return nil }
 
 // fakeDocker는 컨테이너를 기억한다. hold를 닫기 전까지 새 컨테이너는 응답하지 않는다(배포가 멈춰 있다).
 type fakeDocker struct {
-	mu     sync.Mutex
-	states model.ContainerStates
-	down   bool
-	hold   chan struct{}
+	mu      sync.Mutex
+	states  model.ContainerStates
+	down    bool
+	hold    chan struct{}
+	listens map[string]model.Port // 주소마다 앱이 실제로 듣는 포트 (없으면 어느 포트든 응답)
 }
 
 func (d *fakeDocker) Start(_ context.Context, s model.ContainerSpec) (string, error) {
@@ -107,14 +108,27 @@ func (d *fakeDocker) Recent(_ context.Context, name string, n int) ([]model.LogL
 }
 func (d *fakeDocker) BelongingTo(context.Context, model.ServiceID) ([]string, error) { return nil, nil }
 
-func (d *fakeDocker) Answers(context.Context, string, model.Port) error {
+func (d *fakeDocker) Answers(_ context.Context, host string, port model.Port) error {
 	d.mu.Lock()
 	hold := d.hold
+	p, picky := d.listens[host]
 	d.mu.Unlock()
 	if hold != nil {
 		<-hold
 	}
+	if picky && p != port {
+		return errors.New("connection refused")
+	}
 	return nil
+}
+
+func (d *fakeDocker) listen(host string, p model.Port) {
+	d.mu.Lock()
+	if d.listens == nil {
+		d.listens = map[string]model.Port{}
+	}
+	d.listens[host] = p
+	d.mu.Unlock()
 }
 
 func (d *fakeDocker) set(name string, st model.ContainerState) {
@@ -1157,6 +1171,75 @@ func TestAServiceThatStopsAndComesBackIsReported(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("one outage, one alert: %v", rcv.events())
+	}
+}
+
+// ── 진단 (M6-3) ─────────────────────────────
+
+func TestWrongPortIsDiagnosedAndFixedFromHome(t *testing.T) {
+	h := newHarnessWith(t, harnessOpts{install: "docker", watchEvery: 20 * time.Millisecond})
+	h.signedIn()
+	id := h.createService(model.NewService{Name: name("blog"), Kind: model.KindImage, Source: "me/blog", Alias: "naru-blog", Port: 3000}, model.ServiceSecrets{})
+	store.NewLiveStates(h.app.db).Save(ctx, id, model.LiveState{Alias: "naru-blog", Instance: "naru-blog-1", Port: 3000})
+	h.docker.set("naru-blog-1", model.ContainerState{Name: "naru-blog-1", Running: true, State: "running", IP: "172.30.0.5", Ports: []model.Port{8080}})
+	h.docker.listen("172.30.0.5", 8080)                                                              // 이미지가 8080을 열었고, 앱도 거기서 듣는다
+	h.post(fmt.Sprintf("/services/%d/domains", id), url.Values{"domain": {"elsewhere.example.com"}}) // DNS는 다른 서버를 가리킨다
+
+	home := func(want string) string {
+		t.Helper()
+		for i := 0; i < 300; i++ {
+			if _, _, body := h.get("/"); strings.Contains(body, want) {
+				return body
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		_, _, body := h.get("/")
+		t.Fatalf("home never showed %q:\n%s", want, body)
+		return ""
+	}
+	body := home(fmt.Sprintf(`action="/services/%d/port"`, id))
+	for _, want := range []string{"주의가 필요한 것", "앱이 8080 포트를 듣고 있어요", "포트를 8080로 바꾸기",
+		"elsewhere.example.com 주소가 다른 서버를 가리켜요", "203.0.113.9", "198.51.100.24"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("home is missing %q", want)
+		}
+	}
+	if strings.Contains(body, "앱이 응답하지 않아요") {
+		t.Error("a known fix replaces the generic \"not answering\"")
+	}
+	if i, j := strings.Index(body, "8080 포트를 듣고"), strings.Index(body, "다른 서버를 가리켜요"); j < i {
+		t.Error("heaviest first")
+	}
+	if _, _, page := h.get(fmt.Sprintf("/services/%d", id)); !strings.Contains(page, "포트를 8080로 바꾸기") {
+		t.Error("the service page shows its own findings")
+	}
+
+	code, loc, _ := h.post(fmt.Sprintf("/services/%d/port", id), url.Values{"port": {"8080"}})
+	if code != http.StatusSeeOther || !strings.Contains(loc, "ok=port") {
+		t.Fatalf("%d %q", code, loc)
+	}
+	if h.service(int64(id)).Port != 8080 {
+		t.Fatal("the port is saved")
+	}
+	h.waitFor("the web server follows the new port", func(cfg string) bool { return strings.Contains(cfg, "naru-blog:8080") })
+	if deploys, _ := h.history().Recent(ctx, id, 5); len(deploys) != 0 {
+		t.Fatal("no redeploy — the app already listens there")
+	}
+	body = home("다른 서버를 가리켜요")
+	for i := 0; i < 300 && strings.Contains(body, "8080 포트를 듣고"); i++ {
+		time.Sleep(10 * time.Millisecond)
+		_, _, body = h.get("/")
+	}
+	if strings.Contains(body, "8080 포트를 듣고") {
+		t.Fatal("fixed, so gone")
+	}
+
+	s := h.service(int64(id))
+	h.post(fmt.Sprintf("/services/%d/domains/%d/delete", id, s.Domains[0].ID), nil)
+	home("모두 정상이에요")
+
+	if code, _, _ := h.post(fmt.Sprintf("/services/%d/port", id), url.Values{"port": {"0"}}); code != http.StatusBadRequest {
+		t.Fatalf("a port is required: %d", code)
 	}
 }
 

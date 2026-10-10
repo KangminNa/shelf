@@ -14,6 +14,27 @@ type WatchSnapshot struct {
 	Down        []DownService // 멈춘 컨테이너 서비스 (두 번 연속 문제였던 것)
 	WebServerUp bool
 	DockerUp    bool
+	Findings    []Finding // 서비스·인증서의 문제 (웹서버·Docker에 닿는지는 화면이 지금 상태로 본다)
+}
+
+// FindingLevel은 문제의 무게다 — 무거운 것부터 보인다.
+type FindingLevel int
+
+const (
+	FindingUrgent  FindingLevel = iota // 지금 요청이 실패한다 — 멈춤, 닿지 않음, 틀린 포트
+	FindingWarning                     // 곧 문제가 된다 — 인증서, DNS
+	FindingHint                        // 확인해 보면 좋다 — 웹훅
+)
+
+// Finding은 지켜보기가 찾은 문제 하나와 고칠 방법이다. 화면은 Key로 문구를 고르고 Args를 끼워 넣는다.
+type Finding struct {
+	Service ServiceID // 0이면 서버 전체 (관리 주소의 인증서 등)
+	Name    string    // 서비스 이름
+	Key     string    // 문구 키 — "find.port" · "find.dns.elsewhere" …
+	Level   FindingLevel
+	Args    []string // 문구에 끼울 값 — 포트·주소·IP·날짜
+	Detail  string   // 기술적인 이유 (그대로 보인다)
+	FixPort Port     // 0이 아니면 [포트를 이것으로 바꾸기]
 }
 
 // DownService는 멈춘 서비스 하나와 그 이유다.

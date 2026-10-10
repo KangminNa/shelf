@@ -45,6 +45,31 @@ func cardOf(c model.ServiceCard) card {
 	}
 }
 
+// finding은 "주의가 필요한 것" 한 줄이다. 문구는 Key+".title"·".body"에 Args를 끼운다.
+type finding struct {
+	Service model.ServiceID
+	Name    string // 비면 서비스 이름을 앞에 붙이지 않는다 (서버 전체의 것, 또는 서비스 화면 안)
+	Key     string
+	Args    []string
+	Detail  string
+	Tone    string // bad · warn · muted
+	FixPort model.Port
+	Link    string
+	LinkKey string
+}
+
+func findingOf(f model.Finding) finding {
+	out := finding{Service: f.Service, Name: f.Name, Key: f.Key, Args: f.Args, Detail: f.Detail, FixPort: f.FixPort,
+		Tone: map[model.FindingLevel]string{model.FindingUrgent: "bad", model.FindingWarning: "warn", model.FindingHint: "muted"}[f.Level]}
+	switch f.Key {
+	case "find.crashed", "find.restarting", "find.noanswer":
+		out.Link, out.LinkKey = fmt.Sprintf("/services/%d/logs", f.Service), "find.logs"
+	case "find.webhook":
+		out.Link, out.LinkKey = fmt.Sprintf("/services/%d#webhook", f.Service), "find.webhook.open"
+	}
+	return out
+}
+
 // ── 홈 ────────────────────────────────────
 
 type homeScreen struct {
@@ -52,7 +77,8 @@ type homeScreen struct {
 	Host        model.ServerSnapshot
 	Services    []card
 	Engine      model.WebServerStatus
-	DockerDown  bool
+	Attention   []finding // 웹서버·Docker(지금 상태) 먼저, 그다음 지켜보기가 찾은 것
+	Checked     bool
 }
 
 func (s *Server) home(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +91,16 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.d.Log.Error("list services", "err", err)
 	}
-	d.DockerDown = h.DockerDown
+	if !d.Engine.Connected {
+		d.Attention = append(d.Attention, finding{Key: "engine.down", Tone: "bad", Detail: d.Engine.LastError})
+	}
+	if h.DockerDown {
+		d.Attention = append(d.Attention, finding{Key: "docker.down", Tone: "bad"})
+	}
+	for _, f := range h.Findings {
+		d.Attention = append(d.Attention, findingOf(f))
+	}
+	d.Checked = h.Checked
 	for _, c := range h.Cards {
 		d.Services = append(d.Services, cardOf(c))
 	}

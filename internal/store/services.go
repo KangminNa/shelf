@@ -16,24 +16,27 @@ type Services struct{ db *DB }
 func NewServices(db *DB) Services { return Services{db} }
 
 const serviceColumns = `id, name, kind, source, branch, build_path, folder, upstream, port, auto_deploy,
-	container, instance, release, stopped, hook_at, hook_result, instance_ip`
+	container, instance, release, stopped, hook_at, hook_result, instance_ip, created_at`
 
 func scanService(row interface{ Scan(...any) error }) (model.Service, error) {
 	var (
 		s                    model.Service
-		id, hookAt           int64
+		id, hookAt, created  int64
 		name, kind, hookRes  string
 		port                 int
 		alias, inst, release string
 	)
 	err := row.Scan(&id, &name, &kind, &s.Source, &s.Branch, &s.BuildPath, &s.Folder, &s.External, &port, &s.AutoDeploy,
-		&alias, &inst, &release, &s.Live.Stopped, &hookAt, &hookRes, &s.Live.InstanceIP)
+		&alias, &inst, &release, &s.Live.Stopped, &hookAt, &hookRes, &s.Live.InstanceIP, &created)
 	if err != nil {
 		return s, err
 	}
 	s.ID, s.Kind, s.Port = model.ServiceID(id), model.KindName(kind), model.Port(port)
 	s.Name, _ = model.ParseServiceName(name)
 	s.Live.Alias, s.Live.Instance, s.Live.Release, s.Live.Port = alias, inst, release, model.Port(port)
+	if created > 0 {
+		s.Created = time.Unix(created, 0)
+	}
 	if hookAt > 0 {
 		s.HookLog = model.HookLog{At: time.Unix(hookAt, 0), Result: hookRes}
 	}
