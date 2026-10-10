@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -363,6 +364,65 @@ func TestAppsAndHostsBecomeServices(t *testing.T) {
 	}
 	if again, _ := ImportV1(ctx, db, dir); again.Apps != 0 {
 		t.Fatal("runs once")
+	}
+}
+
+// 옮기지 못한 것은 조용히 버리지 않고 이유와 함께 알린다 — 실서버를 넘길 때 무엇이 빠졌는지 보여야 한다.
+func TestImportSaysWhatItLeftBehind(t *testing.T) {
+	dir := t.TempDir()
+	writeV1(t, dir, "deploy.db", v1Projects,
+		`INSERT INTO projects (id, name, repo_url, webhook_secret, container_port) VALUES (3, 'blog', 'https://github.com/me/blog', 's', 3000)`,
+		`INSERT INTO projects (id, name, repo_url, webhook_secret, container_port) VALUES (4, 'Bad Name!', 'https://github.com/me/x', 's', 80)`,
+		`CREATE TABLE deployments (id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, commit_hash TEXT DEFAULT '', commit_message TEXT DEFAULT '',
+			status TEXT NOT NULL DEFAULT 'pending', trigger_type TEXT NOT NULL DEFAULT 'manual', log TEXT DEFAULT '', duration_ms INTEGER DEFAULT 0, created_at INTEGER)`,
+		`INSERT INTO deployments (project_id, status, created_at) VALUES (3, 'success', 1790000000)`,
+		`INSERT INTO deployments (project_id, status, created_at) VALUES (99, 'success', 1790000200)`,
+		`INSERT INTO deployments (project_id, status, created_at) VALUES (98, 'failed', 1790000300)`,
+	)
+	writeV1(t, dir, "proxy.db", v1Hosts,
+		`INSERT INTO proxy_hosts (domain, target_host, target_port, ssl_enabled) VALUES ('blog.example.com', 'shelf-blog', 3000, 1)`,
+		`INSERT INTO proxy_hosts (domain, target_host, target_port) VALUES ('Blog.Example.com', '10.0.0.5', 80)`,
+		`INSERT INTO proxy_hosts (domain, target_host, target_port, enabled) VALUES ('off.example.com', '10.0.0.9', 80, 0)`,
+		`INSERT INTO proxy_hosts (domain, target_host, target_port) VALUES ('bad_domain', '10.0.0.9', 80)`,
+		`INSERT INTO proxy_hosts (domain, target_host, target_port) VALUES ('nas.example.com', 'bad host', 5000)`,
+		`CREATE TABLE ssl_certs (id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT NOT NULL UNIQUE, cert_path TEXT, key_path TEXT, provider TEXT DEFAULT 'manual',
+			expires_at INTEGER, auto_renew INTEGER NOT NULL DEFAULT 0, domains TEXT DEFAULT '', dns_provider TEXT DEFAULT '', dns_token TEXT DEFAULT '')`,
+		`INSERT INTO ssl_certs (domain, provider) VALUES ('blog.example.com', 'letsencrypt')`,
+		`INSERT INTO ssl_certs (domain, provider) VALUES ('files.example.com', 'manual')`,
+		`INSERT INTO ssl_certs (domain, provider, domains, dns_provider, dns_token) VALUES ('example.com', 'letsencrypt', 'example.com
+*.example.com', 'cloudflare', 'cf_secret_token')`,
+		`INSERT INTO ssl_certs (domain, provider) VALUES ('*.local.test', 'selfsigned')`,
+	)
+	writeV1(t, dir, "notify.db",
+		`CREATE TABLE channels (id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL DEFAULT 'webhook', url TEXT NOT NULL, secret TEXT NOT NULL DEFAULT '', enabled INTEGER NOT NULL DEFAULT 1, description TEXT NOT NULL DEFAULT '')`,
+		`INSERT INTO channels (url, description) VALUES ('ftp://secret-host/hook-token', 'pager')`,
+	)
+	r, err := ImportV1(ctx, open(t, dir), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(r.Skipped, "\n")
+	for _, want := range []string{
+		"앱 Bad Name!: 이름 모양이 틀림",
+		"배포 기록 2개: 지워진 앱의 것",
+		"주소 off.example.com: v1에서 꺼져 있음",
+		"주소 bad_domain: 주소 모양이 틀림",
+		"주소 blog.example.com: 이미 다른 서비스에 있음",
+		"주소 nas.example.com: 연결 대상 bad host:5000 모양이 틀림",
+		"인증서 files.example.com: 직접 올린 인증서",
+		"인증서 example.com, *.example.com: DNS-01(cloudflare)",
+		"인증서 *.local.test: 자체 서명",
+		"알림 주소 pager: 주소 모양이 틀림",
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("missing %q in:\n%s", want, all)
+		}
+	}
+	if strings.Contains(all, "cf_secret_token") || strings.Contains(all, "hook-token") || strings.Contains(all, "secret-host") {
+		t.Fatal("secrets (DNS tokens, alert addresses) never appear in the report")
+	}
+	if strings.Contains(all, "인증서 blog.example.com") {
+		t.Fatal("ordinary Let's Encrypt certificates are simply issued again — nothing to say")
 	}
 }
 

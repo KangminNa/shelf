@@ -36,6 +36,12 @@ type V1Report struct {
 	Domains     int
 	History     int // 옮긴 배포 기록
 	Channels    int // 옮긴 알림 주소
+	// Skipped는 옮기지 못한 것과 이유다 — 실서버를 넘길 때 무엇이 빠졌는지 보이게. 비밀(토큰·알림 주소)은 담지 않는다.
+	Skipped []string
+}
+
+func (r *V1Report) skip(format string, args ...any) {
+	r.Skipped = append(r.Skipped, fmt.Sprintf(format, args...))
 }
 
 // ImportV1은 dataDir에 있는 v1 DB(auth.db · proxy.db · deploy.db)를 처음 한 번만 옮긴다.
@@ -83,16 +89,19 @@ func importChannels(ctx context.Context, db *DB, dataDir string, r *V1Report) er
 		return err
 	}
 	defer v1.Close()
-	rows, err := v1.QueryContext(ctx, `SELECT url, secret, description FROM channels WHERE enabled = 1 ORDER BY id`)
+	rows, err := v1.QueryContext(ctx, `SELECT id, url, secret, description FROM channels WHERE enabled = 1 ORDER BY id`)
 	if err != nil {
 		return err
 	}
-	type row struct{ url, secret, name string }
+	type row struct {
+		id                int64
+		url, secret, name string
+	}
 	var all []row
 	for rows.Next() {
 		var x row
 		var secret, desc sql.NullString
-		if err := rows.Scan(&x.url, &secret, &desc); err != nil {
+		if err := rows.Scan(&x.id, &x.url, &secret, &desc); err != nil {
 			rows.Close()
 			return err
 		}
@@ -105,6 +114,11 @@ func importChannels(ctx context.Context, db *DB, dataDir string, r *V1Report) er
 	for _, x := range all {
 		u, err := model.ParseAlertURL(x.url)
 		if err != nil {
+			label := strings.TrimSpace(x.name) // 주소는 비밀이라 이름(없으면 번호)으로만 말한다
+			if label == "" {
+				label = fmt.Sprintf("#%d", x.id)
+			}
+			r.skip("알림 주소 %s: 주소 모양이 틀림", label)
 			continue
 		}
 		name := strings.TrimSpace(x.name)
@@ -147,7 +161,7 @@ func importAccounts(ctx context.Context, db *DB, dataDir string, r *V1Report) er
 		return err
 	} else if ok {
 		r.Found = true
-		n, err := copyUsers(ctx, v1, db)
+		n, err := copyUsers(ctx, v1, db, r)
 		v1.Close()
 		if err != nil {
 			return err
@@ -165,7 +179,9 @@ func importAccounts(ctx context.Context, db *DB, dataDir string, r *V1Report) er
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if d, err := model.ParseDomainName(domain); err == nil {
+		if d, err := model.ParseDomainName(domain); err != nil && domain != "" {
+			r.skip("관리 주소 %s: 주소 모양이 틀림", domain)
+		} else if err == nil {
 			if _, already := set.Get(ctx, model.SettingAdminDomain); !already {
 				if err := set.Set(ctx, model.SettingAdminDomain, d.String()); err != nil {
 					return err
@@ -183,7 +199,7 @@ func importAccounts(ctx context.Context, db *DB, dataDir string, r *V1Report) er
 }
 
 // copyUsers는 v1 계정을 비밀번호 해시 그대로 옮긴다 (해시 형식이 같다). 이미 있는 이름은 건너뛴다.
-func copyUsers(ctx context.Context, v1 *sql.DB, db *DB) (int, error) {
+func copyUsers(ctx context.Context, v1 *sql.DB, db *DB, r *V1Report) (int, error) {
 	rows, err := v1.QueryContext(ctx, `SELECT username, password_hash FROM users ORDER BY id`)
 	if err != nil {
 		return 0, err
@@ -210,6 +226,8 @@ func copyUsers(ctx context.Context, v1 *sql.DB, db *DB) (int, error) {
 		}
 		if n, _ := res.RowsAffected(); n > 0 {
 			added++
+		} else {
+			r.skip("계정 %s: 같은 이름이 이미 있음", x.name)
 		}
 	}
 	return added, nil
@@ -224,7 +242,7 @@ func importServices(ctx context.Context, db *DB, dataDir string, r *V1Report) er
 		return err
 	} else if ok {
 		r.Found = true
-		apps, err := readApps(ctx, v1)
+		apps, err := readApps(ctx, v1, r)
 		if err != nil {
 			v1.Close()
 			return err
@@ -237,19 +255,25 @@ func importServices(ctx context.Context, db *DB, dataDir string, r *V1Report) er
 			byContainer[a.alias] = a.id
 			r.Apps++
 		}
-		n, err := copyHistory(ctx, v1, db)
+		n, lost, err := copyHistory(ctx, v1, db)
 		v1.Close()
 		if err != nil {
 			return fmt.Errorf("deploy history: %w", err)
 		}
 		r.History = n
+		if lost > 0 {
+			r.skip("배포 기록 %d개: 지워진 앱의 것", lost)
+		}
 	}
 
 	if v1, ok, err := openV1(dataDir, "proxy.db"); err != nil {
 		return err
 	} else if ok {
 		r.Found = true
-		hosts, err := readHosts(ctx, v1)
+		hosts, err := readHosts(ctx, v1, r)
+		if err == nil {
+			err = noteCertificates(ctx, v1, r)
+		}
 		v1.Close()
 		if err != nil {
 			return err
@@ -257,12 +281,14 @@ func importServices(ctx context.Context, db *DB, dataDir string, r *V1Report) er
 		services, domains := NewServices(db), NewDomains(db)
 		for _, h := range hosts {
 			if _, taken := domains.FindOwner(ctx, h.domain); taken {
+				r.skip("주소 %s: 이미 다른 서비스에 있음", h.domain)
 				continue
 			}
 			sid, isApp := byContainer[h.targetHost]
 			if !isApp {
 				ext, err := model.ParseExternalAddress(h.address())
 				if err != nil {
+					r.skip("주소 %s: 연결 대상 %s 모양이 틀림", h.domain, h.address())
 					continue
 				}
 				base := model.SuggestServiceName(h.domain.FirstLabel())
@@ -305,7 +331,7 @@ func insertApp(ctx context.Context, db *DB, a v1App) error {
 }
 
 // readApps는 v1의 어느 버전이 만든 DB든 읽는다 — 나중에 생긴 칸이 없으면 기본값으로 둔다.
-func readApps(ctx context.Context, v1 *sql.DB) ([]v1App, error) {
+func readApps(ctx context.Context, v1 *sql.DB, r *V1Report) ([]v1App, error) {
 	cols, err := columnsOf(ctx, v1, "projects")
 	if err != nil {
 		return nil, err
@@ -338,6 +364,7 @@ func readApps(ctx context.Context, v1 *sql.DB) ([]v1App, error) {
 			return nil, err
 		}
 		if _, err := model.ParseServiceName(a.name); err != nil {
+			r.skip("앱 %s: 이름 모양이 틀림 (컨테이너 shelf-%s는 그대로 돈다 — 새 서비스로 다시 만든다)", a.name, a.name)
 			continue
 		}
 		a.id, a.kind, a.source = model.ServiceID(id), model.KindRepo, repoURL
@@ -352,14 +379,15 @@ func readApps(ctx context.Context, v1 *sql.DB) ([]v1App, error) {
 }
 
 // copyHistory는 v1 배포 기록을 옮긴다. 로그는 끝부분만 남긴다 — 실패 원인은 대개 끝에 있다.
-func copyHistory(ctx context.Context, v1 *sql.DB, db *DB) (int, error) {
+// lost는 옮길 곳이 없던 기록(지워진 앱의 것) 수다.
+func copyHistory(ctx context.Context, v1 *sql.DB, db *DB) (n, lost int, err error) {
 	cols, err := columnsOf(ctx, v1, "deployments")
 	if err != nil || !cols["project_id"] {
-		return 0, err
+		return 0, 0, err
 	}
 	rows, err := v1.QueryContext(ctx, `SELECT project_id, status, trigger_type, commit_hash, commit_message, log, created_at, duration_ms FROM deployments ORDER BY id`)
 	if err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 	type row struct {
 		project             int64
@@ -372,15 +400,14 @@ func copyHistory(ctx context.Context, v1 *sql.DB, db *DB) (int, error) {
 		var x row
 		if err := rows.Scan(&x.project, &x.status, &x.trigger, &x.hash, &x.msg, &x.log, &x.created, &x.durationMs); err != nil {
 			rows.Close()
-			return 0, err
+			return 0, 0, err
 		}
 		all = append(all, x)
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
-	n := 0
 	for _, x := range all {
 		status := model.DeployFailed
 		if x.status == "success" {
@@ -395,11 +422,12 @@ func copyHistory(ctx context.Context, v1 *sql.DB, db *DB) (int, error) {
 		_, err := db.sql.ExecContext(ctx, `INSERT INTO deployments (service_id, status, trigger_type, commit_hash, commit_message, log, started_at, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 			x.project, string(status), "v1:"+x.trigger, x.hash.String, x.msg.String, log, started.Unix(), finished.Unix())
 		if err != nil {
-			continue // 지워진 앱의 기록 — 옮길 곳이 없다
+			lost++ // 지워진 앱의 기록 — 옮길 곳이 없다
+			continue
 		}
 		n++
 	}
-	return n, nil
+	return n, lost, nil
 }
 
 type v1Host struct {
@@ -418,7 +446,7 @@ func (h v1Host) address() string {
 	return addr
 }
 
-func readHosts(ctx context.Context, v1 *sql.DB) ([]v1Host, error) {
+func readHosts(ctx context.Context, v1 *sql.DB, r *V1Report) ([]v1Host, error) {
 	cols, err := columnsOf(ctx, v1, "proxy_hosts")
 	if err != nil {
 		return nil, err
@@ -427,8 +455,8 @@ func readHosts(ctx context.Context, v1 *sql.DB) ([]v1Host, error) {
 	if cols["hsts_enabled"] {
 		hsts = "hsts_enabled"
 	}
-	rows, err := v1.QueryContext(ctx, fmt.Sprintf(`SELECT domain, target_scheme, target_host, target_port, ssl_enabled, %s
-		FROM proxy_hosts WHERE enabled = 1 AND coalesce(description, '') NOT LIKE ? ORDER BY id`, hsts), adminHostMarker)
+	rows, err := v1.QueryContext(ctx, fmt.Sprintf(`SELECT domain, target_scheme, target_host, target_port, ssl_enabled, %s, enabled
+		FROM proxy_hosts WHERE coalesce(description, '') NOT LIKE ? ORDER BY id`, hsts), adminHostMarker)
 	if err != nil {
 		return nil, err
 	}
@@ -437,17 +465,62 @@ func readHosts(ctx context.Context, v1 *sql.DB) ([]v1Host, error) {
 	for rows.Next() {
 		var h v1Host
 		var domain string
-		if err := rows.Scan(&domain, &h.scheme, &h.targetHost, &h.targetPort, &h.ssl, &h.hsts); err != nil {
+		var enabled bool
+		if err := rows.Scan(&domain, &h.scheme, &h.targetHost, &h.targetPort, &h.ssl, &h.hsts, &enabled); err != nil {
 			return nil, err
+		}
+		if !enabled {
+			r.skip("주소 %s: v1에서 꺼져 있음", domain)
+			continue
 		}
 		d, err := model.ParseDomainName(strings.ToLower(domain))
 		if err != nil {
+			r.skip("주소 %s: 주소 모양이 틀림", domain)
 			continue
 		}
 		h.domain = d
 		out = append(out, h)
 	}
 	return out, rows.Err()
+}
+
+// noteCertificates는 v2가 그대로 이어받지 못하는 v1 인증서를 알린다. 인증서는 옮기지 않는다 — Caddy가 새로 받는다.
+// 보통의 Let's Encrypt 인증서(HTTP 확인)는 새로 받으면 되니 말하지 않는다. DNS 토큰은 읽지 않는다.
+func noteCertificates(ctx context.Context, v1 *sql.DB, r *V1Report) error {
+	cols, err := columnsOf(ctx, v1, "ssl_certs")
+	if err != nil || !cols["domain"] {
+		return err
+	}
+	pick := func(name string) string {
+		if cols[name] {
+			return "coalesce(" + name + ", '')"
+		}
+		return "''"
+	}
+	rows, err := v1.QueryContext(ctx, fmt.Sprintf(`SELECT domain, coalesce(provider, ''), %s, %s FROM ssl_certs ORDER BY id`, pick("domains"), pick("dns_provider")))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var domain, provider, domains, dns string
+		if err := rows.Scan(&domain, &provider, &domains, &dns); err != nil {
+			return err
+		}
+		names := domain
+		if list := strings.Fields(domains); len(list) > 0 {
+			names = strings.Join(list, ", ")
+		}
+		switch {
+		case dns != "":
+			r.skip("인증서 %s: DNS-01(%s) — v2는 HTTP 확인으로만 받는다. 와일드카드는 받지 못하고, 이름마다 이 서버 80으로 닿아야 한다", names, dns)
+		case provider == "manual":
+			r.skip("인증서 %s: 직접 올린 인증서 — 옮기지 않는다. 이 서버 80으로 닿으면 Caddy가 새로 받는다", names)
+		case provider == "selfsigned":
+			r.skip("인증서 %s: 자체 서명 — 옮기지 않는다. 이 서버 80으로 닿으면 Caddy가 새로 받는다", names)
+		}
+	}
+	return rows.Err()
 }
 
 func columnsOf(ctx context.Context, db *sql.DB, table string) (map[string]bool, error) {

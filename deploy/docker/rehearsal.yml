@@ -1,0 +1,59 @@
+# 그림자 실행 — 실서버를 건드리지 않고 v2가 v1 데이터로 제대로 서빙하는지 미리 본다 (docs/switch-v1.md).
+#   docker compose -f rehearsal.yml up -d --build
+#   curl -sk --resolve 주소:18443:127.0.0.1 https://주소/      ← 주소마다
+#   docker compose -f rehearsal.yml down -v                     ← 끝나면 지운다
+#
+# 실서버와 겹치지 않게: 포트는 127.0.0.1에만, 인증서는 내부 CA(공개 CA에 요청하지 않는다), 데이터는 따로,
+# 이름은 naru-rehearsal-*. 앱 컨테이너는 읽기만 한다 — 이 화면에서 배포·멈추기를 누르지 않는다.
+name: naru-rehearsal
+
+services:
+  caddy:
+    image: caddy:2.11.6
+    container_name: naru-rehearsal-caddy
+    restart: "no"
+    command: caddy run --resume --config /etc/caddy/bootstrap.json
+    ports:
+      - "127.0.0.1:18080:80"
+      - "127.0.0.1:18443:443"
+    volumes:
+      - caddy-admin:/run/caddy
+      - ../../caddy/bootstrap.json:/etc/caddy/bootstrap.json:ro
+      - ${REHEARSAL_DATA:-../../rehearsal-data}/caddy/data:/data
+      - ${REHEARSAL_DATA:-../../rehearsal-data}/caddy/config:/config
+      - ${REHEARSAL_DATA:-../../rehearsal-data}/sites:/srv/sites:ro
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [apps]
+
+  naru:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: naru:local
+    container_name: naru-rehearsal
+    restart: "no"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - NARU_INSTALL=docker
+      - NARU_NETWORK=${NARU_NETWORK:-naru-net}
+      - NARU_TLS=internal                           # 공개 CA에 요청하지 않는다
+      - NARU_HTTPS_PORT=18443
+      - NARU_SELF_UPSTREAM=naru-rehearsal:8080      # 웹서버가 이 화면에 닿는 이름
+    ports:
+      - "127.0.0.1:18081:8080"
+    volumes:
+      - ${REHEARSAL_DATA:-../../rehearsal-data}:/data
+      - caddy-admin:/run/caddy
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks: [apps]
+
+volumes:
+  caddy-admin:
+
+networks:
+  apps:
+    name: ${NARU_NETWORK:-naru-net}
+    external: true

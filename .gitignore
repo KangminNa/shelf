@@ -1,6 +1,7 @@
 # 실행 데이터 (DB · 인증서 · 비밀). 저장소에 올리지 않는다
 data/
 data-v2/
+rehearsal-data/
 
 # 환경 변수 — 비밀이 들어갈 수 있다
 .env

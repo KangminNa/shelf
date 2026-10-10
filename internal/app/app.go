@@ -271,7 +271,10 @@ func OpenWith(cfg Config, log *slog.Logger, out Outside) (*App, error) {
 		log.Error("v1 import failed — will retry next start", "err", err)
 	} else if r.Found {
 		log.Info("imported from v1", "accounts", r.Users, "admin_domain", r.AdminDomain,
-			"apps", r.Apps, "external", r.External, "domains", r.Domains, "history", r.History)
+			"apps", r.Apps, "external", r.External, "domains", r.Domains, "history", r.History, "not_imported", len(r.Skipped))
+		for _, s := range r.Skipped {
+			log.Warn("v1: not imported", "what", s)
+		}
 	}
 	if err := a.assemble(); err != nil {
 		db.Close()

@@ -38,6 +38,9 @@ internal/
 ├── app/             composition root — the only place concrete types meet (§7 table as code)
 └── archtest/        R1–R11
 caddy/bootstrap.json Caddy's first config (admin socket only); Naru pushes the full config over the socket
+deploy/docker/       production compose (Docker install) + rehearsal.yml (shadow run on loopback ports)
+deploy/host/         systemd units for the host install
+docs/switch-v1.md    switching the live server from v1 to v2 — follow it command by command
 ```
 
 ## Commands

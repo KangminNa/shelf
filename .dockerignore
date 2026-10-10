@@ -3,6 +3,8 @@
 .claude
 data
 data-v2
+rehearsal-data
+deploy
 docs
 caddy
 scripts

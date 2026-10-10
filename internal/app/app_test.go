@@ -1207,8 +1207,9 @@ func TestWrongPortIsDiagnosedAndFixedFromHome(t *testing.T) {
 		t.Fatalf("home never showed %q:\n%s", want, body)
 		return ""
 	}
-	body := home(fmt.Sprintf(`action="/services/%d/port"`, id))
-	for _, want := range []string{"주의가 필요한 것", "앱이 8080 포트를 듣고 있어요", "포트를 8080로 바꾸기",
+	// 주소를 붙이기 전에 시작한 확인이 있을 수 있다 — 주소까지 본 결과(DNS 진단)를 기다린다. 포트 진단은 첫 확인부터 있다.
+	body := home("elsewhere.example.com 주소가 다른 서버를 가리켜요")
+	for _, want := range []string{fmt.Sprintf(`action="/services/%d/port"`, id), "주의가 필요한 것", "앱이 8080 포트를 듣고 있어요", "포트를 8080로 바꾸기",
 		"elsewhere.example.com 주소가 다른 서버를 가리켜요", "203.0.113.9", "198.51.100.24"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("home is missing %q", want)

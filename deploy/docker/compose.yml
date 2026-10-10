@@ -1,0 +1,58 @@
+# Naru 운영 구성 — Docker 방식. 이 폴더에서 돌린다:
+#   cp env.example .env      ← 값을 채운다 (.env는 저장소에 올리지 않는다)
+#   docker compose up -d --build
+#   docker compose logs naru | grep setup     ← 새 설치면 첫 설정 주소 (v1에서 옮기면 기존 계정으로 바로 로그인)
+# v1(Shelf)에서 넘어오는 순서는 docs/switch-v1.md.
+name: naru
+
+services:
+  # 웹서버 엔진. 설정은 Naru가 관리 소켓으로 통째로 밀어넣는다 — 이 컨테이너에 설정 파일을 두지 않는다.
+  caddy:
+    image: caddy:2.11.6
+    container_name: naru-caddy                      # shelf- 로 시작하면 안 된다 (v1이 앱으로 오해한다)
+    restart: unless-stopped
+    command: caddy run --resume --config /etc/caddy/bootstrap.json
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"                               # HTTP/3 — 막혀 있으면 브라우저가 TCP로 온다
+    volumes:
+      - caddy-admin:/run/caddy                      # 관리 소켓 — Caddy와 Naru만
+      - ../../caddy/bootstrap.json:/etc/caddy/bootstrap.json:ro
+      - ${NARU_DATA:-../../data}/caddy/data:/data   # 인증서 · 접근 로그
+      - ${NARU_DATA:-../../data}/caddy/config:/config   # 마지막 설정(autosave) — 재시작해도 이어서
+      - ${NARU_DATA:-../../data}/sites:/srv/sites:ro    # 정적 사이트 — Naru가 올리고 웹서버는 읽기만
+    extra_hosts:
+      - "host.docker.internal:host-gateway"         # "이 서버"에서 도는 것(NAS 등)에 닿는 길
+    networks: [apps]
+
+  naru:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    image: naru:local
+    container_name: naru
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - NARU_INSTALL=docker
+      - NARU_NETWORK=${NARU_NETWORK:-naru-net}
+    ports:
+      - "127.0.0.1:8080:8080"                       # 웹서버를 거치지 않는 뒷문 — 서버 안(ssh 터널)에서만
+    volumes:
+      - ${NARU_DATA:-../../data}:/data              # DB · 비밀 — 권한 700
+      - caddy-admin:/run/caddy
+      - /var/run/docker.sock:/var/run/docker.sock   # 관리자는 설계상 root와 같다
+    networks: [apps]
+
+volumes:
+  caddy-admin:
+
+# 앱 컨테이너와 웹서버가 함께 있는 네트워크. 미리 있어야 한다 — 새 설치는 `docker network create naru-net`,
+# v1에서 옮기면 v1이 만든 shelf-net을 그대로 쓴다 (.env에 NARU_NETWORK=shelf-net).
+networks:
+  apps:
+    name: ${NARU_NETWORK:-naru-net}
+    external: true
