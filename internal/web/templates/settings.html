@@ -1,0 +1,101 @@
+{{define "root"}}{{template "app" .}}{{end}}
+{{define "title"}}{{t "nav.settings"}}{{end}}
+{{define "content"}}
+<div class="hero"><div><h1>{{t "nav.settings"}}</h1></div></div>
+<div class="stack narrow">
+
+<section class="section" id="password">
+  <h2>{{t "settings.password.heading"}}</h2>
+  <p class="desc">{{t "settings.password.desc"}}</p>
+  {{if eq .Data.Form "password"}}{{template "error" .}}{{end}}
+  <form method="post" action="/settings/password" class="form">
+    <label class="field"><span>{{t "field.currentpassword"}}</span>
+      <input class="input" type="password" name="current" autocomplete="current-password" required></label>
+    <label class="field"><span>{{t "field.newpassword"}}</span>
+      <input class="input" type="password" name="next" autocomplete="new-password" required minlength="8">
+      <small>{{t "field.password.hint"}}</small></label>
+    <label class="field"><span>{{t "field.password2"}}</span>
+      <input class="input" type="password" name="next2" autocomplete="new-password" required minlength="8"></label>
+    <div><button class="btn primary" type="submit">{{t "settings.password.submit"}}</button></div>
+  </form>
+</section>
+
+<section class="section" id="domain">
+  <h2>{{t "settings.domain.heading"}}</h2>
+  <p class="desc">{{t "settings.domain.desc"}}</p>
+  {{if eq .Data.Form "domain"}}{{template "error" .}}{{end}}
+  {{with .Data.Cert}}<p class="cert-line">{{t "settings.cert"}} {{template "cert" .}}</p>{{end}}
+  {{with .Data.FixedDomain}}
+    <p class="flash ok">{{t "settings.domain.fixed" .}}</p>
+  {{else}}
+  <form method="post" action="/settings/domain" class="form">
+    <label class="field"><span>{{t "field.domain"}}</span>
+      <input class="input mono" name="domain" value="{{.Data.Domain}}" placeholder="naru.example.com" autocomplete="off"></label>
+    {{with .Data.Check}}{{template "dnscheck" .}}{{end}}
+    <label class="field"><span>{{t "field.email"}}</span>
+      <input class="input" type="email" name="email" value="{{.Data.Email}}" placeholder="you@example.com" autocomplete="email">
+      <small>{{t "setup.https.hint"}}</small></label>
+    <div class="row-actions">
+      {{if and .Data.Check (not .Data.Check.Matches)}}
+        <button class="btn" type="submit" name="action" value="check">{{t "setup.domain.recheck"}}</button>
+        <button class="btn primary" type="submit" name="action" value="save">{{t "setup.domain.saveanyway"}}</button>
+      {{else}}
+        <button class="btn primary" type="submit" name="action" value="check">{{t "common.save"}}</button>
+      {{end}}
+    </div>
+  </form>
+  {{end}}
+</section>
+
+<section class="section" id="alerts">
+  <h2>{{t "alerts.heading"}}</h2>
+  <p class="desc">{{t "alerts.desc"}}</p>
+  {{if eq .Data.Form "alerts"}}{{template "error" .}}{{with .Data.AlertError}}<pre class="code why">{{.}}</pre>{{end}}{{end}}
+  {{if .Data.Channels}}
+  <ul class="rows">
+    {{range .Data.Channels}}
+    <li><b>{{.Name}}</b> <code class="muted">{{.Target}}</code>
+      <span class="spacer"></span>
+      <span class="chip">{{t (print "alerts.format." .Format)}}</span>{{if .HasSecret}}<span class="chip on">{{t "alerts.signed"}}</span>{{end}}
+      <form method="post" action="/settings/alerts/{{.ID}}/test"><button class="btn small" type="submit">{{t "alerts.test"}}</button></form>
+      <form method="post" action="/settings/alerts/{{.ID}}/delete"><button class="btn small quiet" type="submit" aria-label="{{t "alerts.remove"}} {{.Name}}">✕</button></form>
+    </li>
+    {{end}}
+  </ul>
+  {{else}}<p class="desc">{{t "alerts.none"}}</p>{{end}}
+  <form method="post" action="/settings/alerts" class="form">
+    <div class="pair">
+      <input class="input" name="name" value="{{.Data.AlertForm.Name}}" placeholder="{{t "alerts.name"}}" aria-label="{{t "alerts.name"}}">
+      <input class="input mono" name="url" value="{{.Data.AlertForm.URL}}" placeholder="https://discord.com/api/webhooks/…" aria-label="{{t "alerts.url"}}" required autocomplete="off">
+    </div>
+    <label class="field"><span>{{t "alerts.secret"}}</span>
+      <input class="input mono" type="password" name="secret" autocomplete="off"><small>{{t "alerts.secret.hint"}}</small></label>
+    <div><button class="btn primary" type="submit">{{t "alerts.add"}}</button></div>
+  </form>
+  {{with .Data.Deliveries}}
+  <h3 class="sub-heading">{{t "alerts.recent"}}</h3>
+  <ul class="rows">
+    {{range .}}<li><span class="dot {{if .OK}}ok{{else}}bad{{end}}"></span><span class="muted small">{{ago .At}}</span> <b>{{.ChannelName}}</b> {{.Title}}{{if not .OK}} <code class="muted">{{.Detail}}</code>{{end}}</li>{{end}}
+  </ul>
+  {{end}}
+</section>
+
+<section class="section">
+  <h2>{{t "nav.language"}}</h2>
+  <div class="seg">
+    <a href="/lang/ko?back=/settings" {{if eq .Lang "ko"}}aria-current="true"{{end}}>한국어</a>
+    <a href="/lang/en?back=/settings" {{if eq .Lang "en"}}aria-current="true"{{end}}>English</a>
+  </div>
+</section>
+
+<section class="section">
+  <h2>{{t "settings.server.heading"}}</h2>
+  <dl class="facts">
+    <dt>{{t "settings.server.version"}}</dt><dd>Naru {{.Version}}</dd>
+    <dt>{{t "settings.server.data"}}</dt><dd><code>{{.Data.DataDir}}</code></dd>
+    <dt>{{t "settings.server.signedin"}}</dt><dd>{{.User.Username}}</dd>
+  </dl>
+</section>
+
+</div>
+{{end}}

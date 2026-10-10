@@ -1,0 +1,461 @@
+// Package app은 Naru를 조립하고 띄운다 (Composition Root).
+// 무엇이 무엇을 쓰는지는 여기서만 보인다 — docs/design/v2-objects.md §7 표가 그대로 이 코드다.
+// 다른 패키지는 서로의 구체 타입을 모르고, 여기서 인터페이스로 이어진다.
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"time"
+
+	"github.com/KangminNa/naru/internal/access"
+	"github.com/KangminNa/naru/internal/caddy"
+	"github.com/KangminNa/naru/internal/contract"
+	"github.com/KangminNa/naru/internal/deploy"
+	"github.com/KangminNa/naru/internal/docker"
+	"github.com/KangminNa/naru/internal/events"
+	"github.com/KangminNa/naru/internal/files"
+	"github.com/KangminNa/naru/internal/git"
+	"github.com/KangminNa/naru/internal/httppost"
+	"github.com/KangminNa/naru/internal/kinds"
+	"github.com/KangminNa/naru/internal/model"
+	"github.com/KangminNa/naru/internal/netcheck"
+	"github.com/KangminNa/naru/internal/notify"
+	"github.com/KangminNa/naru/internal/services"
+	"github.com/KangminNa/naru/internal/settings"
+	"github.com/KangminNa/naru/internal/stats"
+	"github.com/KangminNa/naru/internal/store"
+	"github.com/KangminNa/naru/internal/system"
+	"github.com/KangminNa/naru/internal/views"
+	"github.com/KangminNa/naru/internal/watch"
+	"github.com/KangminNa/naru/internal/web"
+	"github.com/KangminNa/naru/internal/webhook"
+	"github.com/KangminNa/naru/internal/webserver"
+	"github.com/KangminNa/naru/internal/websettings"
+)
+
+// Config는 환경 변수에서 읽는다. 모두 비워 둬도 돈다 — 나머지는 첫 설정 화면에서 정한다.
+// 비워 둔 값은 설치 방식(Install)에 맞는 기본값으로 채운다 (resolved). 설치 방식을 아는 곳은 이 패키지 하나다 (R12).
+type Config struct {
+	Install      string // NARU_INSTALL — "host"(기본, 바이너리를 직접 실행) 또는 "docker"(compose)
+	Listen       string // NARU_LISTEN — 기본 host 127.0.0.1:8080 · docker :8080
+	DataDir      string // NARU_DATA_DIR, 기본 ./data
+	ProcDir      string // NARU_PROC_DIR, 기본 /proc
+	DockerSocket string // NARU_DOCKER_SOCKET, 기본 /var/run/docker.sock
+	CaddySocket  string // NARU_CADDY_ADMIN — 웹서버 관리 소켓. 기본 host /run/naru/caddy.sock · docker /run/caddy/admin.sock
+	SelfUpstream string // NARU_SELF_UPSTREAM — 웹서버가 관리 화면에 닿는 주소. 기본 host 127.0.0.1:8080 · docker naru:8080
+	InternalTLS  bool   // NARU_TLS=internal — 개발용. 공개 CA 대신 내부 CA로 인증서
+	Network      string // NARU_NETWORK — 앱 컨테이너가 붙는 Docker 네트워크, 기본 naru-net (설치형은 없으면 만든다)
+	CaddySites   string // NARU_CADDY_SITES — 웹서버가 본 정적 사이트 폴더. 기본 host <데이터>/sites · docker /srv/sites
+	CaddyCerts   string // NARU_CADDY_CERTS — 웹서버가 받은 인증서(Naru는 읽기만). 기본 host <데이터>/caddy/certificates · docker <데이터>/caddy/data/caddy/certificates
+	HTTPSPort    int    // NARU_HTTPS_PORT — 바깥에서 본 HTTPS 포트, 기본 443 (로컬처럼 다른 포트로 열었을 때만)
+	PublicIP     string // NARU_PUBLIC_IP — 이 서버의 공인 IP. 비면 관리 주소를 조회해 추정한다 (DNS 진단에만 쓴다)
+	AdminDomain  string // ADMIN_DOMAIN — 있으면 화면 설정보다 우선
+	ACMEEmail    string // ACME_EMAIL — 있으면 화면 설정보다 우선
+	Version      string
+}
+
+func ConfigFromEnv(version string) Config {
+	return Config{
+		Install:      envOr("NARU_INSTALL", "host"),
+		Listen:       os.Getenv("NARU_LISTEN"),
+		DataDir:      envOr("NARU_DATA_DIR", "./data"),
+		ProcDir:      envOr("NARU_PROC_DIR", "/proc"),
+		DockerSocket: envOr("NARU_DOCKER_SOCKET", "/var/run/docker.sock"),
+		CaddySocket:  os.Getenv("NARU_CADDY_ADMIN"),
+		SelfUpstream: os.Getenv("NARU_SELF_UPSTREAM"),
+		InternalTLS:  os.Getenv("NARU_TLS") == "internal",
+		Network:      envOr("NARU_NETWORK", "naru-net"),
+		CaddySites:   os.Getenv("NARU_CADDY_SITES"),
+		CaddyCerts:   os.Getenv("NARU_CADDY_CERTS"),
+		HTTPSPort:    envPort("NARU_HTTPS_PORT", 443),
+		PublicIP:     os.Getenv("NARU_PUBLIC_IP"),
+		AdminDomain:  os.Getenv("ADMIN_DOMAIN"),
+		ACMEEmail:    os.Getenv("ACME_EMAIL"),
+		Version:      version,
+	}
+}
+
+// mode는 설치 방식마다 다른 것 — 기본값과, 웹서버가 컨테이너·"이 서버"에 닿는 방법.
+type mode struct {
+	listen, socket, self string
+	sites, certs, store  func(data string) string
+	accessCaddy          func(data string) string // 접근 로그 — 웹서버가 쓰는 경로
+	accessNaru           func(data string) string // 같은 파일을 Naru가 읽는 경로
+	container            contract.DestinationFinder
+	thisServer           string
+}
+
+var modes = map[string]mode{
+	// Docker: Naru·Caddy가 앱 컨테이너와 같은 네트워크에 있다 — 별칭으로 보낸다. 데이터 폴더는 공유 볼륨이다.
+	"docker": {
+		listen: ":8080", socket: "/run/caddy/admin.sock", self: "naru:8080",
+		sites:       func(string) string { return "/srv/sites" },
+		certs:       func(d string) string { return filepath.Join(d, "caddy", "data", "caddy", "certificates") },
+		store:       func(string) string { return "" },
+		accessCaddy: func(string) string { return "/data/access.log" }, // 웹서버 컨테이너의 /data = <데이터>/caddy/data
+		accessNaru:  func(d string) string { return filepath.Join(d, "caddy", "data", "access.log") },
+		container:   kinds.ContainerAliasDestination{}, thisServer: "",
+	},
+	// 설치형: Naru·Caddy가 호스트에 있다 — 컨테이너는 IP로, "이 서버"는 127.0.0.1로. Caddy 저장소를 데이터 폴더 안에 둔다.
+	"host": {
+		listen: "127.0.0.1:8080", socket: "/run/naru/caddy.sock", self: "127.0.0.1:8080",
+		sites:       func(d string) string { return filepath.Join(d, "sites") },
+		certs:       func(d string) string { return filepath.Join(d, "caddy", "certificates") },
+		store:       func(d string) string { return filepath.Join(d, "caddy") },
+		accessCaddy: func(d string) string { return filepath.Join(d, "caddy", "access.log") },
+		accessNaru:  func(d string) string { return filepath.Join(d, "caddy", "access.log") },
+		container:   kinds.ContainerIPDestination{}, thisServer: "127.0.0.1",
+	},
+}
+
+// resolved는 비워 둔 값을 설치 방식의 기본값으로 채운다.
+func (c Config) resolved() (Config, mode, error) {
+	if c.Install == "" {
+		c.Install = "host"
+	}
+	m, ok := modes[c.Install]
+	if !ok {
+		return c, m, fmt.Errorf("NARU_INSTALL=%q: docker 또는 host / must be docker or host", c.Install)
+	}
+	if c.DataDir == "" {
+		c.DataDir = "./data"
+	}
+	abs, err := filepath.Abs(c.DataDir) // 웹서버는 다른 폴더에서 돈다 — 경로를 절대 경로로
+	if err != nil {
+		return c, m, err
+	}
+	c.DataDir = abs
+	fill := func(v *string, def string) {
+		if *v == "" {
+			*v = def
+		}
+	}
+	fill(&c.Listen, m.listen)
+	fill(&c.CaddySocket, m.socket)
+	fill(&c.SelfUpstream, m.self)
+	fill(&c.CaddySites, m.sites(c.DataDir))
+	fill(&c.CaddyCerts, m.certs(c.DataDir))
+	if c.PublicIP != "" {
+		ip := net.ParseIP(c.PublicIP)
+		if ip == nil {
+			return c, m, fmt.Errorf("NARU_PUBLIC_IP=%q: IP 주소가 아니에요 / not an IP address", c.PublicIP)
+		}
+		c.PublicIP = ip.String()
+	}
+	return c, m, nil
+}
+
+func envPort(key string, fallback int) int {
+	if n, err := strconv.Atoi(os.Getenv(key)); err == nil && n > 0 && n < 65536 {
+		return n
+	}
+	return fallback
+}
+
+func envOr(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+// Outside는 바깥 세계(Docker·git·네트워크·웹서버·/proc)에 닿는 도구다. 테스트는 가짜로 바꿔 끼운다.
+type Outside struct {
+	Builder contract.ImageBuilder
+	Puller  contract.ImagePuller
+	Images  contract.ImageCleaner
+	Starter contract.ContainerStarter
+	Remover contract.ContainerRemover
+	Switch  contract.ContainerSwitch
+	Watcher contract.ContainerWatcher
+	Code    contract.CodeDownloader
+	Ports   contract.PortChecker
+	DNS     contract.DNSChecker
+	Stats   contract.ServerStats
+	Sender  contract.ConfigSender // 관리 소켓 확인(AdminSocketGuard)은 app이 늘 감싼다
+	Certs   contract.CertificateReader
+	Snippet contract.SnippetCompiler // 고급 칸의 Caddyfile을 바꿔 준다 (Caddy 관리 소켓)
+	Alerts  contract.AlertSender     // 알림을 보낸다 (HTTP)
+	AppLogs contract.ContainerLogReader
+	Access  contract.AccessLogReader // 비면 데이터 폴더의 웹서버 접근 로그를 읽는다
+	Usage   contract.UsageReader     // 컨테이너 CPU·메모리 (Docker stats)
+
+	WatchEvery time.Duration // 지켜보는 간격 (0이면 30초)
+	Clock      contract.Clock
+	Random     contract.RandomTokens
+
+	ReadyTimeout time.Duration // 새 컨테이너 응답을 기다리는 시간 (0이면 60초)
+}
+
+// RealOutside는 진짜 Docker·git·DNS·Caddy 소켓이다.
+func RealOutside(cfg Config) Outside {
+	cfg, _, _ = cfg.resolved()
+	d := docker.New(cfg.DockerSocket)
+	containers := docker.NewContainers(d, cfg.Network)
+	return Outside{
+		Builder: docker.NewBuilder(d), Puller: docker.NewPuller(d), Images: docker.NewImages(d),
+		Starter: containers, Remover: containers, Switch: containers, Watcher: containers, AppLogs: containers, Usage: containers,
+		Code: git.Downloader{}, Ports: netcheck.TCP{}, DNS: netcheck.NewDNS(nil),
+		Stats:   stats.NewProcSampler(cfg.ProcDir, cfg.DataDir),
+		Sender:  caddy.NewSocketSender(cfg.CaddySocket),
+		Certs:   caddy.NewCertificateFiles(cfg.CaddyCerts),
+		Snippet: caddy.NewAdaptCompiler(cfg.CaddySocket),
+		Alerts:  httppost.AlertPoster{},
+		Clock:   system.Clock{}, Random: system.Random{},
+	}
+}
+
+// App은 조립된 Naru다.
+type App struct {
+	cfg Config
+	log *slog.Logger
+	db  *store.DB
+	out Outside
+
+	mode   mode
+	ctx    context.Context // 배포가 따르는 수명 — Close하면 끝난다
+	stop   context.CancelFunc
+	wait   func() // 진행 중인 배포를 기다린다
+	syncWS func(context.Context)
+	alerts func(context.Context) // 알림 보내는 일꾼
+	watch  func(context.Context) // 지켜보는 고리
+	work   files.TempFolders
+	past   contract.DeployHistoryStore
+
+	Accounts contract.AccountManager // 셸 명령(cli)이 쓴다
+	key      contract.SetupKey
+	handler  http.Handler
+}
+
+// Open은 데이터를 열고, v1 데이터를 옮기고, 객체들을 잇는다. 화면은 아직 띄우지 않는다 (복구 명령도 이걸 쓴다).
+func Open(cfg Config, log *slog.Logger) (*App, error) { return OpenWith(cfg, log, RealOutside(cfg)) }
+
+// OpenWith는 바깥 도구를 골라 조립한다 (테스트용).
+func OpenWith(cfg Config, log *slog.Logger, out Outside) (*App, error) {
+	cfg, m, err := cfg.resolved()
+	if err != nil {
+		return nil, err
+	}
+	if out.Certs == nil { // 테스트처럼 가짜를 주지 않으면 웹서버 저장소를 읽는다
+		out.Certs = caddy.NewCertificateFiles(cfg.CaddyCerts)
+	}
+	if out.Access == nil {
+		out.Access = caddy.NewAccessLogFile(m.accessNaru(cfg.DataDir))
+	}
+	if out.Alerts == nil {
+		out.Alerts = httppost.AlertPoster{}
+	}
+	if out.Snippet == nil {
+		out.Snippet = caddy.NewAdaptCompiler(cfg.CaddySocket)
+	}
+	if err := os.MkdirAll(cfg.DataDir, 0o700); err != nil {
+		return nil, err
+	}
+	db, err := store.Open(filepath.Join(cfg.DataDir, "naru.db"))
+	if err != nil {
+		return nil, err
+	}
+	a := &App{cfg: cfg, log: log, db: db, out: out, mode: m}
+	a.ctx, a.stop = context.WithCancel(context.Background())
+
+	// v1 데이터를 못 읽어도 v2는 뜬다 — 다음 실행에서 다시 시도한다.
+	if r, err := store.ImportV1(a.ctx, db, cfg.DataDir); err != nil {
+		log.Error("v1 import failed — will retry next start", "err", err)
+	} else if r.Found {
+		log.Info("imported from v1", "accounts", r.Users, "admin_domain", r.AdminDomain,
+			"apps", r.Apps, "external", r.External, "domains", r.Domains, "history", r.History, "not_imported", len(r.Skipped))
+		for _, s := range r.Skipped {
+			log.Warn("v1: not imported", "what", s)
+		}
+	}
+	if err := a.assemble(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	return a, nil
+}
+
+// assemble은 §7 표대로 객체를 잇는다.
+func (a *App) assemble() error {
+	cfg, out, db := a.cfg, a.out, a.db
+	bus := events.NewBus()
+
+	// 저장
+	settingStore := store.NewSettings(db)
+	accounts, sessions := store.NewAccounts(db), store.NewSessions(db)
+	serviceStore, domains, secrets := store.NewServices(db), store.NewDomains(db), store.NewSecrets(db)
+	liveStates, hookLogs, history := store.NewLiveStates(db), store.NewHookLogs(db), store.NewDeployments(db)
+	webStore := store.NewWebSettings(db)
+
+	// B. 서버 설정 — 환경 변수가 이긴다
+	envDomain, err := model.ParseOptionalDomainName(cfg.AdminDomain)
+	if err != nil {
+		return fmt.Errorf("ADMIN_DOMAIN: %w", err)
+	}
+	envEmail, err := model.ParseEmail(cfg.ACMEEmail)
+	if err != nil {
+		return fmt.Errorf("ACME_EMAIL: %w", err)
+	}
+	adminDomain := settings.NewAdminDomainSetting(envDomain, settingStore, bus)
+	certEmail := settings.NewCertEmailSetting(envEmail, settingStore, bus)
+	setup := settings.NewSetupProgress(settingStore, bus)
+
+	// A. 관리자로 들어오기
+	hasher := access.ScryptHasher{}
+	a.key = access.NewRandomSetupKey(accounts, out.Random)
+	login := access.NewLoginManager(accounts, sessions, hasher, access.NewMemoryLoginLimiter(out.Clock), out.Random, out.Clock)
+	a.Accounts = access.NewAccountManager(accounts, accounts, sessions, hasher, a.key, out.Random, out.Clock)
+
+	// D. 종류
+	siteFiles := files.NewSiteFolders(filepath.Join(cfg.DataDir, "sites"))
+	a.work = files.NewTempFolders(filepath.Join(cfg.DataDir, "work"))
+	lookup := kinds.NewLookup(kinds.Tools{
+		Work: a.work, Code: out.Code, Secrets: secrets,
+		Dockerfile: files.DockerfileReader{}, Packer: files.TarPacker{}, Builder: out.Builder, Puller: out.Puller,
+		Images: out.Images, Starter: out.Starter, Remover: out.Remover, Switch: out.Switch, Watcher: out.Watcher,
+		Ports: out.Ports, Files: siteFiles, Network: cfg.Network, SitesShown: cfg.CaddySites, ReadyTimeout: out.ReadyTimeout,
+		ContainerDestination: a.mode.container, ExternalDestination: kinds.ExternalDestination{ThisServer: a.mode.thisServer},
+	})
+
+	// G. 웹서버
+	siteMap := webserver.NewSiteMapBuilder(webserver.Fixed{
+		AdminSocket: cfg.CaddySocket, AdminUpstream: cfg.SelfUpstream, InternalTLS: cfg.InternalTLS, HTTPSPort: cfg.HTTPSPort,
+		Storage: a.mode.store(cfg.DataDir), AccessLog: a.mode.accessCaddy(cfg.DataDir),
+	}, serviceStore, lookup, webserver.Settings{Admin: adminDomain, Email: certEmail, Setup: setup}, out.Certs, out.Clock, webStore, out.Watcher)
+	sync, run := webserver.NewWebServerSync(siteMap, caddy.JSONWriter{}, caddy.NewAdminSocketGuard(out.Sender, cfg.CaddySocket), bus, a.log)
+	a.syncWS = run
+
+	// E. 배포
+	a.past = history
+	lock := deploy.NewMemoryDeployLock()
+	deployer, wait := deploy.NewDeployer(a.ctx, a.log, deploy.Parts{
+		Lock: lock, History: history, Past: history, Logs: deploy.NewDeployLog(history), Services: serviceStore,
+		Live: liveStates, Kinds: lookup, Cleaner: deploy.NewOldVersionCleaner(history, out.Images, siteFiles), Events: bus, Sync: sync,
+	})
+	a.wait = wait
+	control := deploy.NewServiceControl(deploy.ControlParts{
+		Services: serviceStore, Store: serviceStore, Live: liveStates, Lock: lock, Switch: out.Switch, Remover: out.Remover,
+		Watcher: out.Watcher, Images: out.Images, Files: siteFiles, Past: history, Events: bus,
+	})
+
+	// C. 서비스
+	names := services.NewNameChooser(serviceStore)
+	checker := services.NewDomainChecker(domains, adminDomain)
+	editor := services.NewServiceEditor(serviceStore, serviceStore, domains, secrets, names, checker, lookup, out.Random, bus)
+	launcher := services.NewServiceLauncher(editor, lookup, deployer)
+
+	// F. 웹훅
+	hooks := webhook.NewHookReceiver(serviceStore, secrets,
+		[]contract.SignatureChecker{webhook.GitHubSignature{}, webhook.GitLabToken{}, webhook.QuerySecret{}},
+		webhook.NewBranchFilter(), deployer, hookLogs, out.Clock)
+
+	// I. 웹서버 설정 — 적용하면 바로 맞춰 보고, 거절되면 되돌린다
+	webSettings := websettings.NewWebSettingsEditor(websettings.EditorParts{
+		Services: serviceStore, Store: webStore, Compiler: out.Snippet, Hasher: websettings.BcryptHasher{}, Sync: sync,
+	})
+
+	// J·K. 지켜보기 · 알리기 — 지켜보기가 이벤트를 내고, 알리기가 듣고 보낸다
+	alertSettings, runAlerts := notify.NewAlerts(notify.Parts{
+		Channels: store.NewChannels(db), Deliveries: store.NewDeliveries(db), Sender: out.Alerts,
+		Services: serviceStore, Events: bus, Clock: out.Clock, Log: a.log,
+	})
+	diagnoser := watch.NewDiagnoser(watch.DiagnoserParts{
+		Kinds: lookup, Ports: out.Ports, DNS: out.DNS, Admin: adminDomain, Certs: out.Certs, Clock: out.Clock, PublicIP: cfg.PublicIP,
+	})
+	watcher, runWatch := watch.NewHealthWatcher(watch.Parts{
+		Services: serviceStore, Kinds: lookup, Containers: out.Watcher, Ports: out.Ports, Deployer: deployer,
+		WebServer: sync, Certs: out.Certs, Admin: adminDomain, Diagnoser: diagnoser, Usage: out.Usage, Clock: out.Clock, Events: bus, Every: out.WatchEvery, Log: a.log,
+	})
+	a.alerts, a.watch = runAlerts, runWatch
+
+	// H. 보여주기
+	viewer := views.NewServiceViewer(views.Parts{
+		Services: serviceStore, Secrets: secrets, History: history, Containers: out.Watcher, Kinds: lookup,
+		Admin: adminDomain, Deployer: deployer, Certs: out.Certs, Clock: out.Clock, HTTPSPort: cfg.HTTPSPort, Web: webStore,
+		AppLogs: out.AppLogs, Access: out.Access, Watch: watcher,
+	}, a.log)
+
+	srv, err := web.New(web.Deps{
+		Login: login, Accounts: a.Accounts, SetupKey: a.key, AdminDomain: adminDomain, CertEmail: certEmail, Setup: setup,
+		Launcher: launcher, Editor: editor, Viewer: viewer, Deployer: deployer, Control: control, Hooks: hooks,
+		Stats: out.Stats, WebServer: sync, DNS: out.DNS, Certs: out.Certs, Clock: out.Clock, Log: a.log,
+		WebSettings: webSettings, Nginx: websettings.NginxReader{}, Alerts: alertSettings, DataDir: cfg.DataDir, Version: cfg.Version,
+	})
+	if err != nil {
+		return err
+	}
+	a.handler = srv.Handler()
+	return nil
+}
+
+// Close는 진행 중인 배포를 멈추고 기다린 뒤 DB를 닫는다.
+func (a *App) Close() error {
+	a.stop()
+	a.wait()
+	return a.db.Close()
+}
+
+// Run은 ctx가 끝날 때까지 화면과 웹서버 맞추기를 띄운다.
+func (a *App) Run(ctx context.Context) error {
+	go func() {
+		<-ctx.Done()
+		a.stop()
+	}()
+	// 지난 실행이 남긴 것을 정리한다 — 셸 명령(Open만 하는)은 하지 않는다. 도는 서버의 배포를 건드리면 안 된다.
+	a.work.Clear()
+	if n, err := a.past.CloseInterrupted(ctx, "— Naru가 다시 시작되면서 중단됐어요 / interrupted by a Naru restart —"); err == nil && n > 0 {
+		a.log.Warn("closed deploys interrupted by a restart", "count", n)
+	}
+	if sampler, ok := a.out.Stats.(interface {
+		Run(context.Context, time.Duration)
+	}); ok {
+		go sampler.Run(ctx, 5*time.Second)
+	}
+	go a.syncWS(ctx)
+	go a.alerts(ctx)
+	go a.watch(ctx)
+
+	httpServer := &http.Server{
+		Addr:              a.cfg.Listen,
+		Handler:           a.handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    64 << 10,
+	}
+	errc := make(chan error, 1)
+	go func() { errc <- httpServer.ListenAndServe() }()
+
+	a.log.Info("naru started", "version", a.cfg.Version, "listen", a.cfg.Listen, "data", a.cfg.DataDir, "web_server", a.cfg.CaddySocket)
+	if names, err := a.Accounts.Names(ctx); err == nil && len(names) == 0 {
+		a.printSetupLink()
+	}
+
+	select {
+	case err := <-errc:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		shutdown, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return httpServer.Shutdown(shutdown)
+	}
+}
+
+// printSetupLink는 첫 설정 주소를 로그에 남긴다. 이 주소를 아는 사람만 관리자 계정을 만들 수 있다.
+func (a *App) printSetupLink() {
+	path := "/setup?token=" + a.key.Value()
+	fmt.Fprintf(os.Stderr, "\n  처음 설정 / First-time setup\n  → http://<이 서버 주소 / this server>%s\n\n", path)
+	a.log.Info("waiting for first-time setup", "setup", path)
+}

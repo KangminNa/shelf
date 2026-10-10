@@ -1,0 +1,109 @@
+{
+    "result": {
+        "apps": {
+            "http": {
+                "servers": {
+                    "srv0": {
+                        "listen": [
+                            ":443"
+                        ],
+                        "routes": [
+                            {
+                                "match": [
+                                    {
+                                        "host": [
+                                            "other.invalid"
+                                        ]
+                                    }
+                                ],
+                                "handle": [
+                                    {
+                                        "handler": "subroute",
+                                        "routes": [
+                                            {
+                                                "handle": [
+                                                    {
+                                                        "body": "hi",
+                                                        "handler": "static_response"
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                ],
+                                "terminal": true
+                            },
+                            {
+                                "match": [
+                                    {
+                                        "host": [
+                                            "naru.invalid"
+                                        ]
+                                    }
+                                ],
+                                "handle": [
+                                    {
+                                        "handler": "subroute",
+                                        "routes": [
+                                            {
+                                                "handle": [
+                                                    {
+                                                        "handler": "headers",
+                                                        "response": {
+                                                            "set": {
+                                                                "X-Test": [
+                                                                    "yes"
+                                                                ]
+                                                            }
+                                                        }
+                                                    }
+                                                ]
+                                            },
+                                            {
+                                                "handle": [
+                                                    {
+                                                        "handler": "static_response",
+                                                        "status_code": 200
+                                                    }
+                                                ],
+                                                "match": [
+                                                    {
+                                                        "path": [
+                                                            "/health"
+                                                        ]
+                                                    }
+                                                ]
+                                            }
+                                        ]
+                                    }
+                                ],
+                                "terminal": true
+                            }
+                        ]
+                    }
+                }
+            },
+            "tls": {
+                "automation": {
+                    "policies": [
+                        {
+                            "subjects": [
+                                "other.invalid"
+                            ]
+                        },
+                        {
+                            "subjects": [
+                                "naru.invalid"
+                            ],
+                            "issuers": [
+                                {
+                                    "module": "internal"
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        }
+    }
+}

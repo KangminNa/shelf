@@ -1,69 +1,79 @@
-# Shelf — Project Guide
+# Naru — Project Guide
 
-## Overview
+Naru is a self-hosted web server manager for one server: Caddy as the engine (managed from a screen, never by hand),
+plus push-to-deploy. Written in Go; the admin screen is server-rendered HTML (`html/template`, no JS framework).
 
-Shelf is a self-hosted app platform, shipped as a **single Docker image**. Apps are Docker containers deployed from Git repos (with a Dockerfile) or plain Docker images. The core orchestrates: build, CI/CD webhooks, reverse proxy (80/443), SSL, and an admin UI.
+> Branch `v2` is the Go rewrite. Production still runs v1 (Node) from `main` until M7.
 
-**Before writing code, read these in order** (all Korean):
+## Read first (Korean)
 
 | Doc | Question it answers |
 |---|---|
-| [docs/SPEC.md](docs/SPEC.md) | **What** we provide — every feature has an F-number and a status. Nothing outside this list gets built. |
-| [docs/OBJECTS.md](docs/OBJECTS.md) | **Who** does it — one responsibility sentence per class. Pick the owner before adding code; if none fits, write the sentence first. |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | **What shape** — layers, dependency direction, patterns, review checklist. |
-| [docs/PROCESS.md](docs/PROCESS.md) | **How we work** — the feature loop and what `npm test` enforces automatically. |
-| [docs/HISTORY.md](docs/HISTORY.md) | **Why it looks like this** — three direction changes and the lessons from production. |
+| [docs/design/v2-objects.md](docs/design/v2-objects.md) | **Who does what** — behaviors A–H, one object per job, every interface (§6 is `contract.go` verbatim), who uses what (§7), rules R1–R11 (§10), how to work (§11) |
+| [docs/design/v2.md](docs/design/v2.md) | **What and when** — features, screens, milestones M1–M7, progress log |
+| [docs/design/caddy-engine.md](docs/design/caddy-engine.md) | **Invariants** for driving Caddy (§4) and certificates (§5). The rest is v1-era |
 
-[docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) is the class-level walkthrough.
+## How we work
 
-`core/tests/architecture.test.ts` fails when code drifts from these docs (cross-system imports, raw SQL outside `db/`, undocumented classes, undeclared events). Treat a failure there as a spec violation, not a test to loosen.
+Any change that needs a decision starts with a **design note** (which behavior, new/changed interfaces as Go signatures,
+changed §7 rows, invariants, pattern and why, alternatives not taken) → user approval → tests against the interface
+with fakes → implementation → `archtest` + update `v2-objects.md`. Bug fixes that don't change an interface skip the note.
+
+`internal/archtest` enforces R1–R11 (imports only `model`/`contract`, relations via interfaces, `model` is data only,
+≤5 methods per interface, every `model`/`contract` type named in the design doc, no vague names like
+Handler/Data/Info/Util, SQL only in `store`, outside world only in tool packages, kind branching only in `kinds`,
+no secrets in `web`/`cli`, regexp only in `model`). A failure there is a design violation, not a test to loosen.
 
 ## Structure
 
 ```
-core/
-├── migrations/{scope}/     # NNN_name.sql, applied once in order (never edit applied files)
-└── src/
-    ├── index.ts            # Entry: ShelfApplication.instance.start()
-    ├── config.ts           # Env-based server settings
-    ├── kernel/application.ts  # Singleton — owns systems, routes, lifecycle
-    ├── system/             # Domain features (auth, deploy, proxy, docker.ts)
-    │   └── {name}/         #   index.ts(Facade) · repositories · controller · views
-    ├── db/                 # AppDatabase → Repository<T> → QueryBuilder<T>
-    ├── services/           # EventBus · Logger · Scheduler (classes)
-    ├── middleware/          # error-boundary, request-logger, shell-wrap
-    ├── admin/              # Core admin pages (dashboard/system/guide/settings)
-    └── ui/                 # Design system: shell, components, icons, styles
+cmd/naru/            main — server, or a shell recovery command (users | passwd | reset | version)
+internal/
+├── model/           data and value objects (Parse… validates once) — no behavior beyond keeping values valid
+├── contract/        every interface between objects
+├── access settings services kinds deploy webhook webserver views   ← one package per behavior (§4 A–H)
+├── web/ cli/        entry points: turn requests into interface calls, results into screens
+├── store/           SQLite (the only SQL) incl. v1 import
+├── docker git files caddy netcheck stats events system           ← tools that touch the outside world
+├── app/             composition root — the only place concrete types meet (§7 table as code)
+└── archtest/        R1–R11
+caddy/bootstrap.json Caddy's first config (admin socket only); Naru pushes the full config over the socket
+deploy/docker/       production compose (Docker install) + rehearsal.yml (shadow run on loopback ports)
+deploy/host/         systemd units for the host install
+docs/switch-v1.md    switching the live server from v1 to v2 — follow it command by command
 ```
 
 ## Commands
 
-```bash
-npm run dev                        # tsx watch, http://localhost:9666/admin
-npx tsc --noEmit --project core    # typecheck (run before committing)
-docker compose up -d               # production (docker.sock mount required)
+No local Go needed — `scripts/go.sh` runs Go in Docker.
 
-# dev with non-default ports:
-PORT=9667 PROXY_HTTP_PORT=8087 PROXY_HTTPS_PORT=8447 WEBHOOK_PORT=9100 npx tsx core/src/index.ts
+```bash
+scripts/go.sh vet ./...
+scripts/go.sh test ./...
+scripts/go.sh test ./internal/caddy -update   # rewrite Caddy config goldens after an intended change
+scripts/caddy-validate.sh                     # goldens must pass real `caddy validate`
+docker compose up -d --build                  # local stack: Caddy on 127.0.0.1:8088/8443, Naru on 127.0.0.1:8080
+docker compose logs naru | grep setup         # first-run setup link (token printed only in the log)
 ```
 
-## Hard Rules
+Local stack data lives in `data-v2/` (gitignored). Use a copy of real data, never the production server.
 
-- **Systems never import each other** — communicate via `EventBus` (`{system}:{action}` naming)
-- **No raw SQL outside `db/`** — add methods to the system's `repositories.ts`
-- **HTML only in `views.ts` pure functions** — data in, string out; no DB/network access
-- **Hono only in controllers and kernel**
-- **Secrets never in API responses or logs** — use `sanitize()` / masking (see deploy controller)
-- API responses: `{ ok: true, data }` / `{ ok: false, error: { code, message } }`
-- Runtime deps stay minimal: hono, @hono/node-server, better-sqlite3 (+ acme-client at root)
+## Security rules (do not regress)
 
-## Key Facts
+- Admin = root equivalent (Naru mounts `docker.sock`). Accounts are created only via the setup token printed in the log;
+  recovery only from the server shell (`naru passwd|reset`).
+- Caddy's admin API is a unix socket shared only by Caddy and Naru. Every pushed config must contain that admin block —
+  `caddy.AdminSocketGuard` refuses to send otherwise. Never expose admin on TCP.
+- Redirect HTTP→HTTPS only when a usable certificate exists (`siteMapBuilder`), never via Caddy's automatic redirects;
+  never redirect `/.well-known/acme-challenge/*`.
+- Secrets (git tokens, webhook secrets, env) live in `data/` in plain text: never in Caddy config, logs, screens or API
+  responses. The screen shows only whether a token exists.
+- Expose only 80/443; Naru's own port binds to loopback. Webhooks are verified (GitHub HMAC, GitLab token, `?secret=`), body ≤1MB.
+- Static sites never publish hidden files (except `.well-known`). Validate git URLs/branches/paths/images via `model` values.
+- The Caddy container name must not start with `shelf-` (v1 treats those as apps).
 
-- Auth: session cookie (`shelf_session`), first run → `/setup`; all `/admin` + `/api/{deploy,proxy}` protected; webhook port 9100 uses HMAC instead
-- Lost password: `npm run admin passwd <user> <new>` (or `reset` to reopen `/setup`) — server shell only, no HTTP recovery path
-- Alerts: `AppWatcher` (deploy) emits `monitor:app-down`/`-recovered` on transitions only; `NotifySystem` dispatches to webhook channels. New alert = one line in `system/notify/alerts.ts`
-- Webhooks: `POST https://{ADMIN_DOMAIN}/hooks/{projectId}` (via proxy on 80/443) — `WebhookHandler` decides, two transports (`:9100` server + main app `/hooks`) only adapt
-- App containers: named `shelf-{app}`, built images `shelf-app-{app}`, `--restart unless-stopped`
-- When Shelf itself runs in Docker: proxy reaches apps via `APP_HOST=host.docker.internal`
-- Runtime data lives in `data/` (gitignored) — one dir to back up
-- Tech: Node 20 + TypeScript ESM, Hono, better-sqlite3 (WAL). No React, no ORM.
+## Conventions
+
+- Comments and screen text are Korean first; screens are bilingual (`internal/web/messages.go`, both languages must have every key).
+- No inline `style=` in templates (CSP blocks it) — use classes in `static/naru.css`.
+- Names say what the thing does (interfaces) or how (implementations): `ImagePuller` / `docker.Puller`.

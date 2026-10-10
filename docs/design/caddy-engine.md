@@ -1,7 +1,10 @@
 # 웹서버 엔진을 Caddy로 — 설계
 
 상태: **제안** · 2026-10-03
-읽기 전에: [SPEC](../SPEC.md) · [OBJECTS](../OBJECTS.md) · [Caddy 사용성 분석](caddy-usability.md)
+관련: [Caddy 사용성 분석](caddy-usability.md) · [v2 객체 설계](v2-objects.md)
+
+> v1(Node) 시절에 쓴 설계다. 코드 위치(`core/src/…`)와 단계(P0~P4)는 v1 기준이고, v2 구현은 [객체 설계](v2-objects.md)를 따른다.
+> 이 문서에서 지금도 유효한 것은 **불변식(§4)과 인증서(§5)** 다.
 
 ---
 
@@ -201,10 +204,14 @@ JSON이 아니라 Caddyfile인 이유: Caddy를 아는 사람의 지식과 인�
 
 4. **유효한 인증서가 있을 때만 HTTPS로 넘긴다.** (F-61의 일반화)
    발급이 아직이거나 실패한 도메인을 HTTPS로 넘기면 그 사이트는 열리지 않는다. 관리 도메인이라면 자기 서버에서 잠긴다.
+   → (v2 M4-1) 판단은 `siteMapBuilder` 한 곳 — `CertificateReader`가 읽은 인증서가 지금 그 주소를 덮을 때만 `RedirectHTTP`.
+   설정 쓰기는 지도가 넘기라고 한 주소에만 `:80`에서 `307`을 그리고, 인증서 확인 경로(`/.well-known/acme-challenge/*`)는 넘기지 않는다.
+   인증서 저장소를 읽지 못하면 "없음"으로 본다 — 넘기기가 꺼질 뿐 HTTP로는 열린다.
 
 5. **비밀은 Caddy 설정에 넣지 않는다.**
    설정은 `autosave.json`에 평문으로 남는다. 업로드 인증서는 파일 경로(`load_files`)로, DNS 토큰은 `{env.CF_API_TOKEN}` 같은 환경변수 자리표시자로 넘긴다.
    (덤으로 F-41 "시크릿 평문 저장"이 일부 풀린다.)
+   → (v2 M5) **예외 하나:** 기본 인증(비밀번호 보호)은 Caddy가 직접 검사해야 해서 bcrypt **해시**를 설정에 넣는다. 원문은 어디에도 남지 않고, 화면·로그에는 해시도 나가지 않는다.
 
 6. **Caddy 컨테이너 이름에 `shelf-`를 쓰지 않는다.**
    Shelf는 `shelf-`로 시작하는 컨테이너를 앱으로 본다 (`listContainers('shelf-')`). 이름은 `caddy`.

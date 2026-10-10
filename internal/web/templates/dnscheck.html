@@ -1,0 +1,14 @@
+{{define "dnscheck"}}
+{{if .Matches}}
+  <p class="check ok">✓ {{t "dns.matches" .Expected}}</p>
+{{else if not .Resolves}}
+  <div class="check bad"><b>✗ {{t "dns.noresolve" .Domain}}</b><span>{{t "dns.howto"}}</span></div>
+{{else if .Expected}}
+  <div class="check warn"><b>! {{t "dns.mismatch" .Domain .IPList}}</b><span>{{t "dns.wantip" .Expected}}</span></div>
+{{else}}
+  <div class="check warn"><b>{{t "dns.resolves" .Domain .IPList}}</b><span>{{t "dns.unknownself"}}</span></div>
+{{end}}
+{{end}}
+
+{{define "cert"}}{{if .Ready}}<span class="chip {{if .Soon}}warn{{else}}on{{end}}" title="{{.Issuer}}">{{t "cert.until" (date .Until)}}</span>{{else}}<span class="chip warn">{{t "cert.waiting"}}</span>{{end}}{{end}}
+{{define "certdns"}}{{if .Matches}}{{t "cert.dns.ok"}}{{else if .Resolves}}{{t "cert.dns.points" .IPList}}{{else}}{{t "cert.dns.none"}}{{end}}{{end}}

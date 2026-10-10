@@ -1,0 +1,63 @@
+{{define "root"}}{{template "app" .}}{{end}}
+{{define "title"}}{{t "nav.services"}}{{end}}
+{{define "content"}}
+<div class="hero row">
+  <div>
+    <h1>{{t "home.heading"}}</h1>
+    <p>{{if .Data.Services}}{{t "home.count" (len .Data.Services)}}{{else}}{{t "home.empty.sub"}}{{end}}</p>
+  </div>
+  <a class="btn primary" href="/services/new">+ {{t "home.new"}}</a>
+</div>
+
+{{if .Data.Attention}}
+<section class="attention" aria-labelledby="attention-h">
+  <h2 id="attention-h">{{t "home.attention"}} <span class="count">{{len .Data.Attention}}</span></h2>
+  <ul class="findings">{{range .Data.Attention}}{{template "finding" .}}{{end}}</ul>
+</section>
+{{else if .Data.Checked}}
+<p class="allgood"><span class="dot ok"></span>{{t "home.allgood"}}</p>
+{{end}}
+{{if not .Data.AdminDomain}}
+<div class="notice warn">
+  <span class="notice-icon">!</span>
+  <div class="notice-text"><b>{{t "home.nodomain.title"}}</b><span>{{t "home.nodomain.body"}}</span></div>
+  <a class="btn small" href="/settings#domain">{{t "home.nodomain.action"}}</a>
+</div>
+{{end}}
+
+{{if .Data.Services}}
+<div class="grid">
+  {{range .Data.Services}}
+  <a class="svc" href="/services/{{.ID}}">
+    <div class="svc-top">
+      <span class="avatar {{.Color}}">{{.Initial}}</span>
+      <div class="svc-names"><b>{{.Name}}</b><small>{{t .KindKey}}</small></div>
+      <span class="dot {{.StateClass}}" title="{{t .StateKey}}"></span>
+    </div>
+    <div class="svc-domain">{{if .Domain}}{{.Domain}}{{else}}<span class="muted">{{t "home.noaddress"}}</span>{{end}}</div>
+    <div class="svc-foot"><span class="state {{.StateClass}}">{{t .StateKey}}</span>{{with .Detail}}<span>· {{.}}</span>{{end}}</div>
+    {{with .Usage}}<div class="svc-usage"><span>CPU <b>{{cpu .CPUPercent}}</b></span><span>{{t "home.memory"}} <b>{{bytes .MemUsed}}</b></span></div>{{end}}
+  </a>
+  {{end}}
+</div>
+{{else}}
+<a class="empty" href="/services/new">
+  <b>{{t "home.empty.title"}}</b>
+  <span>{{t "home.empty.body"}}</span>
+</a>
+{{end}}
+
+{{with .Data.Host}}
+<div class="server">
+  <span class="server-title"><span class="dot ok"></span><b>{{t "home.server"}}</b></span>
+  <span>CPU <b>{{if .HasCPU}}{{pct .CPUPercent}}{{else}}—{{end}}</b>{{if .HasCPU}}<progress class="meter" max="100" value="{{printf "%.0f" .CPUPercent}}"></progress>{{end}}</span>
+  <span>{{t "home.memory"}} <b>{{if .HasMem}}{{bytes .MemUsed}}{{else}}—{{end}}</b>{{if .HasMem}} / {{bytes .MemTotal}}<progress class="meter" max="{{.MemTotal}}" value="{{.MemUsed}}"></progress>{{end}}</span>
+  <span>{{t "home.disk"}} <b>{{if .HasDisk}}{{bytes .DiskFree}}{{else}}—{{end}}</b> {{if .HasDisk}}{{t "home.free"}}{{end}}</span>
+  <span class="muted">{{t "home.cores" .Cores}}{{if .HasLoad}} · {{t "home.load" (printf "%.2f" .Load1)}}{{end}}</span>
+</div>
+{{end}}
+<div class="server slim">
+  <span class="server-title"><span class="dot {{if .Data.Engine.Connected}}ok{{else}}bad{{end}}"></span><b>{{t "home.engine"}}</b></span>
+  <span>{{if .Data.Engine.Connected}}{{t "home.engine.ok"}}{{else}}{{t "home.engine.down"}}{{end}}</span>
+</div>
+{{end}}

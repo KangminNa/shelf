@@ -1,0 +1,207 @@
+{{define "root"}}{{template "app" .}}{{end}}
+{{define "title"}}{{.Data.Card.Name}}{{end}}
+{{define "content"}}
+{{$s := .Data.Service}}{{$c := .Data.Card}}{{$id := $s.ID}}
+<a class="back" href="/">← {{t "service.back"}}</a>
+<div class="detail-head">
+  <span class="avatar big {{$c.Color}}">{{$c.Initial}}</span>
+  <div>
+    <h1>{{$s.Name}}</h1>
+    <div class="sub"><span>{{t $c.KindKey}}</span>{{with $c.Domain}}<span>·</span><a class="ext" href="http://{{.}}" target="_blank" rel="noopener">{{.}} ↗</a>{{end}}</div>
+  </div>
+  <div class="head-actions">
+    {{if $.Data.Container}}
+      {{if $s.Live.Stopped}}
+      <form method="post" action="/services/{{$id}}/start"><button class="btn" type="submit">{{t "service.start"}}</button></form>
+      {{else}}
+      <form method="post" action="/services/{{$id}}/stop"><button class="btn" type="submit">{{t "service.stop"}}</button></form>
+      {{end}}
+    {{end}}
+    <a class="btn" href="/services/{{$id}}/logs">{{t "service.logs"}}</a>
+    {{if $.Data.Deployable}}
+    <form method="post" action="/services/{{$id}}/deploy"><button class="btn primary" type="submit">{{t "service.deploy"}}</button></form>
+    {{end}}
+  </div>
+</div>
+
+{{with .Data.Findings}}
+<ul class="findings">{{range .}}{{template "finding" .}}{{end}}</ul>
+{{end}}
+
+{{if .Data.Running}}
+<div class="notice warn"><span class="notice-icon">…</span>
+  <div class="notice-text"><b>{{t "service.deploying"}}</b></div>
+  {{with .Data.Latest}}<a class="btn small" href="/services/{{$id}}/deploys/{{.ID}}">{{t "service.watch"}}</a>{{end}}
+</div>
+{{end}}
+
+<div class="stack narrow">
+<section class="section">
+  <h2>{{t "service.state"}}</h2>
+  <p class="big-state"><span class="dot {{$c.StateClass}}"></span>{{t $c.StateKey}}{{with $c.Detail}} <span class="muted small">{{.}}</span>{{end}}</p>
+  <dl class="facts">
+    <dt>{{t "service.target"}}</dt><dd>{{with .Data.Target}}<code>{{.}}</code>{{else}}—{{end}}</dd>
+    {{if $.Data.Container}}
+    <dt>{{t "service.container"}}</dt><dd><code>{{$s.Live.CurrentContainer}}</code></dd>
+    {{end}}
+    {{with .Data.Usage}}
+    <dt>CPU</dt><dd>{{cpu .CPUPercent}} <span class="muted small">{{t "service.cpu.whole"}}</span></dd>
+    <dt>{{t "home.memory"}}</dt><dd>{{bytes .MemUsed}} <span class="muted small">/ {{bytes .MemLimit}}</span><progress class="meter" max="{{.MemLimit}}" value="{{.MemUsed}}"></progress></dd>
+    {{end}}
+  </dl>
+</section>
+
+{{if $.Data.Deployable}}
+<section class="section" id="deploys">
+  <h2>{{t "service.deploys"}}</h2>
+  {{if .Data.Deploys}}
+  <ul class="rows deploys">
+    {{range .Data.Deploys}}
+    <li>
+      <a class="dep-main" href="/services/{{$id}}/deploys/{{.ID}}">
+        <span class="pill {{.Status}}">{{t (print "deploy.status." .Status)}}</span>
+        <span class="muted small">{{ago .StartedAt}}</span>
+        {{with .ShortCommit}}<code>{{.}}</code>{{end}}
+        <span class="dep-msg">{{.Message}}</span>
+      </a>
+      {{if eq .ID $.Data.LiveID}}<span class="chip on">{{t "service.live"}}</span>
+      {{else if eq (print .Status) "success"}}
+      <form method="post" action="/services/{{$id}}/rollback/{{.ID}}"><button class="btn small quiet" type="submit">{{t "service.rollback"}}</button></form>
+      {{end}}
+    </li>
+    {{end}}
+  </ul>
+  {{else}}<p class="desc">{{t "service.nodeploys"}}</p>{{end}}
+</section>
+
+<section class="section" id="webhook">
+  <h2>{{t "service.webhook"}}</h2>
+  <p class="desc">{{if $s.AutoDeploy}}{{t "service.webhook.desc"}}{{else}}{{t "service.webhook.off"}}{{end}}</p>
+  {{if .Data.WebhookURL}}
+  <dl class="facts">
+    <dt>Payload URL</dt><dd><code>{{.Data.WebhookURL}}</code></dd>
+    <dt>Content type</dt><dd><code>application/json</code></dd>
+    <dt>Secret</dt><dd><details class="reveal"><summary>{{t "service.reveal"}}</summary><code>{{.Data.WebhookSecret}}</code></details></dd>
+    <dt>{{t "service.hook.last"}}</dt><dd>{{if not $s.HookLog.At.IsZero}}{{ago $s.HookLog.At}} · {{$s.HookLog.Result}}{{else}}<span class="muted">{{t "service.hook.never"}}</span>{{end}}</dd>
+  </dl>
+  {{else}}<p class="flash bad">{{t "service.webhook.nodomain"}}</p>{{end}}
+</section>
+{{end}}
+
+<section class="section" id="domains">
+  <h2>{{t "service.addresses"}}</h2>
+  {{if eq .Data.Form "domain"}}{{template "error" .}}{{end}}
+  {{if .Data.Domains}}
+  <ul class="rows">
+    {{range .Data.Domains}}{{$d := .Domain}}
+    <li><a class="ext" href="http://{{$d.Domain}}" target="_blank" rel="noopener">{{$d.Domain}} ↗</a>
+      <span class="spacer"></span>
+      {{if $d.HTTPS}}{{template "cert" .Cert}}{{else}}<span class="chip">{{t "service.httponly"}}</span>{{end}}
+      {{if $d.HSTS}}<span class="chip on">{{t "service.hsts"}}</span>{{end}}
+      <form method="post" action="/services/{{$id}}/domains/{{$d.ID}}/delete"><button class="btn small quiet" type="submit" aria-label="{{t "service.domain.remove"}} {{$d.Domain}}">✕</button></form>
+    </li>
+    {{with .Cert.DNS}}<li class="sub"><small class="muted">{{template "certdns" .}}</small></li>{{end}}
+    {{end}}
+  </ul>
+  {{else}}<p class="desc">{{t "service.noaddress"}}</p>{{end}}
+  <form method="post" action="/services/{{$id}}/domains" class="inline-form">
+    <input class="input mono" name="domain" placeholder="app.example.com" aria-label="{{t "field.domain"}}">
+    <label class="check-label"><input type="checkbox" name="https" value="1" checked> HTTPS</label>
+    <button class="btn" type="submit">{{t "service.domain.add"}}</button>
+  </form>
+</section>
+
+<section class="section" id="web">
+  <h2>{{t "web.heading"}}</h2>
+  <p class="desc">{{t "web.desc"}}</p>
+  {{if eq .Data.Form "web"}}{{template "error" .}}{{with .Data.WebRefused}}<pre class="code why">{{.}}</pre>{{end}}{{end}}
+  {{with .Data.WebWarnings}}<div class="flash warn"><b>{{t "web.warnings"}}</b><ul class="plain">{{range .}}<li><code>{{.}}</code></li>{{end}}</ul></div>{{end}}
+  {{with .Data.NginxSkipped}}<div class="flash warn"><b>{{t "web.nginx.skipped"}}</b><ul class="plain">{{range .}}<li><code>{{.Line}}: {{.Text}}</code> — {{.Why}}</li>{{end}}</ul></div>{{end}}
+  {{$w := .Data.Web}}
+  {{with $w.SentHereBy}}<p class="flash ok">{{t "web.senthere"}} {{range $i, $n := .}}{{if $i}}, {{end}}<b>{{$n}}</b>{{end}}</p>{{end}}
+  <form method="post" action="/services/{{$id}}/web" class="form">
+    <label class="check-label"><input type="checkbox" name="maintenance" value="1" {{if $w.Maintenance}}checked{{end}}> {{t "web.maintenance"}} <small class="nginx">nginx: return 503</small></label>
+    <label class="field"><span>{{t "web.headers"}}</span>
+      <textarea class="input mono" name="headers" rows="3" placeholder="X-Frame-Options: DENY">{{$w.Headers}}</textarea>
+      <small>{{t "web.headers.hint"}} <span class="nginx">nginx: add_header</span></small></label>
+    <label class="field"><span>{{t "web.allow"}}</span>
+      <textarea class="input mono" name="allow" rows="2" placeholder="192.168.0.0/24">{{$w.Allow}}</textarea>
+      <small>{{t "web.allow.hint"}} <span class="nginx">nginx: allow … / deny all</span></small></label>
+    <div class="field"><span>{{t "web.login"}}</span>
+      <div class="pair">
+        <input class="input mono" name="login_user" value="{{$w.LoginUser}}" placeholder="{{t "field.username"}}" autocomplete="off" aria-label="{{t "field.username"}}">
+        <input class="input" type="password" name="login_password" placeholder="{{if $w.HasPassword}}{{t "web.login.kept"}}{{else}}{{t "field.password"}}{{end}}" autocomplete="new-password" aria-label="{{t "field.password"}}">
+      </div>
+      <small>{{t "web.login.hint"}} <span class="nginx">nginx: auth_basic</span></small>
+      {{if $w.HasPassword}}<label class="check-label"><input type="checkbox" name="remove_login" value="1"> {{t "web.login.remove"}}</label>{{end}}</div>
+    <label class="field"><span>{{t "web.paths"}}</span>
+      <textarea class="input mono" name="paths" rows="3" placeholder="/api api 떼기&#10;/nas 192.168.0.20:5000">{{$w.Paths}}</textarea>
+      <small>{{t "web.paths.hint"}} <span class="nginx">nginx: location /api { proxy_pass … }</span></small></label>
+    <details class="more"{{if $w.Advanced}} open{{end}}><summary>{{t "web.advanced"}}</summary><div class="form">
+      <label class="field"><span>{{t "web.advanced"}}</span>
+        <textarea class="input mono" name="advanced" rows="6" placeholder="respond /health 200&#10;redir /old /new 301">{{$w.Advanced}}</textarea>
+        <small>{{t "web.advanced.hint"}}</small></label>
+    </div></details>
+    <div><button class="btn primary" type="submit">{{t "web.apply"}}</button></div>
+  </form>
+  <details class="more"><summary>{{t "web.nginx"}}</summary>
+    <form method="post" action="/services/{{$id}}/web/nginx" class="form">
+      <label class="field"><span>{{t "web.nginx"}}</span>
+        <textarea class="input mono" name="nginx" rows="8" placeholder="server {&#10;    add_header X-Frame-Options DENY;&#10;    location /api/ { proxy_pass http://api:8080/; }&#10;}"></textarea>
+        <small>{{t "web.nginx.hint"}}</small></label>
+      <div><button class="btn" type="submit">{{t "web.nginx.read"}}</button></div>
+    </form>
+  </details>
+</section>
+
+<section class="section" id="settings">
+  <h2>{{t "service.settings"}}</h2>
+  {{if eq .Data.Form "settings"}}{{template "error" .}}{{end}}
+  {{$f := .Data.Settings}}
+  <form method="post" action="/services/{{$id}}/settings" class="form">
+    {{if eq (print $s.Kind) "repo" "static"}}
+    <label class="field"><span>{{t "field.repo"}}</span><input class="input mono" name="source" value="{{$f.Source}}" required></label>
+    <label class="field"><span>{{t "service.branch"}}</span><input class="input mono" name="branch" value="{{$f.Branch}}" placeholder="main"></label>
+    <label class="field"><span>{{t "field.token"}}</span>
+      <input class="input mono" type="password" name="token" autocomplete="off" placeholder="{{if .Data.HasToken}}{{t "service.token.kept"}}{{else}}github_pat_…{{end}}">
+      {{if .Data.HasToken}}<label class="check-label"><input type="checkbox" name="clear_token" value="1"> {{t "service.token.clear"}}</label>{{end}}</label>
+    {{end}}
+    {{if eq (print $s.Kind) "repo"}}
+    <label class="field"><span>{{t "service.buildpath"}}</span><input class="input mono" name="build_path" value="{{$f.BuildPath}}"></label>
+    {{end}}
+    {{if eq (print $s.Kind) "image"}}
+    <label class="field"><span>{{t "field.image"}}</span><input class="input mono" name="source" value="{{$f.Source}}" required></label>
+    {{end}}
+    {{if eq (print $s.Kind) "static"}}
+    <label class="field"><span>{{t "field.folder"}}</span><input class="input mono" name="folder" value="{{$f.Folder}}"></label>
+    {{end}}
+    {{if eq (print $s.Kind) "external"}}
+    <label class="field"><span>{{t "field.upstream"}}</span><input class="input mono" name="upstream" value="{{$f.Upstream}}" required></label>
+    {{end}}
+    {{if $.Data.Container}}
+    <label class="field"><span>{{t "service.port"}}</span><input class="input mono" name="port" value="{{if $f.Port}}{{$f.Port}}{{end}}" inputmode="numeric">
+      <small>{{t "service.port.hint"}}</small></label>
+    <details class="more"><summary>{{t "field.env"}} · {{t "field.volumes"}}</summary><div class="form">
+      <label class="field"><span>{{t "field.env"}}</span><textarea class="input mono" name="env" rows="4">{{$f.Env}}</textarea></label>
+      <label class="field"><span>{{t "field.volumes"}}</span><textarea class="input mono" name="volumes" rows="2">{{$f.Volumes}}</textarea></label>
+    </div></details>
+    {{end}}
+    {{if $.Data.Deployable}}
+    <label class="check-label"><input type="checkbox" name="auto_deploy" value="1" {{if $f.AutoDeploy}}checked{{end}}> {{t "service.autodeploy"}}</label>
+    {{end}}
+    <div><button class="btn primary" type="submit">{{t "common.save"}}</button></div>
+  </form>
+</section>
+
+<section class="section danger" id="delete">
+  <h2>{{t "service.delete"}}</h2>
+  <p class="desc">{{t "service.delete.desc"}}</p>
+  {{if eq .Data.Form "delete"}}{{template "error" .}}{{end}}
+  <form method="post" action="/services/{{$id}}/delete" class="inline-form">
+    <input class="input mono" name="confirm" placeholder="{{$s.Name}}" aria-label="{{t "service.delete.confirm" $s.Name}}" autocomplete="off">
+    <button class="btn danger" type="submit">{{t "service.delete.button"}}</button>
+  </form>
+  <small class="muted">{{t "service.delete.confirm" $s.Name}}</small>
+</section>
+</div>
+{{end}}

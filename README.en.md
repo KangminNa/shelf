@@ -14,7 +14,7 @@ App deployment sits on top of that. The proxy has to know about your containers 
 
 I used Nginx Proxy Manager a lot. Two things were missing.
 
-- **I wanted it for Caddy.** Caddy gives you automatic HTTPS and HTTP/3 by default, but you drive it from the CLI and config files. I wanted to drive it from a screen, the way NPM does. (v2, which moves the engine to Caddy, is in progress.)
+- **I wanted it for Caddy.** Caddy gives you automatic HTTPS and HTTP/3 by default, but you drive it from the CLI and config files. I wanted to drive it from a screen, the way NPM does.
 - **I needed CI/CD too.** NPM only points domains. Naru also builds, deploys and wires up the domain when you push.
 
 ## Name: Shelf → Naru
@@ -26,154 +26,132 @@ This project used to be called Shelf. Why it changed:
 - **It is being rebuilt.** The name changes along with v2, which moves the web server engine to Caddy.
 
 *Naru* (나루) is Korean for a ferry landing — where requests arrive and cross to each service, and new versions dock.
-Names inside the code (repository URL, `shelf-*` containers) change in v2.
+New containers are named `naru-*`. Containers carried over from v1 (`shelf-*`) and their webhook URLs are kept as they are.
+
+> **This branch (`v2`) is the Go rewrite, in progress.** The v1 (Node) running in production lives on [`main`](https://github.com/KangminNa/shelf/tree/main).
+> Progress: [v2 plan](docs/design/v2.md) §9 (Korean).
 
 ---
 
-## The proxy
+## What works now
 
-![Proxy hosts](docs/screenshots/proxy.png)
+**Web server — Caddy is the engine, you only see the screen**
 
-Type a domain, choose where it goes. That's the whole interaction.
+- Write a domain and it routes to the service, by container name — no host ports to open.
+- **Automatic HTTPS** — Caddy gets and renews the certificate as soon as a domain appears. HTTP is redirected to HTTPS (307) **only once the certificate exists**,
+  so a missing or expired certificate never locks you out of your own admin screen. Each address shows "HTTPS · until …", or where its DNS points while it waits.
+- HSTS per address. Unknown hosts get 404. Naru draws the whole Caddy config and pushes it over Caddy's admin unix socket — there is no config file to edit by hand.
 
-- **Routed by container name** — apps and the proxy share a Docker network, so traffic goes straight to `shelf-blog:80`.
-  No host ports to publish, no port numbers to remember.
-- **Let's Encrypt** — HTTP-01 or Cloudflare DNS-01, wildcards included, renewal checked daily.
-- **HTTPS enforced on arrival** — once a domain has a certificate, port 80 redirects and HSTS turns on.
-  Remove the certificate and it reverts, so you can't lock yourself out of your own server.
-- **WebSockets pass through** — after the upgrade, bytes are piped without interpretation.
-- **Access logs** — status and duration per domain, kept 14 days by default, pruned automatically.
-- **Only 80 and 443 face the world** — the admin UI sits behind the proxy too.
+**Web server settings per service** — response headers, allowed IPs, password protection (basic auth), maintenance mode, path routing (`/api` to another service), and Caddyfile directives in an advanced box.
+Paste an nginx config and it is carried over into the fields. Applying checks with the web server right away and rolls back if it refuses. Compression is always on.
 
-![SSL certificates](docs/screenshots/ssl.png)
+**Services — four kinds**
 
----
+| Kind | What |
+|---|---|
+| Repository | Built from the repo's `Dockerfile`, run as a container. Monorepos via a build path. The port comes from `EXPOSE` |
+| Image | Pulled from Docker Hub / GHCR, run as a container |
+| Static site | A folder of the repo, served by the web server directly — no container. Hidden files (`.env`, `.github` …) are never published |
+| External | Something already running (NAS, router, a program on the host) — just an address. `localhost` means this server |
 
-## Deploying apps
+**Deploys**
 
-![App detail](docs/screenshots/appdetail.png)
+- **Push to deploy** — a webhook URL and secret per service. GitHub HMAC · GitLab token · `?secret=` for registries. Only the registered branch.
+- **No dropped requests** — the new container joins under the same name and the old one is retired only after the new one answers. If the new one dies, the old one keeps serving.
+  (Measured locally: 3,657 of 3,657 requests answered 200 during a redeploy.)
+- Pushes during a deploy collapse into one more deploy. Steps and the full log update live on screen.
+- **Roll back** — with the image or files of that deploy, no rebuild. Keeps 3 built images and 5 static releases.
 
-There is one contract: **a `Dockerfile` at the repo root, and a container that serves HTTP on a single port.**
-Language, framework and database are entirely the app's business.
+**Setup and admin**
 
-- **Git or image** — clone and `docker build`, or pull a published image from Docker Hub or GHCR.
-- **Monorepos** — set a build path like `site` or `apps/web` and Naru builds from that folder. Paths that leave the repository are refused.
-- **Push to deploy** — Naru generates the webhook URL and secret; paste them into GitHub. Payloads are HMAC-verified.
-- **History and rollback** — every commit, timestamp, result and full build log is kept; rebuild from an earlier commit.
-- **Domains register themselves** — give an app a domain and the proxy entry appears with it, and disappears when the app is deleted.
+- No `.env`: a first-run wizard — account → admin address (with a DNS check) → HTTPS contact. The wizard link is printed only in the server log.
+- Korean and English screens. Server CPU / memory / disk. v1 data (accounts, apps, proxy hosts, deploy history) is imported on first start, keeping IDs so webhook URLs survive.
 
----
-
-## Watching and alerts
-
-![Notifications](docs/screenshots/notify.png)
-
-- **Host and app metrics** — CPU, load, memory, free disk, plus per-app CPU and memory. Sampled in the background, so pages never wait on Docker.
-- **Alerts on change, not on a timer** — one when an app goes down, one when it comes back. An app you stopped on purpose is never an incident.
-- **Delivered by webhook** — JSON over POST; a Discord or Slack incoming webhook URL works as is.
-  Add a secret and the body is signed with HMAC-SHA256 in `x-shelf-signature-256`. Every delivery is recorded.
-
-![Dashboard](docs/screenshots/dashboard.png)
+**Not yet** — monitoring, alerts, diagnostics and the logs tab (M6), production switch-over (M7).
 
 ---
 
-## Install
+## Ways to install
 
-Two commands on any Linux box with Docker.
+The same binary installs two ways, with the same features:
+
+- **Docker** (`docker compose up`) — the simplest. The web server and app containers share a Docker network.
+- **Host** (systemd) — the web server reaches programs on the server at `localhost`, and app containers by IP on any network. Linux servers. [Host install](docs/install-host.md) (Korean)
+
+## Try it locally
+
+Only Docker is needed (no Go install).
 
 ```bash
-git clone https://github.com/KangminNa/shelf && cd shelf
+git clone -b v2 https://github.com/KangminNa/shelf && cd shelf
 docker compose up -d --build
+docker compose logs naru | grep setup      # first-run link — only someone who can read the log can create the admin
 ```
 
-The admin UI asks you to create an account on first visit. Put a domain in `.env` and it is routed at boot:
+The local setup opens the web server on `127.0.0.1:8088` (HTTP) and `8443` (HTTPS) with certificates from Caddy's internal CA.
+Browsers send `*.localhost` to your own machine — e.g. set the admin address to `naru.localhost` and open `http://naru.localhost:8088`.
+
+Optional environment variables (otherwise set on screen): `ADMIN_DOMAIN`, `ACME_EMAIL`. When set, they win over the screen.
+
+Forgot the password? From the server shell:
 
 ```bash
-ADMIN_DOMAIN=shelf.example.com
-ACME_EMAIL=you@example.com
+docker compose exec naru naru users
+docker compose exec naru naru passwd admin 'new-password'   # signs out every session of that account
+docker compose exec naru naru reset                        # removes all accounts → setup reopens on restart
 ```
 
-For development:
+---
+
+## Your first service
+
+1. **Services → New service** — pick a kind, enter a repository or image and a domain. Name and port can stay empty.
+2. The first deploy starts right away and its steps are drawn on screen.
+3. Paste the service's **webhook** URL and secret into GitHub → Settings → Webhooks; every push deploys from then on.
+
+The [landing page](https://github.com/KangminNa/shelf-site) is deployed this way — as a static site, served without a container.
+
+---
+
+## Make it yours
+
+MIT. Fork it, change it, take only the parts you need. What keeps it easy to change:
+
+- **One object per job, related only through interfaces** — packages import only `model` (data) and `contract` (interfaces). Concrete types meet in one place, `app`.
+- **The outside world sits behind tools** — Docker, git, Caddy, SQLite and files each live in a tool package, so tests swap in fakes and still exercise the real wiring through the screen.
+- **The docs are enforced** — `internal/archtest` checks rules R1–R11 of the [object design](docs/design/v2-objects.md). A type missing from the design fails the tests.
+- **Two dependencies** — `modernc.org/sqlite` (pure-Go SQLite) and `golang.org/x/crypto` (scrypt). HTML is rendered on the server; no JavaScript framework.
+
+```
+cmd/naru/            server · shell recovery commands
+internal/
+├── model/ contract/ data · every interface
+├── access settings services kinds deploy webhook webserver views   one package per job
+├── web/ cli/        entry points
+├── store/           SQLite (the only SQL)
+├── docker git files caddy netcheck stats events system           tools that touch the outside
+├── app/             composition root
+└── archtest/        rule checks
+```
 
 ```bash
-npm install
-npm run dev          # http://localhost:9666/admin
-npm test             # 99 tests
-```
-
-Forgot the password? From a shell on the server:
-
-```bash
-docker compose exec shelf npm run admin passwd admin 'new-password'
-docker compose exec shelf npm run admin reset     # wipe accounts, reopen /setup
+scripts/go.sh test ./...        # Go runs in Docker
+scripts/caddy-validate.sh       # the drawn Caddy configs must pass real Caddy
 ```
 
 ---
 
-## Your first app
+## Running it
 
-1. **Apps → New app** — a Git URL (the repo needs a `Dockerfile`) or a Docker image name, the container port, optionally a domain.
-2. **Deploy** — clone → build → run (`shelf-{name}`, `--restart unless-stopped`).
-3. **Webhook** — copy the Payload URL and Secret from the app page into GitHub → Settings → Webhooks. Every push redeploys.
-4. **SSL** — issue a certificate for the domain from Proxy → SSL and it switches to https.
-
-A minimal example lives in [`examples/hello-app/`](examples/hello-app/).
-
----
-
-## Landing page
-
-[kangminna.github.io/shelf-site](https://kangminna.github.io/shelf-site/) — the source lives in [KangminNa/shelf-site](https://github.com/KangminNa/shelf-site).
-
-It is shaped like any other Naru app: a `Dockerfile` at the root and a container serving HTTP on port `4023`.
-So the landing page is itself deployed by Naru — paste the repository URL into **Apps → New app** and press Deploy.
-
----
-
-## Change it however you like
-
-It's MIT. Fork it, rewrite it, lift the parts you need, turn it into an internal tool.
-The project is built on the assumption that you will adjust it to your own server.
-
-Things kept deliberately simple so that stays easy:
-
-- **Four runtime dependencies** — `hono`, `@hono/node-server`, `better-sqlite3`, `acme-client`. No build step, no frontend framework.
-- **HTML is rendered on the server** — no React, no bundler. A screen is one class in `views.ts`, and all browser behaviour lives in `ui/runtime.ts`.
-- **Raw SQL only in `db/`** — domain code uses `Repository<T>`.
-- **Systems never import each other** — auth, deploy, proxy and notify talk over an EventBus.
-- **The docs are enforced** — [OBJECTS.md](docs/OBJECTS.md) holds one responsibility sentence per class, and `npm test` fails when a class exists without one.
-
-Reading order: [SPEC](docs/SPEC.md) what it provides · [OBJECTS](docs/OBJECTS.md) who does what ·
-[ARCHITECTURE](docs/ARCHITECTURE.md) the shape · [PROCESS](docs/PROCESS.md) how features get built ·
-[HISTORY](docs/HISTORY.md) why it looks like this · [DEVELOPMENT](docs/DEVELOPMENT.md) a class-level walkthrough.
-(The docs are in Korean.)
-
-```
-core/src/
-├── kernel/          ShelfApplication — boot & routing · Controller — response contract
-├── system/
-│   ├── proxy/       proxy server (SNI/ACME), certificate issuers, controller
-│   ├── deploy/      app repositories, build pipeline, containers, webhooks, watcher
-│   ├── notify/      alert channels and delivery history
-│   └── auth/        sessions and accounts
-├── db/              AppDatabase → Repository<T> → QueryBuilder<T>
-├── services/        EventBus · Logger · Scheduler · HostMetrics
-├── ui/              element builder · pages · client runtime
-└── admin/           dashboard, system and settings pages
-```
-
----
-
-## Running it in the open
-
-- Naru mounts `/var/run/docker.sock`, which is full control of the host's Docker daemon — so the **admin account is
-  root-equivalent by design**. Run it on machines you own, and hand out admin credentials only to people you'd trust with the server.
-- Deploying an app runs someone else's code on your machine. Only deploy repositories you trust.
-- Secrets (git tokens, webhook secrets, DNS tokens) are stored under `data/`. Protect that directory — permissions, disk encryption, careful backups.
-- Recommended deployment: expose **only 80/443**. Set `ADMIN_DOMAIN` so the admin UI is served through the proxy over SSL;
-  compose already binds the admin UI (81) and webhooks (9100) to 127.0.0.1 so they never leave the proxy.
-- What's built in: scrypt session auth, login lockout after 5 failures for 15 minutes, Secure/httpOnly/SameSite cookies,
-  HMAC-verified webhooks with body size limits, no CORS, validation on git and image references, secrets stripped from API responses and masked in logs.
+- Naru mounts `/var/run/docker.sock`, which means full control of the host's Docker — so **an admin account is root-equivalent by design**.
+  Use it on your own server and only give accounts to people you'd trust with the server.
+- Deploying a service runs someone's code on your server. Only deploy repositories you trust.
+- Secrets (git tokens, webhook secrets, environment variables) are stored in the data folder. Protect it — permissions, disk encryption, backups.
+  They never go to the screen, the logs or the web server config.
+- **Expose only 80/443.** The admin screen sits behind the web server too, and Naru's own port binds to 127.0.0.1.
+  Caddy's admin API is opened only on a unix socket shared by Caddy and Naru.
+- Built-in defenses: scrypt passwords, 15-minute lockout after 5 failed sign-ins, Secure/httpOnly/SameSite cookies, cross-site form refusal, CSP,
+  verified webhooks with a body limit, validation of git URLs, branches, paths and image names.
 
 ---
 

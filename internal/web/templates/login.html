@@ -1,0 +1,15 @@
+{{define "root"}}{{template "card" .}}{{end}}
+{{define "title"}}{{t "login.title"}}{{end}}
+{{define "content"}}
+<h1>{{t "login.heading"}}</h1>
+{{template "error" .}}
+<form method="post" action="/login" class="form">
+  <label class="field"><span>{{t "field.username"}}</span>
+    <input class="input" name="username" value="{{.Data.Username}}" autocomplete="username" required autofocus></label>
+  <label class="field"><span>{{t "field.password"}}</span>
+    <input class="input" type="password" name="password" autocomplete="current-password" required></label>
+  <button class="btn primary wide" type="submit">{{t "login.submit"}}</button>
+</form>
+<p class="muted small">{{t "login.forgot"}}</p>
+<pre class="code">docker compose exec naru naru passwd &lt;{{t "field.username"}}&gt; &lt;{{t "field.password"}}&gt;</pre>
+{{end}}

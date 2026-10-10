@@ -1,0 +1,29 @@
+{{define "root"}}{{template "card" .}}{{end}}
+{{define "title"}}{{t "setup.title"}}{{end}}
+{{define "content"}}
+{{template "steps" .}}
+<h1>{{t "setup.domain.heading"}}</h1>
+<p class="lede">{{t "setup.domain.body"}}</p>
+{{template "error" .}}
+{{with .Data.Fixed}}
+  <p class="flash ok">{{t "setup.domain.fixed" .}}</p>
+  <form method="post" action="/setup/domain" class="form"><input type="hidden" name="action" value="skip">
+    <button class="btn primary wide" type="submit">{{t "common.next"}}</button></form>
+{{else}}
+<form method="post" action="/setup/domain" class="form">
+  <label class="field"><span>{{t "field.domain"}}</span>
+    <input class="input mono" name="domain" value="{{.Data.Domain}}" placeholder="naru.example.com" autocomplete="off" autofocus>
+    <small>{{t "setup.domain.hint"}}</small></label>
+  {{with .Data.Check}}{{template "dnscheck" .}}{{end}}
+  <div class="row-actions">
+    <a class="btn quiet later" href="/setup/https">{{t "setup.domain.skip"}}</a>
+    {{if and .Data.Check (not .Data.Check.Matches)}}
+      <button class="btn" type="submit" name="action" value="check">{{t "setup.domain.recheck"}}</button>
+      <button class="btn primary" type="submit" name="action" value="save">{{t "setup.domain.saveanyway"}}</button>
+    {{else}}
+      <button class="btn primary" type="submit" name="action" value="check">{{t "common.next"}}</button>
+    {{end}}
+  </div>
+</form>
+{{end}}
+{{end}}

@@ -14,7 +14,7 @@
 
 Nginx Proxy Manager를 자주 썼습니다. 두 가지가 아쉬웠습니다.
 
-- **Caddy판이 필요했습니다.** Caddy는 HTTPS 자동 발급·갱신과 HTTP/3가 기본인데, CLI와 설정 파일로만 다룹니다. 그걸 NPM처럼 화면에서 다루고 싶었습니다. (엔진을 Caddy로 바꾸는 v2 진행 중)
+- **Caddy판이 필요했습니다.** Caddy는 HTTPS 자동 발급·갱신과 HTTP/3가 기본인데, CLI와 설정 파일로만 다룹니다. 그걸 NPM처럼 화면에서 다루고 싶었습니다.
 - **CI/CD도 해야 했습니다.** NPM은 도메인만 붙여줍니다. Naru는 push하면 빌드·배포·도메인 연결까지 합니다.
 
 ## 이름: Shelf → Naru
@@ -26,138 +26,117 @@ Nginx Proxy Manager를 자주 썼습니다. 두 가지가 아쉬웠습니다.
 - **다시 만들고 있습니다.** 웹서버 엔진을 Caddy로 바꾸는 v2와 함께 이름도 새로 잡았습니다.
 
 나루는 나루터입니다 — 요청이 도착해 각 서비스로 건너가고, 새 버전이 들어와 정박하는 곳.
-저장소 주소, 컨테이너 이름(`shelf-*`) 같은 코드 속 이름은 v2에서 바뀝니다.
+새로 만드는 컨테이너는 `naru-*`입니다. v1에서 넘어온 컨테이너(`shelf-*`)와 웹훅 주소는 그대로 넘겨받습니다.
+
+> **지금 이 브랜치(`v2`)는 Go로 다시 만드는 중입니다.** 운영 중인 v1(Node)은 [`main`](https://github.com/KangminNa/shelf/tree/main)에 있습니다.
+> 진행 상황은 [v2 계획](docs/design/v2.md) §9.
 
 ---
 
-## 프록시
+## 지금 되는 것
 
-![프록시 호스트 목록](docs/screenshots/proxy.png)
+**웹서버 — Caddy가 엔진, 사용자는 화면만**
 
-도메인을 적고 어디로 보낼지 고르면 끝입니다.
+- 도메인을 적으면 그 서비스로 보냅니다. 서비스는 컨테이너 이름으로 바로 연결됩니다 — 호스트 포트를 열 필요가 없습니다.
+- **HTTPS 자동** — 도메인이 생기는 순간 Caddy가 인증서를 받고 갱신합니다. **인증서가 생기면 그때부터** HTTP를 HTTPS로 넘깁니다(307).
+  인증서가 없거나 끝나면 넘기지 않으므로 관리 화면이 자기 서버에서 잠기지 않습니다. 주소 옆에 "HTTPS · 언제까지"가, 아직이면 DNS가 어디를 가리키는지가 보입니다.
+- HSTS는 주소마다. 모르는 주소는 404. Caddy 설정은 Naru가 통째로 그려서 관리 소켓(유닉스 소켓)으로 밀어 넣습니다 — 손으로 고칠 설정 파일이 없습니다.
 
-- **컨테이너 이름으로 직접 연결** — 앱과 프록시가 같은 Docker 네트워크에 있어서 `shelf-blog:80`처럼 바로 갑니다.
-  호스트 포트를 열 필요도, 포트 번호를 외울 필요도 없습니다.
-- **Let's Encrypt** — HTTP-01 또는 Cloudflare DNS-01. 와일드카드도 되고 갱신은 매일 확인합니다.
-- **인증서가 생기면 HTTPS 강제** — 80은 301로 넘기고 HSTS를 켭니다. 인증서를 지우면 되돌아가므로 자기 서버에서 잠기지 않습니다.
-- **WebSocket 그대로 통과** — 업그레이드 이후로는 바이트를 해석하지 않고 흘립니다.
-- **접근 로그** — 도메인별 상태코드·응답시간. 기본 14일 보관 후 자동 정리.
-- **외부에 여는 포트는 80·443뿐** — 관리 화면도 프록시 뒤에 있습니다.
+**서비스마다 웹서버 설정** — 응답 헤더, 허용 IP, 비밀번호 보호(기본 인증), 점검 중, 경로별 연결(`/api`를 다른 서비스로), 고급 칸에 Caddyfile 지시어.
+nginx 설정을 붙여 넣으면 칸으로 옮겨 줍니다. 적용하면 바로 웹서버에 맞춰 보고, 웹서버가 거절하면 이전 설정으로 되돌립니다. 압축은 늘 켜져 있습니다.
 
-![SSL 인증서](docs/screenshots/ssl.png)
+**서비스 — 네 가지**
 
----
+| 종류 | 무엇 |
+|---|---|
+| 저장소 | Git 저장소의 `Dockerfile`로 빌드해 컨테이너로. 모노레포는 빌드 경로로. 포트는 `EXPOSE`에서 찾습니다 |
+| 이미지 | Docker Hub·GHCR 이미지를 받아 컨테이너로 |
+| 정적 사이트 | 저장소의 폴더를 컨테이너 없이 웹서버가 직접 서빙. 숨김 파일(`.env`, `.github`…)은 공개하지 않습니다 |
+| 외부 연결 | 이미 떠 있는 것(NAS, 공유기, 호스트의 프로그램)에 주소만. `localhost`는 이 서버를 뜻합니다 |
 
-## 앱 배포
+**배포**
 
-![앱 상세](docs/screenshots/appdetail.png)
+- **push하면 배포** — 서비스마다 웹훅 주소와 시크릿. GitHub HMAC · GitLab 토큰 · `?secret=`(레지스트리). 등록한 브랜치만.
+- **끊김 없이** — 새 컨테이너를 같은 이름으로 띄우고, 응답하면 그때 옛 것을 내립니다. 새 것이 죽으면 옛 것을 그대로 둡니다.
+  (로컬 측정: 다시 배포하는 동안 보낸 요청 3,657개 모두 200)
+- 배포 중에 온 push는 끝난 뒤 한 번으로 합칩니다. 배포 단계와 전체 기록을 화면에서 실시간으로 봅니다.
+- **되돌리기** — 빌드 없이 그때의 이미지·파일로. 빌드 이미지 3개, 정적 배포본 5개를 남깁니다.
 
-앱의 계약은 하나입니다 — **저장소 루트에 `Dockerfile`이 있고, 컨테이너가 포트 하나로 HTTP를 서빙하면 됩니다.**
-언어도 프레임워크도 DB도 앱이 알아서 하면 됩니다.
+**처음 설정 · 관리**
 
-- **Git이든 이미지든** — 저장소를 clone해 `docker build`하거나, Docker Hub·GHCR 이미지를 그대로 pull합니다.
-- **모노레포** — 빌드 경로에 `site`나 `apps/web`을 적으면 그 폴더에서 빌드합니다. 저장소 밖으로 나가는 경로는 거부합니다.
-- **push하면 배포** — 웹훅 주소와 시크릿을 발급해주니 GitHub 설정에 붙여넣기만 하면 됩니다. HMAC으로 검증합니다.
-- **배포 이력과 롤백** — 커밋·시각·결과·전체 빌드 로그가 남고, 예전 커밋으로 다시 빌드합니다.
-- **도메인 자동 등록** — 앱에 도메인을 적으면 프록시 항목이 함께 생기고, 앱을 지우면 함께 사라집니다.
+- `.env` 없이 첫 실행 마법사: 계정 → 관리 화면 주소(DNS 확인) → HTTPS 연락처. 마법사 주소는 서버 로그에만 찍힙니다.
+- 한국어·영어 화면. 서버 CPU·메모리·디스크. v1 데이터(계정·앱·프록시 호스트·배포 이력)는 처음 켤 때 옮겨 옵니다 — 웹훅 주소가 바뀌지 않게 번호를 지킵니다.
 
----
-
-## 감시와 알림
-
-![알림](docs/screenshots/notify.png)
-
-- **호스트와 앱의 지표** — CPU·로드·메모리·디스크 여유와 앱별 CPU·메모리. 백그라운드에서 표본을 뜨므로 화면이 기다리지 않습니다.
-- **상태가 바뀔 때만 알림** — 앱이 죽으면 한 번, 돌아오면 한 번. 직접 Stop한 앱은 장애로 보지 않습니다.
-- **웹훅으로 발송** — JSON POST. Discord·Slack의 incoming webhook URL도 그대로 씁니다.
-  시크릿을 넣으면 `x-shelf-signature-256`에 HMAC-SHA256 서명이 붙고, 보낸 결과가 기록됩니다.
-
-![대시보드](docs/screenshots/dashboard.png)
+**아직** — 감시·알림·진단과 로그 탭(M6), 실서버 전환(M7).
 
 ---
 
-## 설치
+## 설치 방식
 
-Docker가 있는 리눅스 서버에서 두 줄입니다.
+같은 바이너리를 두 가지로 설치할 수 있습니다. 기능은 같습니다.
+
+- **Docker** (`docker compose up`) — 가장 간단합니다. 웹서버와 앱 컨테이너가 같은 Docker 네트워크에 있습니다.
+- **설치형** (systemd) — 웹서버가 서버의 프로그램에 `localhost`로 바로 닿고, 앱 컨테이너는 어느 네트워크에 있어도 IP로 닿습니다. 리눅스 서버용. [설치형 설치](docs/install-host.md)
+
+## 로컬에서 띄워 보기
+
+Docker만 있으면 됩니다 (Go 설치 불필요).
 
 ```bash
-git clone https://github.com/KangminNa/shelf && cd shelf
+git clone -b v2 https://github.com/KangminNa/shelf && cd shelf
 docker compose up -d --build
+docker compose logs naru | grep setup      # 첫 설정 주소 — 로그를 볼 수 있는 사람만 관리자를 만들 수 있다
 ```
 
-관리 화면은 첫 접속에서 계정을 만듭니다. `.env`에 도메인을 적으면 부팅할 때 프록시에 자동 등록됩니다.
+로컬 구성은 웹서버를 `127.0.0.1:8088`(HTTP)·`8443`(HTTPS)에 열고, 인증서는 Caddy 내부 CA로 받습니다.
+`*.localhost` 주소는 브라우저가 알아서 이 컴퓨터로 보냅니다 — 예: 관리 주소를 `naru.localhost`로 두고 `http://naru.localhost:8088`.
 
-```bash
-ADMIN_DOMAIN=shelf.example.com
-ACME_EMAIL=you@example.com
-```
-
-개발용으로 돌릴 때:
-
-```bash
-npm install
-npm run dev          # http://localhost:9666/admin
-npm test             # 99개
-```
+환경 변수(선택 — 비워 두면 화면에서 정합니다): `ADMIN_DOMAIN`, `ACME_EMAIL`. 있으면 화면보다 우선합니다.
 
 계정을 잊었다면 서버 셸에서:
 
 ```bash
-docker compose exec shelf npm run admin passwd admin '새 비밀번호'
-docker compose exec shelf npm run admin reset     # 계정 전체 삭제 → /setup 다시 열림
+docker compose exec naru naru users
+docker compose exec naru naru passwd admin '새 비밀번호'   # 그 계정의 모든 로그인이 끊긴다
+docker compose exec naru naru reset                        # 계정 전체 삭제 → 다시 시작하면 첫 설정이 열린다
 ```
 
 ---
 
-## 첫 앱 올리기
+## 첫 서비스 올리기
 
-1. **Apps → New app** — Git URL(저장소에 `Dockerfile` 필요) 또는 Docker 이미지 이름, 컨테이너 포트, 도메인(선택)
-2. **Deploy** — clone → build → 컨테이너 실행 (`shelf-{이름}`, `--restart unless-stopped`)
-3. **웹훅** — 앱 상세의 Payload URL과 Secret을 GitHub → Settings → Webhooks에 붙여넣기. 이후 push마다 자동 배포
-4. **SSL** — Proxy → SSL에서 그 도메인 인증서를 발급하면 https로 전환됩니다
+1. **서비스 → 새 서비스** — 종류를 고르고 저장소 주소나 이미지 이름, 도메인을 적습니다. 이름과 포트는 비워 둬도 됩니다.
+2. 만들면 바로 첫 배포가 시작되고, 단계가 화면에 그려집니다.
+3. 서비스 화면의 **웹훅** 주소와 시크릿을 GitHub → Settings → Webhooks에 붙이면, 이후 push마다 배포됩니다.
 
-최소 예제는 [`examples/hello-app/`](examples/hello-app/)에 있습니다.
-
----
-
-## 소개 페이지
-
-[kangminna.github.io/shelf-site](https://kangminna.github.io/shelf-site/) — 소스는 [KangminNa/shelf-site](https://github.com/KangminNa/shelf-site) 에 있습니다.
-
-Naru 위에 올리는 다른 앱과 똑같이 생긴 저장소입니다: 루트에 `Dockerfile`, 컨테이너가 `4023` 하나로 HTTP 서빙.
-그래서 이 소개 페이지 자체가 Naru로 배포됩니다 — **Apps → New app** 에 그 저장소 주소를 넣고 Deploy 하면 끝입니다.
+이 저장소의 [소개 페이지](https://github.com/KangminNa/shelf-site)도 이렇게 올립니다 — 정적 사이트로 올리면 컨테이너 없이 서빙됩니다.
 
 ---
 
-## 마음대로 바꿔 쓰세요
+## 고쳐 쓰기
 
-MIT입니다. fork해서 고치든, 필요한 부분만 떼어 쓰든, 사내 도구로 만들든 상관없습니다.
-프로젝트 자체가 "내 서버에 맞게 내가 고치는 것"을 전제로 만들어져 있습니다.
+MIT입니다. fork해서 고치든, 필요한 부분만 떼어 쓰든 상관없습니다. 고치기 쉽게 하려고 지킨 것들:
 
-고치기 쉽게 하려고 지킨 것들:
-
-- **런타임 의존성 4개** — `hono`, `@hono/node-server`, `better-sqlite3`, `acme-client`. 빌드 도구도, 프론트엔드 프레임워크도 없습니다.
-- **HTML은 서버가 만듭니다** — React도 번들러도 없습니다. 화면은 `views.ts`의 클래스 하나고, 브라우저 동작은 `ui/runtime.ts`가 전부 담당합니다.
-- **날 SQL은 `db/`에만** — 도메인 코드는 `Repository<T>`만 씁니다.
-- **시스템끼리 import하지 않습니다** — auth·deploy·proxy·notify는 EventBus로만 이야기합니다.
-- **문서가 코드를 강제합니다** — [OBJECTS.md](docs/OBJECTS.md)에 클래스마다 역할 한 문장이 있고, 문서에 없는 클래스가 생기면 `npm test`가 실패합니다.
-
-읽는 순서: [SPEC](docs/SPEC.md) 무엇을 제공하는가 · [OBJECTS](docs/OBJECTS.md) 누가 무엇을 하는가 ·
-[ARCHITECTURE](docs/ARCHITECTURE.md) 어떤 모양인가 · [PROCESS](docs/PROCESS.md) 어떻게 만드는가 ·
-[HISTORY](docs/HISTORY.md) 왜 이렇게 생겼는가 · [DEVELOPMENT](docs/DEVELOPMENT.md) 클래스별 안내
+- **하는 일마다 객체, 관계는 인터페이스로만** — 패키지는 `model`(데이터)과 `contract`(인터페이스)만 import합니다. 구체 타입은 `app`(조립) 한 곳에서만 만납니다.
+- **바깥은 도구 뒤에** — Docker·git·Caddy·SQLite·파일은 각자 도구 패키지에 있어서, 테스트는 가짜로 바꿔 끼우고 진짜 조립 그대로 화면을 시험합니다.
+- **문서가 코드를 강제합니다** — [객체 설계](docs/design/v2-objects.md)의 규칙 R1~R11을 `internal/archtest`가 검사합니다. 문서에 없는 타입이 생기면 테스트가 실패합니다.
+- **의존성 둘** — `modernc.org/sqlite`(순수 Go SQLite), `golang.org/x/crypto`(scrypt). HTML은 서버가 만들고 자바스크립트 프레임워크가 없습니다.
 
 ```
-core/src/
-├── kernel/          ShelfApplication — 조립·라우팅 · Controller — 응답 규약
-├── system/
-│   ├── proxy/       프록시 서버(SNI·ACME), SSL 발급자, 컨트롤러
-│   ├── deploy/      앱 저장소, 빌드 파이프라인, 컨테이너, 웹훅, 감시자
-│   ├── notify/      알림 채널과 발송 이력
-│   └── auth/        세션과 계정
-├── db/              AppDatabase → Repository<T> → QueryBuilder<T>
-├── services/        EventBus · Logger · Scheduler · HostMetrics
-├── ui/              엘리먼트 빌더 · 페이지 · 클라이언트 런타임
-└── admin/           대시보드·시스템·설정 화면
+cmd/naru/            서버 · 셸 복구 명령
+internal/
+├── model/ contract/ 데이터 · 인터페이스 전부
+├── access settings services kinds deploy webhook webserver views   하는 일마다
+├── web/ cli/        들어오는 쪽
+├── store/           SQLite (SQL은 여기에만)
+├── docker git files caddy netcheck stats events system           바깥에 닿는 도구
+├── app/             조립
+└── archtest/        규칙 검사
+```
+
+```bash
+scripts/go.sh test ./...        # Docker 안의 Go로
+scripts/caddy-validate.sh       # 그린 Caddy 설정을 실제 Caddy가 받아들이는지
 ```
 
 ---
@@ -166,12 +145,12 @@ core/src/
 
 - Naru는 `/var/run/docker.sock`을 마운트합니다. 호스트 Docker를 전부 제어할 수 있다는 뜻이고, 따라서 **관리자 계정은 설계상 root와 동급**입니다.
   본인 서버에서만 쓰고, 서버를 맡길 만한 사람에게만 계정을 주세요.
-- 앱을 배포한다는 건 남의 코드를 내 서버에서 실행한다는 뜻입니다. 믿는 저장소만 올리세요.
-- 시크릿(Git 토큰, 웹훅 시크릿, DNS 토큰)은 `data/`에 저장됩니다. 그 디렉터리를 보호하세요 — 권한, 디스크 암호화, 백업 관리.
-- 권장 배포: **80/443만 외부에 노출**. `ADMIN_DOMAIN`을 설정하면 관리 화면이 프록시를 거쳐 SSL로 서빙되고,
-  compose가 관리 UI(81)와 웹훅(9100)을 127.0.0.1에 묶어두므로 프록시 밖으로는 나가지 않습니다.
-- 들어 있는 방어: scrypt 세션 인증, 로그인 5회 실패 시 15분 잠금, Secure/httpOnly/SameSite 쿠키,
-  HMAC 웹훅 검증과 본문 크기 제한, CORS 없음, git/이미지 입력값 검증, API 응답과 로그에서 시크릿 제거.
+- 서비스를 배포한다는 건 남의 코드를 내 서버에서 실행한다는 뜻입니다. 믿는 저장소만 올리세요.
+- 시크릿(Git 토큰, 웹훅 시크릿, 환경 변수)은 데이터 폴더에 저장됩니다. 그 폴더를 보호하세요 — 권한, 디스크 암호화, 백업 관리. 화면·로그·웹서버 설정에는 나가지 않습니다.
+- **80/443만 외부에 노출**하세요. 관리 화면도 웹서버 뒤에 있고, Naru 자신의 포트는 127.0.0.1에만 묶습니다.
+  Caddy 관리 API는 Caddy와 Naru만 보는 유닉스 소켓으로만 엽니다.
+- 들어 있는 방어: scrypt 비밀번호, 로그인 5회 실패 시 15분 잠금, Secure/httpOnly/SameSite 쿠키, 다른 사이트에서 온 폼 거부, CSP,
+  서명 확인한 웹훅과 본문 크기 제한, git 주소·브랜치·경로·이미지 이름 검증.
 
 ---
 

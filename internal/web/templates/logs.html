@@ -1,0 +1,21 @@
+{{define "root"}}{{template "app" .}}{{end}}
+{{define "title"}}{{t "logs.heading"}} · {{.Data.Service.Name}}{{end}}
+{{define "content"}}
+{{$s := .Data.Service}}{{$f := print .Data.Filter}}
+<a class="back" href="/services/{{$s.ID}}">← {{$s.Name}}</a>
+<div class="detail-head">
+  <div><h1>{{t "logs.heading"}}</h1><div class="sub"><span>{{t "logs.note"}}</span></div></div>
+  <div class="head-actions"><a class="btn" href="/services/{{$s.ID}}/logs?show={{$f}}">{{t "logs.refresh"}}</a></div>
+</div>
+<div class="seg">
+  <a href="/services/{{$s.ID}}/logs?show=all" {{if eq $f "all"}}aria-current="true"{{end}}>{{t "logs.all"}}</a>
+  {{if .Data.HasApp}}<a href="/services/{{$s.ID}}/logs?show=app" {{if eq $f "app"}}aria-current="true"{{end}}>{{t "logs.app"}}</a>{{end}}
+  {{if .Data.HasRequests}}<a href="/services/{{$s.ID}}/logs?show=request" {{if eq $f "request"}}aria-current="true"{{end}}>{{t "logs.requests"}}</a>{{end}}
+</div>
+{{with .Data.AppError}}<p class="flash bad">{{t "logs.apperror"}} <code>{{.}}</code></p>{{end}}
+{{with .Data.RequestError}}<p class="flash bad">{{t "logs.requesterror"}} <code>{{.}}</code></p>{{end}}
+{{if .Data.Lines}}
+<pre class="code log logs">{{range .Data.Lines}}<span class="ts">{{clock .At}}</span> {{if eq (print .Source) "request"}}<span class="tag req">{{t "logs.req"}}</span> {{.Method}} {{.Path}} <span class="st s{{.Status}}">{{.Status}}</span> <span class="muted">{{ms .Took}}</span>{{else}}<span class="tag {{.Stream}}">{{t "logs.out"}}</span> {{.Text}}{{end}}
+{{end}}</pre>
+{{else}}<p class="desc">{{t "logs.empty"}}</p>{{end}}
+{{end}}

@@ -1,14 +1,16 @@
-# 빌드 컨텍스트 최소화 — 이미지에 들어가면 안 되는 것들
-node_modules
-core/node_modules
-data
+# 빌드 컨텍스트 최소화 — 이미지에는 go.mod · go.sum · cmd · internal만 들어간다 (Dockerfile 참고)
 .git
 .claude
+data
+data-v2
+rehearsal-data
+deploy
 docs
-examples
+caddy
+scripts
 *.md
 .env
 .env.*
 Dockerfile
-docker-compose.yml
+compose.yml
 .dockerignore

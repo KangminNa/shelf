@@ -1,0 +1,315 @@
+package webserver
+
+import (
+	"context"
+	"errors"
+	"io"
+	"log/slog"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/KangminNa/naru/internal/caddy"
+	"github.com/KangminNa/naru/internal/events"
+	"github.com/KangminNa/naru/internal/kinds"
+	"github.com/KangminNa/naru/internal/model"
+	"github.com/KangminNa/naru/internal/settings"
+	"github.com/KangminNa/naru/internal/store"
+)
+
+var ctx = context.Background()
+
+var quiet = slog.New(slog.NewTextHandler(io.Discard, nil))
+
+func domain(s string) model.DomainName {
+	d, err := model.ParseDomainName(s)
+	if err != nil {
+		panic(err)
+	}
+	return d
+}
+
+func name(s string) model.ServiceName {
+	n, _ := model.ParseServiceName(s)
+	return n
+}
+
+func TestSiteMapFollowsServicesAndSettings(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "naru.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	bus := events.NewBus()
+	set := store.NewSettings(db)
+	admin := settings.NewAdminDomainSetting(model.DomainName{}, set, bus)
+	setup := settings.NewSetupProgress(set, bus)
+	services, domains, live := store.NewServices(db), store.NewDomains(db), store.NewLiveStates(db)
+
+	blog, _ := services.Create(ctx, model.NewService{Name: name("blog"), Kind: model.KindRepo, Alias: "shelf-blog", Port: 3000})
+	domains.Add(ctx, blog, model.DomainInput{Domain: domain("blog.example.com"), HTTPS: true})
+	domains.Add(ctx, blog, model.DomainInput{Domain: domain("naru.example.com")})
+	site, _ := services.Create(ctx, model.NewService{Name: name("landing"), Kind: model.KindStatic})
+	domains.Add(ctx, site, model.DomainInput{Domain: domain("www.example.com"), HTTPS: true})
+	live.Save(ctx, site, model.LiveState{Release: "12"})
+	nas, _ := services.Create(ctx, model.NewService{Name: name("nas"), Kind: model.KindExternal, External: "host.docker.internal:5000"})
+	domains.Add(ctx, nas, model.DomainInput{Domain: domain("nas.example.com")})
+
+	certs := &fakeCerts{}
+	clock := &fakeClock{now: time.Date(2026, 10, 10, 0, 0, 0, 0, time.UTC)}
+	web := store.NewWebSettings(db)
+	b := NewSiteMapBuilder(Fixed{AdminSocket: "/run/caddy/admin.sock", AdminUpstream: "naru:8080"}, services,
+		kinds.NewLookup(kinds.Tools{}), Settings{admin, settings.NewCertEmailSetting(model.Email{}, set, bus), setup}, certs, clock, web, &fakeWatcher{})
+
+	m, err := b.Build(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.OpenFallback || len(m.AdminHosts) != 0 {
+		t.Fatal("before setup any address reaches the admin screen")
+	}
+	to := map[string]model.Destination{}
+	for _, s := range m.Sites {
+		to[s.Hosts[0]] = s.Destination
+	}
+	if to["blog.example.com"].Address != "shelf-blog:3000" || to["nas.example.com"].Address != "host.docker.internal:5000" ||
+		to["www.example.com"].Folder != "/srv/sites/landing/12" {
+		t.Fatalf("%+v", to)
+	}
+
+	admin.Set(ctx, domain("naru.example.com"))
+	setup.MarkDone(ctx)
+	m, _ = b.Build(ctx)
+	if m.OpenFallback || m.AdminHosts[0] != "naru.example.com" || !m.AdminHTTPS {
+		t.Fatalf("%+v", m)
+	}
+	for _, s := range m.Sites {
+		if s.Hosts[0] == "naru.example.com" {
+			t.Fatal("the admin address wins over a service that also claims it")
+		}
+	}
+	if _, err := (caddy.JSONWriter{}).Write(m); err != nil {
+		t.Fatal("the map is writable:", err)
+	}
+
+	// 웹서버 설정 — 경로 목적지는 그 서비스의 실제 목적지로 바뀌어 실린다
+	api, _ := model.ParsePathPrefix("/api")
+	files, _ := model.ParsePathPrefix("/files")
+	ext, _ := model.ParseExternalAddress("localhost:9000")
+	web.Set(ctx, blog, model.WebSettings{Maintenance: true, Paths: []model.PathRoute{
+		{Prefix: api, Service: site, StripPrefix: true}, {Prefix: files, External: ext}, {Prefix: api, Service: 999},
+	}})
+	m, _ = b.Build(ctx)
+	for _, s := range m.Sites {
+		if s.Hosts[0] != "blog.example.com" {
+			if s.Settings.Maintenance {
+				t.Fatal("settings belong to one service")
+			}
+			continue
+		}
+		p := s.Settings.Paths
+		if !s.Settings.Maintenance || len(p) != 3 || p[0].Destination.Folder != "/srv/sites/landing/12" || !p[0].StripPrefix ||
+			p[1].Destination.Address != "host.docker.internal:9000" || p[2].Destination != (model.Destination{}) {
+			t.Fatalf("paths resolve to real destinations (a deleted target goes nowhere): %+v", s.Settings)
+		}
+	}
+
+	// 인증서 — 생기면 넘기고, 끝나거나 못 읽으면 넘기지 않는다 (불변식 4)
+	redirected := func(m model.SiteMap) map[string]bool {
+		out := map[string]bool{"naru.example.com": m.AdminRedirectHTTP}
+		for _, s := range m.Sites {
+			out[s.Hosts[0]] = s.RedirectHTTP
+		}
+		return out
+	}
+	if r := redirected(m); r["naru.example.com"] || r["blog.example.com"] {
+		t.Fatalf("no certificate, no redirect: %v", r)
+	}
+	certs.list = model.Certificates{
+		{Names: []string{"naru.example.com"}, NotBefore: clock.now.Add(-time.Hour), NotAfter: clock.now.Add(90 * 24 * time.Hour)},
+		{Names: []string{"*.example.com"}, NotBefore: clock.now.Add(-time.Hour), NotAfter: clock.now.Add(30 * 24 * time.Hour)},
+	}
+	m, _ = b.Build(ctx)
+	if r := redirected(m); !r["naru.example.com"] || !r["blog.example.com"] || !r["www.example.com"] || r["nas.example.com"] {
+		t.Fatalf("with a certificate, HTTPS addresses are redirected — HTTP-only ones never: %v", r)
+	}
+	clock.now = clock.now.Add(31 * 24 * time.Hour)
+	m, _ = b.Build(ctx)
+	if r := redirected(m); r["blog.example.com"] || !r["naru.example.com"] {
+		t.Fatalf("an expired certificate stops the redirect: %v", r)
+	}
+	certs.err = errors.New("permission denied")
+	m, err = b.Build(ctx)
+	if r := redirected(m); err != nil || r["naru.example.com"] {
+		t.Fatalf("unreadable storage means no redirect, and the map still builds: %v %v", r, err)
+	}
+}
+
+type fakeCerts struct {
+	list model.Certificates
+	err  error
+}
+
+func (f *fakeCerts) Read(context.Context) (model.Certificates, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.list, nil
+}
+
+type fakeClock struct{ now time.Time }
+
+func (c *fakeClock) Now() time.Time { return c.now }
+
+type fakeBuilder struct {
+	m   model.SiteMap
+	err error
+}
+
+func (f *fakeBuilder) Build(context.Context) (model.SiteMap, error) { return f.m, f.err }
+
+type fakeSender struct {
+	mu    sync.Mutex
+	loads [][]byte
+	pings int
+	fail  error
+}
+
+func (f *fakeSender) Send(_ context.Context, cfg []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail != nil {
+		return f.fail
+	}
+	f.loads = append(f.loads, cfg)
+	return nil
+}
+
+func (f *fakeSender) Ping(context.Context) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pings++
+	return f.fail
+}
+
+func (f *fakeSender) count() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.loads)
+}
+
+func TestSyncSendsOnceAndThenOnlyChecks(t *testing.T) {
+	b := &fakeBuilder{m: model.SiteMap{AdminSocket: "/run/caddy/admin.sock", AdminUpstream: "naru:8080",
+		Sites: []model.Site{{Hosts: []string{"blog.example.com"}, Destination: model.Destination{Address: "shelf-blog:3000"}}}}}
+	sender := &fakeSender{}
+	s, _ := NewWebServerSync(b, caddy.JSONWriter{}, sender, events.NewBus(), quiet)
+
+	if err := s.SyncNow(ctx); err != nil {
+		t.Fatal(err)
+	}
+	s.SyncNow(ctx)
+	if len(sender.loads) != 1 || sender.pings != 1 {
+		t.Fatalf("an unchanged config is not sent again: loads=%d pings=%d", len(sender.loads), sender.pings)
+	}
+	b.m.Sites = append(b.m.Sites, model.Site{Hosts: []string{"new.example.com"}, Destination: model.Destination{Address: "naru-new:80"}})
+	s.SyncNow(ctx)
+	if len(sender.loads) != 2 || !strings.Contains(string(sender.loads[1]), "new.example.com") {
+		t.Fatal("a change is sent")
+	}
+	if !s.Status().Connected {
+		t.Fatal("status is connected")
+	}
+}
+
+func TestSyncReportsRefusalAndRetries(t *testing.T) {
+	sender := &fakeSender{fail: errors.New("caddy: POST /load: 400 loading config: bad")}
+	s, _ := NewWebServerSync(&fakeBuilder{m: model.SiteMap{AdminSocket: "/s", AdminUpstream: "naru:8080"}}, caddy.JSONWriter{}, sender, events.NewBus(), quiet)
+	if err := s.SyncNow(ctx); err == nil {
+		t.Fatal("a refused config is an error")
+	}
+	if st := s.Status(); st.Connected || !strings.Contains(st.LastError, "loading config") {
+		t.Fatalf("%+v", st)
+	}
+	sender.fail = nil
+	if err := s.SyncNow(ctx); err != nil || len(sender.loads) != 1 {
+		t.Fatal("after a failure the next sync sends again")
+	}
+
+	broken, _ := NewWebServerSync(&fakeBuilder{err: errors.New("db gone")}, caddy.JSONWriter{}, &fakeSender{}, events.NewBus(), quiet)
+	if broken.SyncNow(ctx) == nil || !strings.Contains(broken.Status().LastError, "db gone") {
+		t.Fatal("build errors surface in the status")
+	}
+}
+
+func TestAChangeIsSyncedRightAway(t *testing.T) {
+	bus := events.NewBus()
+	sender := &fakeSender{}
+	b := &fakeBuilder{m: model.SiteMap{AdminSocket: "/s", AdminUpstream: "naru:8080"}}
+	_, run := NewWebServerSync(b, caddy.JSONWriter{}, sender, bus, quiet)
+	c, cancel := context.WithCancel(ctx)
+	defer cancel()
+	go run(c)
+	wait := func(n int) {
+		for i := 0; i < 200 && sender.count() < n; i++ {
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	wait(1)
+	b.m.Sites = []model.Site{{Hosts: []string{"x.example.com"}, Destination: model.Destination{Address: "x:1"}}}
+	bus.Publish(model.SiteMapChanged{Reason: "test"})
+	wait(2)
+	if sender.count() != 2 {
+		t.Fatalf("a SiteMapChanged event is applied without waiting 30s: %d loads", sender.count())
+	}
+}
+
+type fakeWatcher struct {
+	states model.ContainerStates
+	err    error
+}
+
+func (w *fakeWatcher) All(context.Context) (model.ContainerStates, error) { return w.states, w.err }
+func (w *fakeWatcher) One(context.Context, string) (model.ContainerState, error) {
+	return model.ContainerState{}, nil
+}
+func (w *fakeWatcher) Logs(context.Context, string, int) (string, error) { return "", nil }
+func (w *fakeWatcher) BelongingTo(context.Context, model.ServiceID) ([]string, error) {
+	return nil, nil
+}
+
+// 설치형은 컨테이너 IP로 보낸다 — 컨테이너가 재시작해 IP가 바뀌면 다음 맞추기에서 따라간다.
+func TestSiteMapFollowsTheCurrentContainerIP(t *testing.T) {
+	db, err := store.Open(filepath.Join(t.TempDir(), "naru.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	bus := events.NewBus()
+	set := store.NewSettings(db)
+	services := store.NewServices(db)
+	id, _ := services.Create(ctx, model.NewService{Name: name("x"), Kind: model.KindImage, Alias: "naru-x", Port: 80})
+	store.NewDomains(db).Add(ctx, id, model.DomainInput{Domain: domain("x.example.com")})
+	store.NewLiveStates(db).Save(ctx, id, model.LiveState{Alias: "naru-x", Instance: "naru-x-3", InstanceIP: "10.0.0.3"})
+
+	watcher := &fakeWatcher{states: model.ContainerStates{"naru-x-3": {Name: "naru-x-3", IP: "10.0.0.9"}}}
+	b := NewSiteMapBuilder(Fixed{AdminSocket: "/s", AdminUpstream: "127.0.0.1:8080"}, services,
+		kinds.NewLookup(kinds.Tools{ContainerDestination: kinds.ContainerIPDestination{}}),
+		Settings{settings.NewAdminDomainSetting(model.DomainName{}, set, bus), settings.NewCertEmailSetting(model.Email{}, set, bus), settings.NewSetupProgress(set, bus)},
+		&fakeCerts{}, &fakeClock{now: time.Now()}, store.NewWebSettings(db), watcher)
+	addr := func() string {
+		m, err := b.Build(ctx)
+		if err != nil || len(m.Sites) != 1 {
+			t.Fatalf("%+v %v", m, err)
+		}
+		return m.Sites[0].Destination.Address
+	}
+	if got := addr(); got != "10.0.0.9:80" {
+		t.Fatalf("the current IP wins over the recorded one: %s", got)
+	}
+	watcher.err = errors.New("docker unreachable")
+	if got := addr(); got != "10.0.0.3:80" {
+		t.Fatalf("without Docker the recorded IP is used: %s", got)
+	}
+}

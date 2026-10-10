@@ -1,0 +1,19 @@
+{{define "root"}}{{template "card" .}}{{end}}
+{{define "title"}}{{t "setup.title"}}{{end}}
+{{define "content"}}
+{{template "steps" .}}
+<h1>{{t "setup.account.heading"}}</h1>
+<p class="lede">{{t "setup.account.body"}}</p>
+{{template "error" .}}
+<form method="post" action="/setup" class="form">
+  <input type="hidden" name="token" value="{{.Data.Token}}">
+  <label class="field"><span>{{t "field.username"}}</span>
+    <input class="input" name="username" value="{{.Data.Username}}" autocomplete="username" required minlength="2" maxlength="32" pattern="[a-zA-Z0-9._\-]{2,32}" autofocus></label>
+  <label class="field"><span>{{t "field.password"}}</span>
+    <input class="input" type="password" name="password" autocomplete="new-password" required minlength="8">
+    <small>{{t "field.password.hint"}}</small></label>
+  <label class="field"><span>{{t "field.password2"}}</span>
+    <input class="input" type="password" name="password2" autocomplete="new-password" required minlength="8"></label>
+  <button class="btn primary wide" type="submit">{{t "setup.account.submit"}}</button>
+</form>
+{{end}}

@@ -1,0 +1,29 @@
+# 설치형 Naru. 관리 화면은 127.0.0.1:8080에만 열고, 바깥에서는 웹서버(80·443)를 거쳐 들어온다.
+# naru 사용자는 docker 그룹이다 — Docker를 다루므로 이 계정은 설계상 root와 같다.
+[Unit]
+Description=Naru
+After=network-online.target docker.service naru-caddy.service
+Wants=network-online.target naru-caddy.service
+Requires=docker.service
+
+[Service]
+User=naru
+Group=naru
+SupplementaryGroups=docker
+Environment=NARU_INSTALL=host
+Environment=NARU_DATA_DIR=/var/lib/naru
+Environment=HOME=/var/lib/naru
+# 관리 주소·인증서 연락처를 파일로 정하고 싶으면 (화면에서 정해도 된다):
+# Environment=ADMIN_DOMAIN=naru.example.com
+# Environment=ACME_EMAIL=you@example.com
+ExecStart=/usr/local/bin/naru
+Restart=on-failure
+RestartSec=3s
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=full
+ProtectHome=yes
+ReadWritePaths=/var/lib/naru /run/naru
+
+[Install]
+WantedBy=multi-user.target
