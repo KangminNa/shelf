@@ -8,7 +8,7 @@
     <h1>{{t "deploy.heading" $d.ID}}</h1>
     <div class="sub">
       <span class="pill {{$d.Status}}">{{t (print "deploy.status." $d.Status)}}</span>
-      <span>{{t (print "deploy.trigger." (trigger $d.Trigger))}}</span>
+      <span>{{t (print "deploy.trigger." (trigger (print $d.Reason)))}}</span>
       {{with $d.ShortCommit}}<span>·</span><code>{{.}}</code>{{end}}
       {{with $d.Message}}<span>{{.}}</span>{{end}}
       <span>·</span><span>{{dur $d.Duration}}</span>

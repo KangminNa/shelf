@@ -38,7 +38,7 @@ func TestContainers(t *testing.T) {
 		w.Write([]byte(`[{"Names":["/shelf-blog"],"Image":"shelf-app-blog","State":"running","Status":"Up 3 hours"},
 			{"Names":["/naru-api"],"Image":"ghcr.io/me/api","State":"restarting","Status":"Restarting (1) 5 seconds ago"}]`))
 	}))
-	got, err := New(sock).Containers(context.Background())
+	got, err := New(sock).containers(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,13 +51,13 @@ func TestErrorsCarryTheReason(t *testing.T) {
 	sock := fakeDocker(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"message":"client version too old"}`, http.StatusBadRequest)
 	}))
-	if _, err := New(sock).Containers(context.Background()); err == nil || !strings.Contains(err.Error(), "too old") {
+	if _, err := New(sock).containers(context.Background()); err == nil || !strings.Contains(err.Error(), "too old") {
 		t.Fatalf("got %v", err)
 	}
 }
 
 func TestUnreachableDocker(t *testing.T) {
-	if err := New("/nonexistent/docker.sock").Ping(context.Background()); err == nil {
+	if err := New("/nonexistent/docker.sock").ping(context.Background()); err == nil {
 		t.Fatal("a missing socket is an error")
 	}
 }

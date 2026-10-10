@@ -51,7 +51,7 @@ type Container struct {
 }
 
 // Ping은 Docker에 닿는가.
-func (c *Client) Ping(ctx context.Context) error {
+func (c *Client) ping(ctx context.Context) error {
 	res, err := c.get(ctx, "/_ping")
 	if err != nil {
 		return err
@@ -61,7 +61,7 @@ func (c *Client) Ping(ctx context.Context) error {
 }
 
 // Containers는 모든 컨테이너를 이름(앞의 / 없이) → 상태로 돌려준다. 앱 수와 상관없이 한 번 부른다.
-func (c *Client) Containers(ctx context.Context) (map[string]Container, error) {
+func (c *Client) containers(ctx context.Context) (map[string]Container, error) {
 	res, err := c.get(ctx, "/containers/json?all=1")
 	if err != nil {
 		return nil, err

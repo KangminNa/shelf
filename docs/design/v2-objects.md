@@ -1,6 +1,6 @@
 # Naru v2 — 객체 설계
 
-상태: **제안 — 승인 전에는 코드를 바꾸지 않는다** · 2026-10-08
+상태: **승인 · R0(코드 옮기기) 끝** · 2026-10-08 승인, 2026-10-10 R0 반영 — 달라진 점은 §12.1
 관련: [v2 계획](v2.md) · [웹서버 엔진](caddy-engine.md)
 
 이 문서는 순서가 중요하다.
@@ -84,7 +84,7 @@
 
 | 인터페이스 | 하는 일 | 구현 |
 |---|---|---|
-| `ServiceEditor` | 서비스를 만들고·고치고·지우고, 주소를 붙이고 뗀다 | `serviceEditor` |
+| `ServiceEditor` | 서비스를 만들고·고치고, 주소를 붙이고 뗀다 (지우기는 컨테이너·파일까지 함께라 `ServiceControl`) | `serviceEditor` |
 | `ServiceLauncher` | 서비스를 만들고 첫 배포까지 한 번에 한다 | `serviceLauncher` |
 | `NameChooser` | 이름을 비워 두면 지어 주고, 겹치는지 본다 | `nameChooser` |
 | `DomainChecker` | 주소가 다른 서비스나 관리 화면과 겹치는지 본다 | `domainChecker` |
@@ -103,7 +103,7 @@
 
 | 인터페이스 | 하는 일 | 구현 |
 |---|---|---|
-| `KindLookup` | 종류 이름으로 그 종류의 담당자 묶음(`KindHandlers`)을 찾아 준다 | `kindLookup` |
+| `KindLookup` | 종류 이름으로 그 종류의 담당자 묶음(`KindTools`)을 찾아 준다 | `kindLookup` |
 
 **무중단 교체는 `ContainerSwapper` 한 곳에만 있다** — 저장소와 이미지가 함께 쓴다.
 
@@ -113,7 +113,8 @@
 |---|---|---|
 | `Deployer` | 배포를 정해진 순서로 하고, 예전 버전으로 되돌린다 | `deployer` |
 | `DeployLock` | 서비스마다 배포를 한 번에 하나만 하게 하고, 그 사이에 온 요청은 한 번으로 합친다 | `memoryDeployLock` |
-| `DeployLog` | 배포 기록을 쓰고 1초마다 저장한다 | `deployLog` |
+| `DeployLog` | 배포 기록을 열고 1초마다 저장한다 | `deployLog` |
+| `DeployLogWriter` | 배포 기록에 쓴다. `Step`은 화면이 단계로 읽는 "▶ 한국어 / English" 한 줄 | `deployLog`가 연 것 |
 | `OldVersionCleaner` | 되돌리기용으로 최근 버전만 남기고 오래된 것을 지운다 | `oldVersionCleaner` |
 | `ServiceControl` | 서비스를 멈추고, 켜고, (컨테이너·이미지·파일째) 지운다 | `serviceControl` |
 
@@ -133,7 +134,7 @@
 | `WebServerSync` | 사이트 지도를 웹서버에 맞춘다 — 바뀌었다는 알림을 받으면 바로, 평소엔 30초마다 | `webServerSync` |
 | `ConfigWriter` | 사이트 지도를 웹서버 설정으로 쓴다 | `caddy.JSONWriter` |
 | `ConfigSender` | 설정을 웹서버에 보낸다 | `caddy.SocketSender`, 그것을 감싸 관리 소켓 설정이 빠졌는지 먼저 보는 `caddy.AdminSocketGuard` |
-| `CertificateReader` | 도메인마다 인증서가 있는지·언제 끝나는지·왜 실패했는지 읽는다 (M4) | `caddy.CertificateFiles` |
+| `CertificateReader` | 도메인마다 인증서가 있는지·언제 끝나는지·왜 실패했는지 읽는다 — **M4. 아직 `contract`에 없다** (설계 노트를 먼저) | `caddy.CertificateFiles` |
 
 ### H. 보여주기 — `views`
 
@@ -154,7 +155,7 @@
 | `ContainerSwitch` | 컨테이너를 멈추고 켠다 | `docker.Containers` |
 | `ContainerWatcher` | 컨테이너 상태·로그, 이 서비스의 컨테이너 목록을 본다 | `docker.Containers` |
 | `CodeDownloader` | 저장소 코드를 내려받는다 (토큰은 인자·설정 파일에 남기지 않는다) | `git.Downloader` |
-| `WorkFolder` | 잠깐 쓸 작업 폴더를 빌려주고 돌려받는다 | `files.TempFolders` |
+| `WorkFolder` | 잠깐 쓸 작업 폴더를 빌려주고 돌려받는다. 그 안의 경로를 심볼릭 링크로 빠져나가지 않게 찾아 준다 | `files.TempFolders` |
 | `BuildContextPacker` | 빌드할 폴더를 묶는다 (`.git`·`.dockerignore` 제외) | `files.TarPacker` |
 | `DockerfilePortReader` | Dockerfile의 `EXPOSE`에서 앱 포트를 찾는다 | `files.DockerfileReader` |
 | `SiteFiles` | 정적 사이트 파일을 올리고·복사하고·지운다 (숨김 파일 제외) | `files.SiteFolders` |
@@ -188,53 +189,87 @@
 
 ## 5. 데이터 — `model`
 
-화면에서 쓰는 말과 같은 이름을 쓴다. 다른 객체를 가리키지 않는 값이다.
+화면에서 쓰는 말과 같은 이름을 쓴다. 다른 객체를 가리키지 않는 값이다 (인터페이스·함수 필드가 없다 — R3).
 
 ### 값 객체 — 만들 때 한 번 검사한다
 
 | 이름 | 보장하는 것 |
 |---|---|
-| `ServiceName` | 영문 소문자·숫자·`-` 31자 이내 |
-| `DomainName` | 공개 DNS 이름 모양. 붙여 넣은 `https://…/`는 정리된다 |
+| `ServiceName` | 영문 소문자·숫자·`-` 31자 이내. 비워 두면 `SuggestServiceName`이 짓고 겹치면 `WithSuffix` |
+| `DomainName` | 공개 DNS 이름 모양. 붙여 넣은 `https://…/`·대문자·끝의 `.`는 정리된다 |
 | `RepoURL` | git이 옵션이나 로컬 파일로 오해할 수 없는 http(s) 주소 |
-| `Branch` | `-`로 시작하지 않고 `..`이 없는 브랜치 이름 |
+| `Branch` | `-`로 시작하지 않고 `..`이 없는 브랜치 이름. 비면 기본(`main`) |
 | `ImageRef` | Docker 이미지 이름 모양 |
-| `ExternalAddress` | `호스트:포트`. `localhost`는 웹서버 컨테이너 기준 주소로 바뀐다 |
-| `FolderPath` | 저장소 안을 벗어나지 않는 경로 |
-| `Port` · `Email` · `EnvVars` · `Volumes` | 각자 모양이 맞는 값 |
+| `ExternalAddress` | `호스트:포트`. `localhost`·`127.0.0.1`은 웹서버 컨테이너 기준 주소로 바뀐다 |
+| `FolderPath` | 저장소 안을 벗어나지 않는 경로 (`..` 없음) |
+| `Port` | 1~65535. 0은 "모름" |
+| `Email` | 인증서 연락처 이메일 |
+| `Username` | 계정 이름 — 영문·숫자·`.-_` 2~32자 |
+| `EnvVars` · `Volumes` | `KEY=value` 줄들 · `/서버경로:/컨테이너경로[:ro]` 줄들. 저장된 글은 `Stored…`로 그대로 읽고, 틀린 줄은 `List`가 건너뛴다 (v1에서 온 값을 잃지 않게) |
+| `KindName` | 서비스 종류 이름. `ParseKindName`은 아는 이름인지만 본다 — 종류마다 다른 행동은 `kinds`만 안다 |
+| `ServiceID` · `DomainID` · `DeploymentID` · `AccountID` | 저장소가 준 번호 |
 
 `ParseDomainName(s) (DomainName, error)`를 지나지 않은 문자열은 `DomainName`이 될 수 없다. 그래서 저장·배포·웹서버는 **이미 검사된 값만** 받는다.
+틀리면 `InputError{Field, Code}`가 나온다. 문구는 화면이 `err.`+Code로 고른다.
+
+### 계정
+
+| 이름 | 무엇 |
+|---|---|
+| `Account` | 관리자 한 명 — 번호와 이름 |
+| `PasswordHash` | `salt:hash` (v1과 같은 scrypt 모양). **`web`·`cli`는 이 타입을 쓸 수 없다** |
+| `SessionToken` · `SessionDigest` | 쿠키에만 있는 세션 원문 · 저장하는 그 SHA-256 |
 
 ### 서비스와 배포
 
 | 이름 | 무엇 |
 |---|---|
 | `ServiceInput` | 화면에서 받은 서비스 값 (값 객체들) |
+| `NewService` · `ServiceSettings` | 저장할 새 서비스 · 고칠 수 있는 값 |
 | `Service` | 서비스 하나의 지금 모습 — 비밀은 없다 |
-| `ServiceSecrets` | 배포에만 쓰는 비밀. **`web`은 이 타입을 쓸 수 없다** |
-| `Domain` | 서비스에 붙은 주소 하나 |
-| `Version` | 배포할 수 있게 만든 것 — 이미지 ID 또는 파일 폴더, 커밋, 포트 |
-| `LiveState` | 지금 도는 것 — 컨테이너 이름, 서빙 폴더, 포트, 직접 멈췄는지 |
+| `ServiceSecrets` | 배포에만 쓰는 비밀(env·볼륨·git 토큰·웹훅 시크릿). **`web`·`cli`는 이 타입을 쓸 수 없다** |
+| `Domain` · `DomainInput` | 서비스에 붙은 주소 하나 · 붙일 주소 |
+| `LiveState` | 지금 도는 것 — 서비스 별칭, 요청을 받는 컨테이너, 서빙 중인 배포본, 포트, 직접 멈췄는지 |
+| `HookLog` | 웹훅을 마지막으로 받은 때와 결과 |
+| `Version` | 배포할 수 있게 만든 것 — 이미지 ID 또는 배포본 폴더, 커밋, 찾은 포트 |
+| `Commit` · `ImageID` · `ImageDetails` | 가져온 커밋 · Docker 이미지 ID · 받은 이미지의 ID와 열어둔 포트 |
+| `SiteFolder` | 정적 사이트 배포본 하나 (서비스 이름 + 배포 번호) |
+| `CodeSource` | 내려받을 코드 — 저장소·브랜치·토큰 |
+| `ContainerSpec` · `ContainerState` · `ContainerStates` | 띄울 컨테이너 · 컨테이너 하나의 상태 · 이름별 상태 (nil이면 Docker를 읽지 못함) |
 | `Deployment` | 배포 한 번의 기록 |
+| `DeployStatus` | 진행 중 · 성공 · 실패 |
 | `DeployReason` | 왜 배포했나 — 직접 · push · 처음 올림 · 되돌림 |
 | `BuildRequest` · `SwapRequest` | 새 버전 만들기 · 바꿔 끼우기에 넘기는 값 |
-| `ServiceStatus` | 화면 상태 — 실행 중 · 멈춤 · 죽음 · 컨테이너 없음 · 파일 서빙 … |
 
-### 웹서버·웹훅·화면
+### 웹서버·웹훅
 
 | 이름 | 무엇 |
 |---|---|
 | `Destination` | 요청을 보낼 곳 — 컨테이너:포트 / 폴더 / 외부 주소 |
-| `SiteMap` | 웹서버에 줄 지도 — 주소마다 목적지, HTTPS 여부, 관리 주소, 모르는 주소 처리 |
-| `CertificateState` | 인증서 상태 — 있음(만료일) · 받는 중 · 실패(사람 말 이유) |
-| `HookRequest` · `HookResult` · `HookLog` | 웹훅 요청 · 처리 결과 · 남길 기록 |
+| `Site` | 사이트 지도의 한 줄 — 주소들, 목적지, HTTPS, HSTS |
+| `SiteMap` | 웹서버에 줄 지도 — 사이트들, 관리 주소, 관리 소켓, 모르는 주소 처리 |
+| `WebServerStatus` | 웹서버에 닿는지, 마지막 오류, 마지막으로 맞춘 때 |
+| `CertificateState` | 인증서 상태 — 있음(만료일) · 받는 중 · 실패(사람 말 이유) (M4) |
+| `DNSAnswer` | 도메인이 이 서버를 가리키는지의 답 |
+| `SetBy` | 설정 값을 누가 정했나 — 환경 변수 · 화면 · 아무도 |
+| `HookRequest` · `HookResult` | 받은 웹훅(헤더·쿼리·본문) · 처리 결과(HTTP 상태·문구·배포 번호) |
 | `InputError` | 어느 칸이 왜 틀렸나 (코드 — 문구는 화면이 만든다) |
 
-### 일어난 일 (이벤트)
+### 화면에 보여줄 모습 (`ServiceViewer`가 모은다)
+
+| 이름 | 무엇 |
+|---|---|
+| `ServiceStatus` | 화면 상태 — 문구 키(실행 중 · 멈춤 · 죽음 · 컨테이너 없음 · 파일 서빙 …)와 색 |
+| `ServiceCard` · `HomeView` | 홈의 카드 하나 · 홈 화면 (Docker에 닿지 못했는지 포함) |
+| `ServiceView` · `ServiceForm` · `WebhookView` | 서비스 상세 · 설정 폼에 채울 값(토큰 원문 없음, 있는지만) · 웹훅 주소와 시크릿 |
+| `DeploymentView` · `StepView` | 배포 화면 · 배포 단계 하나 |
+| `ServerSnapshot` | 서버의 CPU·메모리·디스크 |
+
+### 일어난 일 (이벤트) — `Event`
 
 | 이름 | 언제 |
 |---|---|
-| `SiteMapChanged` | 주소·포트·서빙 폴더·관리 주소·첫 설정 상태가 바뀌었을 때 |
+| `SiteMapChanged` | 주소·포트·서빙 폴더·관리 주소·첫 설정 상태가 바뀌었을 때 → `WebServerSync`가 바로 맞춘다 |
 | `DeployFinished` | 배포가 끝났을 때 (성공·실패) |
 | `ServiceDeleted` | 서비스를 지웠을 때 |
 
@@ -242,305 +277,410 @@
 
 ## 6. contract — 인터페이스 전부
 
-> 인터페이스마다 **메서드 다섯 개 이하**. 넘으면 읽기/쓰기처럼 하는 일로 쪼갠다.
-> 모든 메서드는 `context.Context`를 먼저 받는다 (아래에서는 `ctx`로 줄여 쓴다).
-
-### A. 관리자로 들어오기
+> 인터페이스마다 **메서드 다섯 개 이하** (R4). 넘으면 읽기/쓰기처럼 하는 일로 쪼갠다.
+> 모든 메서드는 `context.Context`를 먼저 받는다 (메모리 안에서 끝나는 것은 빼고).
+> 아래는 `internal/contract/contract.go` 그대로다 — 둘이 다르면 코드가 맞고, 이 문서를 고친다.
 
 ```go
+// ── A. 관리자로 들어오기 ─────────────────────
+
+// PasswordHasher는 비밀번호를 해시하고, 맞는지 본다.
 type PasswordHasher interface {
 	Hash(password string) (model.PasswordHash, error)
 	Matches(password string, h model.PasswordHash) bool
 }
+
+// LoginLimiter는 같은 IP에서 계속 틀리면 잠근다.
 type LoginLimiter interface {
 	Allowed(ip string) bool
 	Failed(ip string)
 	Succeeded(ip string)
 }
+
+// SetupKey는 첫 설정 열쇠를 만들고, 계정이 없을 때만 맞는지 본다.
 type SetupKey interface {
 	Value() string
-	Matches(ctx, key string) bool // 계정이 없고 열쇠가 맞을 때만 참
+	Matches(ctx context.Context, key string) bool
 }
+
+// LoginManager는 로그인·로그아웃하고, 세션의 주인이 누구인지 알려준다.
 type LoginManager interface {
-	LogIn(ctx, ip string, user model.Username, password string) (model.SessionToken, error)
-	WhoIs(ctx, t model.SessionToken) (model.Account, bool)
-	LogOut(ctx, t model.SessionToken)
+	LogIn(ctx context.Context, ip, user, password string) (model.SessionToken, error)
+	WhoIs(ctx context.Context, t model.SessionToken) (model.Account, bool)
+	LogOut(ctx context.Context, t model.SessionToken)
 }
+
+// AccountManager는 첫 계정을 만들고, 비밀번호를 바꾸고, 셸에서 되찾거나 초기화한다.
 type AccountManager interface {
-	CreateFirst(ctx, setupKey string, user model.Username, password string) (model.SessionToken, error)
-	ChangePassword(ctx, who model.AccountID, current, next string, keep model.SessionToken) error
-	Recover(ctx, user model.Username, password string) error // 셸에서
-	ResetAll(ctx) error                                       // 셸에서
-	Names(ctx) ([]model.Username, error)                      // 셸에서
+	CreateFirst(ctx context.Context, setupKey string, user model.Username, password string) (model.SessionToken, error)
+	ChangePassword(ctx context.Context, who model.Account, current, next string, keep model.SessionToken) error
+	Recover(ctx context.Context, user, password string) error
+	ResetAll(ctx context.Context) error
+	Names(ctx context.Context) ([]string, error)
 }
+
+// AccountReader는 계정을 읽는다.
 type AccountReader interface {
-	Count(ctx) (int, error)
-	FindByName(ctx, u model.Username) (model.Account, model.PasswordHash, error)
-	Names(ctx) ([]model.Username, error)
+	Count(ctx context.Context) (int, error)
+	FindByName(ctx context.Context, user string) (model.Account, model.PasswordHash, error)
+	Names(ctx context.Context) ([]string, error)
 }
+
+// AccountStore는 계정을 저장한다.
 type AccountStore interface {
-	CreateFirst(ctx, u model.Username, h model.PasswordHash) (model.AccountID, error) // 이미 있으면 실패 (원자적)
-	SetPassword(ctx, id model.AccountID, h model.PasswordHash) error
-	Import(ctx, u model.Username, h model.PasswordHash) (bool, error)
-	DeleteAll(ctx) error
+	CreateFirst(ctx context.Context, u model.Username, h model.PasswordHash) (model.AccountID, error)
+	SetPassword(ctx context.Context, id model.AccountID, h model.PasswordHash) error
+	DeleteAll(ctx context.Context) error
 }
+
+// SessionStore는 로그인 세션을 저장하고 찾는다.
 type SessionStore interface {
-	Save(ctx, d model.SessionDigest, who model.AccountID, until time.Time) error
-	FindOwner(ctx, d model.SessionDigest, now time.Time) (model.Account, bool)
-	Delete(ctx, d model.SessionDigest) error
-	DeleteOthers(ctx, who model.AccountID, keep model.SessionDigest) error
+	Save(ctx context.Context, d model.SessionDigest, who model.AccountID, until time.Time) error
+	FindOwner(ctx context.Context, d model.SessionDigest, now time.Time) (model.Account, bool)
+	Delete(ctx context.Context, d model.SessionDigest) error
+	DeleteOthers(ctx context.Context, who model.AccountID, keep model.SessionDigest) error
 }
-```
 
-### B. 서버 설정 정하기
+// ── B. 서버 설정 정하기 ──────────────────────
 
-```go
+// AdminDomainSetting은 관리 주소를 정하고 알려준다. 환경 변수가 화면보다 우선한다.
 type AdminDomainSetting interface {
-	Get(ctx) (model.DomainName, model.SetBy) // SetBy: Env | Screen | Nobody
-	Set(ctx, d model.DomainName) error        // 환경 변수로 정해져 있으면 model.ErrSetByEnv. 바뀌면 SiteMapChanged
+	Get(ctx context.Context) (model.DomainName, model.SetBy)
+	Set(ctx context.Context, d model.DomainName) error // 빈 값이면 지운다
 }
+
+// CertEmailSetting은 인증서 연락처 이메일을 정하고 알려준다.
 type CertEmailSetting interface {
-	Get(ctx) (model.Email, model.SetBy)
-	Set(ctx, e model.Email) error
+	Get(ctx context.Context) (model.Email, model.SetBy)
+	Set(ctx context.Context, e model.Email) error
 }
+
+// SetupProgress는 첫 설정을 마쳤는지 기록하고 알려준다.
 type SetupProgress interface {
-	Done(ctx) bool
-	MarkDone(ctx) error // SiteMapChanged — IP로 열려 있던 길이 닫힌다
+	Done(ctx context.Context) bool
+	MarkDone(ctx context.Context) error
 }
+
+// SettingStore는 서버 설정 값을 저장한다.
 type SettingStore interface {
-	Get(ctx, key string) (string, bool)
-	Set(ctx, key, value string) error
-	Delete(ctx, key string) error
+	Get(ctx context.Context, key string) (string, bool)
+	Set(ctx context.Context, key, value string) error
+	Delete(ctx context.Context, key string) error
 }
-```
 
-### C. 서비스 관리하기
+// ── C. 서비스 관리하기 ───────────────────────
 
-```go
+// ServiceEditor는 서비스를 만들고·고치고, 주소를 붙이고 뗀다.
 type ServiceEditor interface {
-	Create(ctx, in model.ServiceInput) (model.ServiceID, error)
-	Update(ctx, id model.ServiceID, in model.ServiceInput) (needsRedeploy bool, err error)
-	Delete(ctx, id model.ServiceID) error
-	AddDomain(ctx, id model.ServiceID, d model.DomainInput) error
-	RemoveDomain(ctx, id model.ServiceID, d model.DomainID) error
+	Create(ctx context.Context, in model.ServiceInput) (model.ServiceID, error)
+	Update(ctx context.Context, id model.ServiceID, in model.ServiceInput) (needsRedeploy bool, err error)
+	AddDomain(ctx context.Context, id model.ServiceID, d model.DomainInput) error
+	RemoveDomain(ctx context.Context, id model.ServiceID, d model.DomainID) error
 }
+
+// ServiceLauncher는 서비스를 만들고 첫 배포까지 한 번에 한다.
 type ServiceLauncher interface {
-	Launch(ctx, in model.ServiceInput) (model.ServiceID, model.DeploymentID, error) // 배포가 없는 종류면 DeploymentID 0
+	Launch(ctx context.Context, in model.ServiceInput) (model.ServiceID, model.DeploymentID, error)
 }
+
+// NameChooser는 이름을 비워 두면 지어 주고, 겹치는지 본다.
 type NameChooser interface {
-	Choose(ctx, in model.ServiceInput) (model.ServiceName, error) // 비었으면 지어 주고, 겹치면 InputError
+	Choose(ctx context.Context, in model.ServiceInput) (model.ServiceName, error)
 }
+
+// DomainChecker는 주소가 다른 서비스나 관리 화면과 겹치는지 본다.
 type DomainChecker interface {
-	Check(ctx, d model.DomainName) error // 다른 서비스·관리 화면과 겹치면 InputError
+	Check(ctx context.Context, d model.DomainName) error
 }
+
+// ServiceReader는 서비스를 (주소와 함께) 읽는다.
 type ServiceReader interface {
-	List(ctx) ([]model.Service, error)
-	Get(ctx, id model.ServiceID) (model.Service, error)
-	NameTaken(ctx, n model.ServiceName) bool
+	List(ctx context.Context) ([]model.Service, error)
+	Get(ctx context.Context, id model.ServiceID) (model.Service, error)
+	NameTaken(ctx context.Context, n model.ServiceName) bool
 }
+
+// ServiceStore는 서비스를 저장한다.
 type ServiceStore interface {
-	Create(ctx, s model.NewService) (model.ServiceID, error)
-	Update(ctx, id model.ServiceID, s model.ServiceSettings) error
-	Delete(ctx, id model.ServiceID) error
+	Create(ctx context.Context, s model.NewService) (model.ServiceID, error)
+	Update(ctx context.Context, id model.ServiceID, s model.ServiceSettings) error
+	Delete(ctx context.Context, id model.ServiceID) error
 }
+
+// DomainStore는 서비스에 붙은 주소를 저장한다.
 type DomainStore interface {
-	ListFor(ctx, id model.ServiceID) ([]model.Domain, error)
-	FindOwner(ctx, d model.DomainName) (model.ServiceID, bool)
-	Add(ctx, id model.ServiceID, d model.Domain) error
-	Remove(ctx, id model.ServiceID, d model.DomainID) error
+	FindOwner(ctx context.Context, d model.DomainName) (model.ServiceID, bool)
+	Add(ctx context.Context, id model.ServiceID, d model.DomainInput) error
+	Remove(ctx context.Context, id model.ServiceID, d model.DomainID) error
 }
+
+// SecretStore는 서비스의 비밀을 저장한다.
 type SecretStore interface {
-	Get(ctx, id model.ServiceID) (model.ServiceSecrets, error)
-	Set(ctx, id model.ServiceID, s model.ServiceSecrets) error
+	Get(ctx context.Context, id model.ServiceID) (model.ServiceSecrets, error)
+	Set(ctx context.Context, id model.ServiceID, s model.ServiceSecrets) error
 }
+
+// LiveStateStore는 지금 도는 것을 저장한다.
 type LiveStateStore interface {
-	Save(ctx, id model.ServiceID, s model.LiveState) error
+	Save(ctx context.Context, id model.ServiceID, s model.LiveState) error
 }
-```
 
-### D. 종류마다 다르게 다루기
+// ── D. 종류마다 다르게 다루기 ─────────────────
 
-```go
+// InputChecker는 이 종류에 필요한 값이 다 있는지 보고, 이 종류에 맞게 정리한다 (안 쓰는 칸 비우기, 기본 브랜치).
 type InputChecker interface {
-	Check(in model.ServiceInput) error // 이 종류에 필요한 값이 다 있나 (모양 검사는 값 객체가 이미 했다)
+	Check(in model.ServiceInput) (model.ServiceInput, error)
 }
+
+// VersionBuilder는 새 버전을 만든다.
 type VersionBuilder interface {
-	Build(ctx, req model.BuildRequest, log DeployLogWriter) (model.Version, error)
+	Build(ctx context.Context, req model.BuildRequest, log DeployLogWriter) (model.Version, error)
 }
+
+// VersionSwapper는 새 버전으로 바꿔 끼운다. 실패하면 지금 도는 것을 그대로 둔다.
 type VersionSwapper interface {
-	Swap(ctx, req model.SwapRequest, v model.Version, log DeployLogWriter) (model.LiveState, error) // 실패하면 지금 것을 그대로 둔다
+	Swap(ctx context.Context, req model.SwapRequest, v model.Version, log DeployLogWriter) (model.LiveState, error)
 }
+
+// DestinationFinder는 웹서버가 요청을 보낼 곳을 알려준다.
 type DestinationFinder interface {
 	Find(s model.Service) model.Destination
 }
+
+// StatusReader는 화면에 보일 상태를 읽는다.
 type StatusReader interface {
 	Read(s model.Service, containers model.ContainerStates) model.ServiceStatus
 }
 
-// KindHandlers는 종류 하나의 담당자 묶음이다. 배포가 없는 종류는 Builder·Swapper가 nil.
-type KindHandlers struct {
+// KindTools는 종류 하나의 도구 묶음이다. 배포가 없는 종류는 Builder·Swapper가 nil.
+type KindTools struct {
 	Input       InputChecker
 	Builder     VersionBuilder
 	Swapper     VersionSwapper
 	Destination DestinationFinder
 	Status      StatusReader
 }
+
+// KindLookup은 종류 이름으로 그 종류의 도구 묶음을 찾아 준다.
 type KindLookup interface {
-	Find(k model.KindName) (KindHandlers, bool)
+	Find(k model.KindName) (KindTools, bool)
 }
-```
 
-### E. 배포하기
+// ── E. 배포하기 ────────────────────────────
 
-```go
+// Deployer는 배포를 정해진 순서로 하고, 예전 버전으로 되돌린다.
 type Deployer interface {
-	Deploy(ctx, id model.ServiceID, why model.DeployReason) (model.DeploymentID, error) // 배포 중이면 model.ErrQueued
-	RollBack(ctx, id model.ServiceID, to model.DeploymentID) (model.DeploymentID, error)
+	Deploy(ctx context.Context, id model.ServiceID, why model.DeployReason) (model.DeploymentID, error)
+	RollBack(ctx context.Context, id model.ServiceID, to model.DeploymentID) (model.DeploymentID, error)
 	IsDeploying(id model.ServiceID) bool
 }
+
+// DeployLock은 서비스마다 배포를 한 번에 하나만 하게 하고, 그 사이에 온 요청은 한 번으로 합친다.
 type DeployLock interface {
 	TryLock(id model.ServiceID, why model.DeployReason) (unlock func() (again model.DeployReason, ok bool), locked bool)
 	IsLocked(id model.ServiceID) bool
 }
+
+// DeployLogWriter는 배포 기록을 쓴다. Step은 "▶ 한국어 / English" 한 줄이다.
 type DeployLogWriter interface {
 	io.Writer
-	Step(ko, en string) // "▶ 이미지 받기 / pulling the image"
+	Step(ko, en string)
 }
+
+// DeployLog는 배포 기록을 쓰고 1초마다 저장한다.
 type DeployLog interface {
 	Open(d model.DeploymentID) (w DeployLogWriter, close func() (whole string))
 }
+
+// OldVersionCleaner는 되돌리기용으로 최근 버전만 남기고 오래된 것을 지운다.
 type OldVersionCleaner interface {
-	Clean(ctx, s model.Service, live model.DeploymentID)
+	Clean(ctx context.Context, s model.Service, live model.DeploymentID)
 }
+
+// ServiceControl은 서비스를 멈추고, 켜고, (컨테이너·이미지·파일째) 지운다.
 type ServiceControl interface {
-	Stop(ctx, id model.ServiceID) error
-	Start(ctx, id model.ServiceID) error
-	Remove(ctx, id model.ServiceID) error
+	Stop(ctx context.Context, id model.ServiceID) error
+	Start(ctx context.Context, id model.ServiceID) error
+	Remove(ctx context.Context, id model.ServiceID) error
 }
+
+// DeployHistoryReader는 배포 기록을 읽는다.
 type DeployHistoryReader interface {
-	Get(ctx, d model.DeploymentID) (model.Deployment, error)
-	Recent(ctx, id model.ServiceID, n int) ([]model.Deployment, error)
-	Succeeded(ctx, id model.ServiceID) ([]model.DeploymentID, error)
+	Get(ctx context.Context, d model.DeploymentID) (model.Deployment, error)
+	Recent(ctx context.Context, id model.ServiceID, n int) ([]model.Deployment, error)
+	Succeeded(ctx context.Context, id model.ServiceID) ([]model.DeploymentID, error)
 }
+
+// DeployHistoryStore는 배포 기록을 저장한다.
 type DeployHistoryStore interface {
-	Start(ctx, id model.ServiceID, why model.DeployReason) (model.DeploymentID, error)
-	SaveLog(ctx, d model.DeploymentID, log string) error
-	Finish(ctx, d model.Deployment) error
-	CloseInterrupted(ctx, note string) (int, error)
+	Start(ctx context.Context, id model.ServiceID, why model.DeployReason) (model.DeploymentID, error)
+	SaveLog(ctx context.Context, d model.DeploymentID, log string) error
+	Finish(ctx context.Context, d model.Deployment) error
+	CloseInterrupted(ctx context.Context, note string) (int, error)
 }
-```
 
-### F. push 받아 배포하기
+// ── F. push 받아 배포하기 ─────────────────────
 
-```go
+// HookReceiver는 웹훅을 확인하고 배포를 맡기거나 거절한다.
 type HookReceiver interface {
-	Receive(ctx, id model.ServiceID, r model.HookRequest) model.HookResult
+	Receive(ctx context.Context, id model.ServiceID, r model.HookRequest) model.HookResult
 }
-// 차례로 시도한다: 자기 방식의 헤더가 있으면 판단하고, 없으면 다음으로 (Chain of Responsibility)
+
+// SignatureChecker는 웹훅이 진짜 보낸 곳에서 왔는지 본다. 자기 방식이 아니면 CanCheck가 거짓 — 다음 것이 본다.
 type SignatureChecker interface {
 	CanCheck(r model.HookRequest) bool
 	IsGenuine(r model.HookRequest, secret string) bool
 }
+
+// BranchFilter는 등록한 브랜치의 push인지 본다.
 type BranchFilter interface {
 	Wanted(r model.HookRequest, s model.Service) (ok bool, why string)
 }
+
+// HookLogStore는 웹훅을 받은 기록을 저장한다.
 type HookLogStore interface {
-	Save(ctx, id model.ServiceID, l model.HookLog) error
+	Save(ctx context.Context, id model.ServiceID, l model.HookLog) error
 }
-```
 
-### G. 웹서버 맞추기
+// ── G. 웹서버 맞추기 ─────────────────────────
 
-```go
+// SiteMapBuilder는 서비스·관리 주소로 "주소마다 어디로 보낼지" 사이트 지도를 만든다.
 type SiteMapBuilder interface {
-	Build(ctx) (model.SiteMap, error)
+	Build(ctx context.Context) (model.SiteMap, error)
 }
+
+// WebServerSync는 사이트 지도를 웹서버에 맞춘다.
 type WebServerSync interface {
-	SyncNow(ctx) error
+	SyncNow(ctx context.Context) error
 	Status() model.WebServerStatus
 }
+
+// ConfigWriter는 사이트 지도를 웹서버 설정으로 쓴다.
 type ConfigWriter interface {
 	Write(m model.SiteMap) ([]byte, error)
 }
+
+// ConfigSender는 설정을 웹서버에 보낸다.
 type ConfigSender interface {
-	Send(ctx, config []byte) error
-	Ping(ctx) error
+	Send(ctx context.Context, config []byte) error
+	Ping(ctx context.Context) error
 }
-type CertificateReader interface { // M4
-	Read(ctx, d model.DomainName) model.CertificateState
-}
-```
 
-### H. 보여주기
+// ── H. 보여주기 ────────────────────────────
 
-```go
+// ServiceViewer는 화면에 보여줄 서비스 모습을 모은다. 비밀(토큰·비밀번호)은 담지 않는다.
 type ServiceViewer interface {
-	Home(ctx) (model.HomeView, error)
-	Detail(ctx, id model.ServiceID) (model.ServiceView, error)
-	Deployment(ctx, id model.ServiceID, d model.DeploymentID) (model.DeploymentView, error)
+	Home(ctx context.Context) (model.HomeView, error)
+	Detail(ctx context.Context, id model.ServiceID) (model.ServiceView, error)
+	Deployment(ctx context.Context, id model.ServiceID, d model.DeploymentID) (model.DeploymentView, error)
 }
+
+// ServerStats는 서버의 CPU·메모리·디스크를 알려준다.
 type ServerStats interface {
 	Now() model.ServerSnapshot
 }
-```
 
-### 도구
+// ── 도구 ─────────────────────────────────
 
-```go
+// ImageBuilder는 빌드할 폴더(묶은 것)로 이미지를 만든다.
 type ImageBuilder interface {
-	Build(ctx, buildFolder io.Reader, tag string, log io.Writer) (model.ImageID, error)
+	Build(ctx context.Context, buildFolder io.Reader, tag string, log io.Writer) (model.ImageID, error)
 }
+
+// ImagePuller는 이미지를 받고 그 ID·열어둔 포트를 알려준다.
 type ImagePuller interface {
-	Pull(ctx, ref model.ImageRef, log io.Writer) (model.ImageDetails, error) // ID, 열어둔 포트
+	Pull(ctx context.Context, ref model.ImageRef, log io.Writer) (model.ImageDetails, error)
 }
+
+// ImageCleaner는 이미지가 있는지 보고, 지운다.
 type ImageCleaner interface {
-	Exists(ctx, id model.ImageID) bool
-	Remove(ctx, ref string) error
+	Exists(ctx context.Context, id model.ImageID) bool
+	Remove(ctx context.Context, ref string) error
 }
+
+// ContainerStarter는 컨테이너를 만들어 띄운다.
 type ContainerStarter interface {
-	Start(ctx, spec model.ContainerSpec) error // 만들고 띄운다
+	Start(ctx context.Context, spec model.ContainerSpec) error
 }
+
+// ContainerRemover는 컨테이너를 없앤다.
 type ContainerRemover interface {
-	Remove(ctx, name string) error
+	Remove(ctx context.Context, name string) error
 }
+
+// ContainerSwitch는 컨테이너를 멈추고 켠다.
 type ContainerSwitch interface {
-	TurnOff(ctx, name string) error
-	TurnOn(ctx, name string) error
+	TurnOff(ctx context.Context, name string) error
+	TurnOn(ctx context.Context, name string) error
 }
+
+// ContainerWatcher는 컨테이너 상태·로그, 이 서비스의 컨테이너 목록을 본다.
 type ContainerWatcher interface {
-	All(ctx) (model.ContainerStates, error) // 한 번에 전부
-	One(ctx, name string) (model.ContainerState, error)
-	Logs(ctx, name string, lines int) (string, error)
-	BelongingTo(ctx, id model.ServiceID) ([]string, error) // 라벨로 찾은 이 서비스의 컨테이너
+	All(ctx context.Context) (model.ContainerStates, error)
+	One(ctx context.Context, name string) (model.ContainerState, error)
+	Logs(ctx context.Context, name string, lines int) (string, error)
+	BelongingTo(ctx context.Context, id model.ServiceID) ([]string, error)
 }
+
+// CodeDownloader는 저장소 코드를 내려받는다.
 type CodeDownloader interface {
-	Download(ctx, from model.CodeSource, into string, log io.Writer) (model.Commit, error)
+	Download(ctx context.Context, from model.CodeSource, into string, log io.Writer) (model.Commit, error)
 }
+
+// WorkFolder는 잠깐 쓸 작업 폴더를 빌려주고, 그 안의 경로를 안전하게 찾아 준다.
 type WorkFolder interface {
 	Borrow(name string) (path string, giveBack func(), err error)
+	Inside(root string, p model.FolderPath) (string, error) // 심볼릭 링크로 밖에 나가면 실패
 }
+
+// BuildContextPacker는 빌드할 폴더를 묶는다 (.git·.dockerignore 제외).
 type BuildContextPacker interface {
 	Pack(folder string) io.ReadCloser
 }
+
+// DockerfilePortReader는 Dockerfile의 EXPOSE에서 앱 포트를 찾는다. Dockerfile이 없으면 found가 거짓.
 type DockerfilePortReader interface {
-	Ports(folder string) []model.Port
+	Ports(folder string) (ports []model.Port, found bool)
 }
+
+// SiteFiles는 정적 사이트 파일을 올리고·복사하고·지운다 (숨김 파일 제외).
 type SiteFiles interface {
 	Publish(from string, to model.SiteFolder) (count int, err error)
 	Copy(from, to model.SiteFolder) error
 	Exists(f model.SiteFolder) bool
-	Prune(site model.ServiceName, keep []model.SiteFolder)
+	Prune(site model.ServiceName, keep int, live model.DeploymentID)
+	RemoveSite(site model.ServiceName) error
 }
+
+// PortChecker는 그 주소의 포트가 응답하는지 본다.
 type PortChecker interface {
-	Answers(ctx, host string, port model.Port) error
+	Answers(ctx context.Context, host string, port model.Port) error
 }
+
+// DNSChecker는 도메인이 이 서버를 가리키는지 본다.
 type DNSChecker interface {
-	PointsHere(ctx, d model.DomainName, thisServer string) model.DNSAnswer
+	PointsHere(ctx context.Context, d model.DomainName, thisServer string) model.DNSAnswer
 }
-type EventPublisher interface{ Publish(e model.Event) }
-type EventSubscriber interface{ Subscribe(listen func(model.Event)) }
-type Clock interface{ Now() time.Time }
-type RandomTokens interface{ New(bytes int) string }
+
+// EventPublisher는 일어난 일을 알린다.
+type EventPublisher interface {
+	Publish(e model.Event)
+}
+
+// EventSubscriber는 일어난 일을 듣는다.
+type EventSubscriber interface {
+	Subscribe(listen func(model.Event))
+}
+
+// Clock은 지금 시각이다.
+type Clock interface {
+	Now() time.Time
+}
+
+// RandomTokens는 난수 문자열(16진수)이다.
+type RandomTokens interface {
+	New(bytes int) string
+}
 ```
 
 ---
@@ -560,7 +700,7 @@ type RandomTokens interface{ New(bytes int) string }
 | `serviceEditor` | ServiceReader · ServiceStore · DomainStore · SecretStore · NameChooser · DomainChecker · KindLookup · RandomTokens · EventPublisher |
 | `serviceLauncher` | ServiceEditor · KindLookup · Deployer |
 | `deployer` | DeployLock · DeployHistoryStore · DeployHistoryReader · DeployLog · ServiceReader · LiveStateStore · KindLookup · OldVersionCleaner · EventPublisher |
-| `serviceControl` | ServiceReader · ServiceStore · LiveStateStore · ContainerSwitch · ContainerRemover · ContainerWatcher · ImageCleaner · SiteFiles · DeployHistoryReader · EventPublisher |
+| `serviceControl` | ServiceReader · ServiceStore · LiveStateStore · DeployLock · ContainerSwitch · ContainerRemover · ContainerWatcher · ImageCleaner · SiteFiles · DeployHistoryReader · EventPublisher |
 | `RepoBuilder` | WorkFolder · CodeDownloader · SecretStore · DockerfilePortReader · BuildContextPacker · ImageBuilder |
 | `ImageFetcher` | ImagePuller |
 | `StaticBuilder` | WorkFolder · CodeDownloader · SecretStore · SiteFiles |
@@ -568,9 +708,9 @@ type RandomTokens interface{ New(bytes int) string }
 | `FolderSwapper` | SiteFiles |
 | `oldVersionCleaner` | DeployHistoryReader · ImageCleaner · SiteFiles |
 | `hookReceiver` | ServiceReader · SecretStore · SignatureChecker(차례로) · BranchFilter · Deployer · HookLogStore · Clock |
-| `siteMapBuilder` | ServiceReader · DomainStore · KindLookup · AdminDomainSetting · CertEmailSetting · SetupProgress · (M4: CertificateReader) |
+| `siteMapBuilder` | ServiceReader · KindLookup · AdminDomainSetting · CertEmailSetting · SetupProgress · (M4: CertificateReader) |
 | `webServerSync` | SiteMapBuilder · ConfigWriter · ConfigSender(`AdminSocketGuard`로 감싼 것) · EventSubscriber |
-| `serviceViewer` | ServiceReader · DomainStore · SecretStore · DeployHistoryReader · ContainerWatcher · KindLookup · AdminDomainSetting · Deployer |
+| `serviceViewer` | ServiceReader · SecretStore · DeployHistoryReader · ContainerWatcher · KindLookup · AdminDomainSetting · Deployer |
 | `web` | LoginManager · AccountManager · SetupKey · AdminDomainSetting · CertEmailSetting · SetupProgress · ServiceLauncher · ServiceEditor · ServiceViewer · Deployer · ServiceControl · HookReceiver · ServerStats · WebServerSync · DNSChecker |
 
 ---
@@ -647,13 +787,13 @@ WebServerSync (SiteMapChanged를 듣거나 30초마다)
 | # | 규칙 |
 |---|---|
 | R1 | `app`을 뺀 내부 패키지는 `model`·`contract`만 import한다 |
-| R2 | 다른 객체를 담는 필드·매개변수의 타입은 `contract`의 인터페이스다 (구체 타입 금지) |
+| R2 | 다른 객체를 담는 필드의 타입은 `contract`의 인터페이스다 (구체 타입 금지). 인터페이스만 담은 묶음 `KindTools`는 된다 |
 | R3 | `model`은 표준 라이브러리만 import하고, 인터페이스·함수 필드를 갖지 않는다 (데이터만) |
 | R4 | 인터페이스는 메서드 다섯 개 이하 |
 | R5 | `contract`의 인터페이스·`model`의 타입은 모두 이 문서 §4·§5에 이름과 한 문장이 있다 |
 | R6 | §2의 쓰지 않는 말(`Handler`·`Processor`·`Helper`·`Util`·`Info`·`Data`·`Plan`·`Ledger`·`Registry`·`Roles`)이 타입 이름에 없다 (`web`의 HTTP 핸들러 함수는 예외) |
 | R7 | SQL은 `store`에만 |
-| R8 | 바깥 세계에 닿는 import(`os/exec`·`net`·`syscall`·파일 쓰기)는 도구·저장 패키지에만 |
+| R8 | 바깥 세계에 닿는 것 — `os/exec`·`syscall`·`archive/tar` import, 파일 읽고 쓰기(`os.WriteFile`…), 연결(`net.Dial`…, `http.Client`…) — 은 도구·저장·조립(`app`)에만 |
 | R9 | 종류 이름으로 분기하는 코드는 `kinds`에만 |
 | R10 | `web`·`cli`는 `model.ServiceSecrets`·`model.PasswordHash`를 쓰지 않는다 |
 | R11 | 검사용 정규식은 `model`에만 |
@@ -686,6 +826,37 @@ M4 전에 한다. 지금의 화면·배포 테스트가 회귀 테스트다 — 
 | R0-4 | `access` · `settings` · `services` · `deploy` · `webhook` · `webserver` · `views` | 화면이 DB를 직접 부르는 곳 12 → 0, 웹서버 알림 호출 10 → 0 |
 | R0-5 | `web`·`cli`가 인터페이스만 쓰게 바꾸고, `app`을 §7 표대로 다시 쓴다 | R1 · R2 · R10 |
 | R0-6 | `archtest` 전체 + 이 문서와 대조 | R1~R11 |
+
+**R0 끝 (2026-10-10).** 여섯 단계 모두 기준을 넘었다 — `go vet`·`go test ./...`·`archtest` R1~R11 통과.
+옛 패키지(`auth`·`dnscheck`·`engine`·`hostinfo`·`service`·`source`·`v1import`)는 지웠고, 그 테스트는 모두 새 자리로 옮겼다:
+`auth`→`access`, `dnscheck`→`model`·`netcheck`, `source`→`model`·`files`, `engine`→`caddy`·`webserver`, `hostinfo`→`stats`,
+`service`·`v1import`→`store`, 배포→`deploy`(진짜 `kinds`·`store`·`files` + 가짜 Docker), 화면 흐름→`app` 인수 테스트(진짜 조립 + 가짜 바깥).
+
+### 12.1 R0에서 설계와 달라진 점
+
+| 무엇 | 설계 | 코드 | 왜 |
+|---|---|---|---|
+| 종류 담당자 묶음 이름 | `KindHandlers` | `KindTools` | "Handler"는 §2에서 쓰지 않기로 한 말 (R6) |
+| `InputChecker.Check` | `error`만 | `(ServiceInput, error)` | 종류에 맞게 정리(안 쓰는 칸 비우기, 기본 브랜치)까지 한 값을 돌려준다 |
+| `ServiceEditor` | 지우기 포함 | 지우기 없음 | 지우기는 컨테이너·이미지·파일까지 함께라 `ServiceControl.Remove` 한 곳 |
+| `serviceControl` | — | `DeployLock`을 쓴다 | 배포 중인 서비스는 지우지 않는다 (옛 동작) |
+| `WorkFolder` | 빌리기·돌려주기 | + `Inside` | 저장소 안 경로를 심볼릭 링크로 빠져나가지 않게 찾는 일 |
+| `DockerfilePortReader.Ports` | 포트만 | `(ports, found)` | "Dockerfile이 없다"와 "EXPOSE가 없다"를 구분해 알려준다 |
+| `SwapRequest` | 비밀 포함 | 비밀 없음 | §7대로 `ContainerSwapper`가 `SecretStore`에서 직접 읽는다 — 배포기는 비밀을 만지지 않는다 |
+| `DeployLock.TryLock` | — | `why`가 비면 합치지 않는다 | 되돌리기는 "끝나고 한 번 더"로 합치면 안 된다 |
+| `CertificateReader` | contract에 있음 | 아직 없음 | M4 설계 노트에서 정한다 |
+| `siteMapBuilder` · `serviceViewer` | `DomainStore`를 씀 | 쓰지 않음 | `ServiceReader`가 주소까지 함께 준다 |
+| `Deployer`·`WebServerSync` 만들기 | — | `NewDeployer`는 `wait`, `NewWebServerSync`는 `run`을 함께 돌려준다 | 수명(멈추기·기다리기)은 조립(`app`)만 다룬다 — 인터페이스는 세 개·두 개 그대로 |
+| 저장된 env·볼륨 | — | `StoredEnvVars`·`StoredVolumes` | v1에서 온 값에 틀린 줄이 하나 있어도 나머지를 잃지 않게 |
+
+**동작이 바뀐 곳 (작게, 의도해서)**
+
+- 서비스 폼의 포트 칸에 숫자가 아닌 값을 적으면 예전엔 조용히 0이었다 → 이제 "포트는 1~65535" 오류.
+- 이미지 서비스는 브랜치를 저장하지 않는다 (예전엔 `main`이 들어가 있었다).
+- 정적 사이트의 "보내는 곳"은 웹서버가 보는 경로(`/srv/sites/…`)로 보인다 (예전엔 `data/sites/…`).
+- v1 프록시 호스트 중 설명이 NULL인 것도 옮긴다 (예전엔 SQL 비교 때문에 빠졌다).
+- 셸 복구 명령(`naru users` 등)은 작업 폴더 정리·"중단된 배포 닫기"를 하지 않는다 — 돌고 있는 서버의 배포를 건드리지 않게 (서버를 띄울 때만 한다).
+- `ADMIN_DOMAIN`·`ACME_EMAIL`이 모양에 맞지 않으면 시작하지 않는다 (예전엔 그대로 웹서버에 넘겼다).
 
 ---
 

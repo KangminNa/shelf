@@ -10,14 +10,14 @@
     <div class="sub"><span>{{t $c.KindKey}}</span>{{with $c.Domain}}<span>·</span><a class="ext" href="http://{{.}}" target="_blank" rel="noopener">{{.}} ↗</a>{{end}}</div>
   </div>
   <div class="head-actions">
-    {{if $s.HasContainer}}
-      {{if $s.Stopped}}
+    {{if $.Data.Container}}
+      {{if $s.Live.Stopped}}
       <form method="post" action="/services/{{$id}}/start"><button class="btn" type="submit">{{t "service.start"}}</button></form>
       {{else}}
       <form method="post" action="/services/{{$id}}/stop"><button class="btn" type="submit">{{t "service.stop"}}</button></form>
       {{end}}
     {{end}}
-    {{if $s.Deployable}}
+    {{if $.Data.Deployable}}
     <form method="post" action="/services/{{$id}}/deploy"><button class="btn primary" type="submit">{{t "service.deploy"}}</button></form>
     {{end}}
   </div>
@@ -36,13 +36,13 @@
   <p class="big-state"><span class="dot {{$c.StateClass}}"></span>{{t $c.StateKey}}{{with $c.Detail}} <span class="muted small">{{.}}</span>{{end}}</p>
   <dl class="facts">
     <dt>{{t "service.target"}}</dt><dd>{{with .Data.Target}}<code>{{.}}</code>{{else}}—{{end}}</dd>
-    {{if $s.HasContainer}}
-    <dt>{{t "service.container"}}</dt><dd><code>{{$s.CurrentContainer}}</code></dd>
+    {{if $.Data.Container}}
+    <dt>{{t "service.container"}}</dt><dd><code>{{$s.Live.CurrentContainer}}</code></dd>
     {{end}}
   </dl>
 </section>
 
-{{if $s.Deployable}}
+{{if $.Data.Deployable}}
 <section class="section" id="deploys">
   <h2>{{t "service.deploys"}}</h2>
   {{if .Data.Deploys}}
@@ -73,7 +73,7 @@
     <dt>Payload URL</dt><dd><code>{{.Data.WebhookURL}}</code></dd>
     <dt>Content type</dt><dd><code>application/json</code></dd>
     <dt>Secret</dt><dd><details class="reveal"><summary>{{t "service.reveal"}}</summary><code>{{.Data.WebhookSecret}}</code></details></dd>
-    <dt>{{t "service.hook.last"}}</dt><dd>{{if $s.HookAt}}{{ago .Data.HookTime}} · {{$s.HookResult}}{{else}}<span class="muted">{{t "service.hook.never"}}</span>{{end}}</dd>
+    <dt>{{t "service.hook.last"}}</dt><dd>{{if not $s.HookLog.At.IsZero}}{{ago $s.HookLog.At}} · {{$s.HookLog.Result}}{{else}}<span class="muted">{{t "service.hook.never"}}</span>{{end}}</dd>
   </dl>
   {{else}}<p class="flash bad">{{t "service.webhook.nodomain"}}</p>{{end}}
 </section>
@@ -125,7 +125,7 @@
     {{if eq (print $s.Kind) "external"}}
     <label class="field"><span>{{t "field.upstream"}}</span><input class="input mono" name="upstream" value="{{$f.Upstream}}" required></label>
     {{end}}
-    {{if $s.HasContainer}}
+    {{if $.Data.Container}}
     <label class="field"><span>{{t "service.port"}}</span><input class="input mono" name="port" value="{{if $f.Port}}{{$f.Port}}{{end}}" inputmode="numeric">
       <small>{{t "service.port.hint"}}</small></label>
     <details class="more"><summary>{{t "field.env"}} · {{t "field.volumes"}}</summary><div class="form">
@@ -133,7 +133,7 @@
       <label class="field"><span>{{t "field.volumes"}}</span><textarea class="input mono" name="volumes" rows="2">{{$f.Volumes}}</textarea></label>
     </div></details>
     {{end}}
-    {{if $s.Deployable}}
+    {{if $.Data.Deployable}}
     <label class="check-label"><input type="checkbox" name="auto_deploy" value="1" {{if $f.AutoDeploy}}checked{{end}}> {{t "service.autodeploy"}}</label>
     {{end}}
     <div><button class="btn primary" type="submit">{{t "common.save"}}</button></div>

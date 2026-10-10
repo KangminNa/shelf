@@ -1,21 +1,16 @@
 package web
 
 import (
-	"context"
 	"fmt"
 	"net/http"
-	"time"
 	"unicode"
 
-	"github.com/KangminNa/naru/internal/docker"
-	"github.com/KangminNa/naru/internal/engine"
-	"github.com/KangminNa/naru/internal/hostinfo"
-	"github.com/KangminNa/naru/internal/service"
+	"github.com/KangminNa/naru/internal/model"
 )
 
 // card는 서비스 하나를 화면에 보여줄 모양이다.
 type card struct {
-	ID         int64
+	ID         model.ServiceID
 	Name       string
 	Initial    string
 	Color      string
@@ -43,82 +38,20 @@ func initialOf(name string) string {
 	return "?"
 }
 
-// cardFor는 서비스와 (있다면) 컨테이너 상태로 카드를 만든다. containers가 nil이면 Docker를 읽지 못한 것이다.
-func cardForService(s service.Service, containers map[string]docker.Container) card {
-	c := card{ID: s.ID, Name: s.Name, Initial: initialOf(s.Name), Color: colorFor(s.Name), KindKey: "kind." + string(s.Kind), Domain: s.PrimaryDomain()}
-	switch {
-	case s.Kind == service.KindExternal:
-		c.StateKey, c.StateClass = "state.routed", "muted"
-	case s.Kind == service.KindStatic && s.Release == "":
-		c.StateKey, c.StateClass = "state.notdeployed", "muted"
-	case s.Kind == service.KindStatic:
-		c.StateKey, c.StateClass = "state.static", "ok"
-	case containers == nil:
-		c.StateKey, c.StateClass = "state.unknown", "muted"
-	default:
-		ct, ok := containers[s.CurrentContainer()]
-		if !ok {
-			c.StateKey, c.StateClass = "state.missing", "bad"
-			if s.Instance == "" && s.Container == "" {
-				c.StateKey, c.StateClass = "state.notdeployed", "muted"
-			}
-			break
-		}
-		c.Detail = ct.Status
-		switch ct.State {
-		case docker.Running:
-			c.StateKey, c.StateClass = "state.running", "ok"
-		case docker.Restarting, docker.Dead:
-			c.StateKey, c.StateClass = "state.restarting", "bad"
-		case docker.Exited:
-			c.StateKey, c.StateClass = "state.crashed", "bad"
-			if s.Stopped {
-				c.StateKey, c.StateClass = "state.stopped", "muted"
-			}
-		case docker.Paused:
-			c.StateKey, c.StateClass = "state.paused", "warn"
-		default:
-			c.StateKey, c.StateClass = "state.created", "muted"
-		}
-	}
-	return c
-}
-
-func (s *Server) containers(ctx context.Context) map[string]docker.Container {
-	if s.d.Containers == nil {
-		return nil
-	}
-	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
-	defer cancel()
-	all, err := s.d.Containers.Containers(ctx)
-	if err != nil {
-		s.d.Log.Warn("docker unreachable", "err", err)
-		return nil
-	}
-	return all
-}
-
-func (s *Server) engineStatus() engine.Status {
-	if s.d.Engine == nil {
-		return engine.Status{}
-	}
-	return s.d.Engine.Status()
-}
-
-// changed는 웹서버 설정에 영향을 주는 것이 바뀌었음을 엔진에 알린다.
-func (s *Server) changed() {
-	if s.d.Engine != nil {
-		s.d.Engine.Kick()
+func cardOf(c model.ServiceCard) card {
+	return card{
+		ID: c.ID, Name: c.Name, Initial: initialOf(c.Name), Color: colorFor(c.Name), KindKey: "kind." + string(c.Kind), Domain: c.Domain,
+		StateKey: "state." + c.Status.Key, StateClass: c.Status.Tone, Detail: c.Status.Detail,
 	}
 }
 
 // ── 홈 ────────────────────────────────────
 
-type homeData struct {
+type homeScreen struct {
 	AdminDomain string
-	Host        hostinfo.Snapshot
+	Host        model.ServerSnapshot
 	Services    []card
-	Engine      engine.Status
+	Engine      model.WebServerStatus
 	DockerDown  bool
 }
 
@@ -127,27 +60,14 @@ func (s *Server) home(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	d := homeData{AdminDomain: s.adminDomain(), Host: s.d.Host.Snapshot(), Engine: s.engineStatus()}
-	services, err := s.d.Services.List()
+	d := homeScreen{AdminDomain: s.adminDomain(r.Context()), Host: s.d.Stats.Now(), Engine: s.d.WebServer.Status()}
+	h, err := s.d.Viewer.Home(r.Context())
 	if err != nil {
 		s.d.Log.Error("list services", "err", err)
 	}
-	var containers map[string]docker.Container
-	if hasContainers(services) {
-		containers = s.containers(r.Context())
-		d.DockerDown = containers == nil
-	}
-	for _, sv := range services {
-		d.Services = append(d.Services, cardForService(sv, containers))
+	d.DockerDown = h.DockerDown
+	for _, c := range h.Cards {
+		d.Services = append(d.Services, cardOf(c))
 	}
 	s.render(w, r, http.StatusOK, "home", view{Nav: "home", User: &u, OK: okKeys[r.URL.Query().Get("ok")], Data: d})
-}
-
-func hasContainers(all []service.Service) bool {
-	for _, s := range all {
-		if s.HasContainer() {
-			return true
-		}
-	}
-	return false
 }

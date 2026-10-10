@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/KangminNa/naru/internal/app"
+	"github.com/KangminNa/naru/internal/cli"
 )
 
 // 빌드할 때 -ldflags "-X main.version=..." 으로 바꾼다.
@@ -55,39 +56,5 @@ func runCommand(cfg app.Config, log *slog.Logger, args []string) int {
 		return 1
 	}
 	defer a.Close()
-
-	switch args[0] {
-	case "users":
-		names, err := a.Auth.Usernames()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
-		}
-		if len(names) == 0 {
-			fmt.Println("(계정 없음 — 첫 설정이 열려 있습니다 / no accounts — setup is open)")
-		}
-		for _, n := range names {
-			fmt.Println(n)
-		}
-	case "passwd":
-		if len(args) != 3 {
-			fmt.Fprintln(os.Stderr, "usage: naru passwd <username> <new-password>")
-			return 2
-		}
-		if err := a.Auth.SetPassword(args[1], args[2]); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
-		}
-		fmt.Printf("%s: 비밀번호를 바꿨습니다. 모든 로그인이 끊겼습니다. / password changed, all sessions revoked\n", args[1])
-	case "reset":
-		if err := a.Auth.Reset(); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			return 1
-		}
-		fmt.Println("계정을 모두 지웠습니다. 다시 시작하면 첫 설정 주소가 로그에 찍힙니다. / all accounts removed; restart to get a new setup link")
-	default:
-		fmt.Fprintf(os.Stderr, "unknown command %q (users | passwd | reset | version)\n", args[0])
-		return 2
-	}
-	return 0
+	return cli.Run(context.Background(), args, a.Accounts, os.Stdout, os.Stderr)
 }

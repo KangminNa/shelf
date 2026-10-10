@@ -122,7 +122,7 @@ func follow(r io.Reader, log io.Writer) (imageID string, err error) {
 }
 
 // Build는 tar로 묶은 빌드 컨텍스트로 이미지를 만든다. 진행은 log로 흐른다.
-func (c *Client) Build(ctx context.Context, tarball io.Reader, tag, dockerfile string, log io.Writer) (string, error) {
+func (c *Client) build(ctx context.Context, tarball io.Reader, tag, dockerfile string, log io.Writer) (string, error) {
 	q := url.Values{"t": {tag}, "rm": {"1"}, "forcerm": {"1"}}
 	if dockerfile != "" {
 		q.Set("dockerfile", dockerfile)
@@ -137,7 +137,7 @@ func (c *Client) Build(ctx context.Context, tarball io.Reader, tag, dockerfile s
 		return "", err
 	}
 	if id == "" { // 오래된 빌더는 aux를 주지 않는다 — 태그로 찾는다
-		img, ierr := c.Image(ctx, tag)
+		img, ierr := c.image(ctx, tag)
 		if ierr != nil {
 			return "", ierr
 		}
@@ -147,7 +147,7 @@ func (c *Client) Build(ctx context.Context, tarball io.Reader, tag, dockerfile s
 }
 
 // Pull은 이미지를 받는다. ref에는 태그나 다이제스트가 붙어 있어도 된다.
-func (c *Client) Pull(ctx context.Context, ref string, log io.Writer) error {
+func (c *Client) pull(ctx context.Context, ref string, log io.Writer) error {
 	name, tag := splitRef(ref)
 	q := url.Values{"fromImage": {name}}
 	if tag != "" {
@@ -180,7 +180,7 @@ type Image struct {
 	Ports []int // EXPOSE 한 TCP 포트
 }
 
-func (c *Client) Image(ctx context.Context, ref string) (Image, error) {
+func (c *Client) image(ctx context.Context, ref string) (Image, error) {
 	var raw struct {
 		ID     string `json:"Id"`
 		Config struct {
@@ -204,7 +204,7 @@ func (c *Client) Image(ctx context.Context, ref string) (Image, error) {
 	return img, nil
 }
 
-func (c *Client) RemoveImage(ctx context.Context, ref string) error {
+func (c *Client) removeImage(ctx context.Context, ref string) error {
 	return c.call(ctx, http.MethodDelete, "/images/"+url.PathEscape(ref), nil, nil)
 }
 
@@ -219,7 +219,7 @@ type Spec struct {
 	Aliases []string // 네트워크에서 이 이름들로도 불린다
 }
 
-func (c *Client) Create(ctx context.Context, s Spec) (string, error) {
+func (c *Client) create(ctx context.Context, s Spec) (string, error) {
 	body := map[string]any{
 		"Image":  s.Image,
 		"Env":    s.Env,
@@ -242,16 +242,16 @@ func (c *Client) Create(ctx context.Context, s Spec) (string, error) {
 	return out.ID, err
 }
 
-func (c *Client) Start(ctx context.Context, name string) error {
+func (c *Client) start(ctx context.Context, name string) error {
 	return c.call(ctx, http.MethodPost, "/containers/"+url.PathEscape(name)+"/start", nil, nil)
 }
 
 // Stop은 SIGTERM 뒤 grace만큼 기다린다.
-func (c *Client) Stop(ctx context.Context, name string, grace time.Duration) error {
+func (c *Client) stop(ctx context.Context, name string, grace time.Duration) error {
 	return c.call(ctx, http.MethodPost, fmt.Sprintf("/containers/%s/stop?t=%d", url.PathEscape(name), int(grace.Seconds())), nil, nil)
 }
 
-func (c *Client) Remove(ctx context.Context, name string) error {
+func (c *Client) remove(ctx context.Context, name string) error {
 	return c.call(ctx, http.MethodDelete, "/containers/"+url.PathEscape(name)+"?force=1", nil, nil)
 }
 
@@ -261,7 +261,7 @@ type Inspection struct {
 	ExitCode int
 }
 
-func (c *Client) Inspect(ctx context.Context, name string) (Inspection, error) {
+func (c *Client) inspect(ctx context.Context, name string) (Inspection, error) {
 	var raw struct {
 		State struct {
 			Running  bool
@@ -276,7 +276,7 @@ func (c *Client) Inspect(ctx context.Context, name string) (Inspection, error) {
 }
 
 // Logs는 컨테이너 출력의 마지막 n줄이다 (stdout·stderr 섞어서).
-func (c *Client) Logs(ctx context.Context, name string, n int) (string, error) {
+func (c *Client) logs(ctx context.Context, name string, n int) (string, error) {
 	res, err := c.stream(ctx, http.MethodGet, fmt.Sprintf("/containers/%s/logs?stdout=1&stderr=1&tail=%d", url.PathEscape(name), n), nil, "")
 	if err != nil {
 		return "", err
@@ -303,7 +303,7 @@ func demux(raw []byte) string {
 }
 
 // ByLabel은 라벨이 key=value인 컨테이너 이름들이다.
-func (c *Client) ByLabel(ctx context.Context, key, value string) ([]string, error) {
+func (c *Client) byLabel(ctx context.Context, key, value string) ([]string, error) {
 	filters, _ := json.Marshal(map[string][]string{"label": {key + "=" + value}})
 	var raw []struct{ Names []string }
 	if err := c.call(ctx, http.MethodGet, "/containers/json?all=1&filters="+url.QueryEscape(string(filters)), nil, &raw); err != nil {

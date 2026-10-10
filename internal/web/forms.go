@@ -1,20 +1,14 @@
 package web
 
 import (
-	"net"
 	"net/http"
-	"path"
-	"regexp"
 	"strconv"
 	"strings"
 
-	"github.com/KangminNa/naru/internal/deploy"
-	"github.com/KangminNa/naru/internal/dnscheck"
-	"github.com/KangminNa/naru/internal/service"
-	"github.com/KangminNa/naru/internal/source"
+	"github.com/KangminNa/naru/internal/model"
 )
 
-// serviceForm은 서비스 추가·설정 폼에서 받은 값이다. 틀리면 Err에 문구 키가 들어간다.
+// serviceForm은 서비스 추가·설정 폼에서 받은 글자 그대로다. 틀렸을 때 다시 그리는 데 쓴다.
 type serviceForm struct {
 	Kind       string
 	Name       string
@@ -23,7 +17,7 @@ type serviceForm struct {
 	BuildPath  string
 	Folder     string
 	Upstream   string
-	Port       int
+	Port       string
 	Domain     string
 	Token      string
 	ClearToken bool
@@ -32,25 +26,17 @@ type serviceForm struct {
 	AutoDeploy bool
 }
 
-var (
-	namePattern  = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,30}$`)
-	imagePattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._/:@-]{0,254}$`)
-	hostPattern  = regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9.-]{0,251}[a-zA-Z0-9])?$`)
-	nonName      = regexp.MustCompile(`[^a-z0-9-]+`)
-)
-
 func readServiceForm(r *http.Request) serviceForm {
-	port, _ := strconv.Atoi(strings.TrimSpace(r.FormValue("port")))
 	return serviceForm{
 		Kind:       r.FormValue("kind"),
-		Name:       strings.ToLower(strings.TrimSpace(r.FormValue("name"))),
+		Name:       strings.TrimSpace(r.FormValue("name")),
 		Source:     strings.TrimSpace(r.FormValue("source")),
 		Branch:     strings.TrimSpace(r.FormValue("branch")),
 		BuildPath:  strings.TrimSpace(r.FormValue("build_path")),
 		Folder:     strings.TrimSpace(r.FormValue("folder")),
 		Upstream:   strings.TrimSpace(r.FormValue("upstream")),
-		Port:       port,
-		Domain:     dnscheck.Normalize(r.FormValue("domain")),
+		Port:       strings.TrimSpace(r.FormValue("port")),
+		Domain:     strings.TrimSpace(r.FormValue("domain")),
 		Token:      strings.TrimSpace(r.FormValue("token")),
 		ClearToken: r.FormValue("clear_token") == "1",
 		Env:        strings.ReplaceAll(r.FormValue("env"), "\r\n", "\n"),
@@ -59,110 +45,65 @@ func readServiceForm(r *http.Request) serviceForm {
 	}
 }
 
-// check는 종류에 맞는 값만 검사하고 정리한다. 문제가 있으면 문구 키를 돌려준다.
-func (f *serviceForm) check() string {
-	kind := service.Kind(f.Kind)
-	if !kind.Valid() {
-		return "err.kind"
+// formFrom은 저장된 값으로 설정 폼을 채운다.
+func formFrom(f model.ServiceForm) serviceForm {
+	port := ""
+	if f.Port != 0 {
+		port = strconv.Itoa(int(f.Port))
 	}
-	if f.Branch == "" {
-		f.Branch = "main"
+	return serviceForm{
+		Source: f.Source, Branch: f.Branch, BuildPath: f.BuildPath, Folder: f.Folder, Upstream: f.External,
+		Port: port, AutoDeploy: f.AutoDeploy, Env: f.EnvText, Volumes: f.Volumes,
 	}
-	switch kind {
-	case service.KindRepo, service.KindStatic:
-		if source.ValidRepoURL(f.Source) != nil {
-			return "err.repo"
-		}
-		if source.ValidBranch(f.Branch) != nil {
-			return "err.branch"
-		}
-	case service.KindImage:
-		if !imagePattern.MatchString(f.Source) || strings.Contains(f.Source, "..") {
-			return "err.image"
-		}
-	case service.KindExternal:
-		up, ok := normalizeUpstream(f.Upstream)
-		if !ok {
-			return "err.upstream"
-		}
-		f.Upstream = up
-	}
+}
+
+// input은 글자들을 값 객체로 바꾼다. 모양이 틀린 칸이 있으면 그 InputError를 돌려준다.
+// 어느 칸이 이 종류에 필요한지는 화면이 아니라 종류 담당자(InputChecker)가 본다 —
+// "source"는 저장소 주소로도, 이미지 이름으로도 읽어 두고 종류가 고른다.
+func (f serviceForm) input(kind model.KindName) (model.ServiceInput, error) {
+	in := model.ServiceInput{Kind: kind, Token: f.Token, ClearToken: f.ClearToken, AutoDeploy: f.AutoDeploy}
 	var err error
-	if f.BuildPath, err = source.CleanRel(f.BuildPath); err != nil {
-		return "err.path"
-	}
-	if f.Folder, err = source.CleanRel(f.Folder); err != nil {
-		return "err.path"
-	}
-	if f.Port < 0 || f.Port > 65535 {
-		return "err.port"
-	}
-	for _, line := range strings.Split(f.Env, "\n") {
-		if t := strings.TrimSpace(line); t != "" && !strings.HasPrefix(t, "#") && !deploy.ValidEnvLine(line) {
-			return "err.env"
+	if f.Name != "" {
+		if in.Name, err = model.ParseServiceName(f.Name); err != nil {
+			return in, err
 		}
 	}
-	for _, line := range strings.Split(f.Volumes, "\n") {
-		if t := strings.TrimSpace(line); t != "" && !deploy.ValidVolume(t) {
-			return "err.volumes"
+	// 둘 다 아니면 둘 다 비어 있게 된다 — 그러면 종류 담당자가 자기에게 필요한 칸(저장소 주소·이미지 이름)이 틀렸다고 알려준다.
+	in.Repo, _ = model.ParseRepoURL(f.Source)
+	in.Image, _ = model.ParseImageRef(f.Source)
+	if in.Branch, err = model.ParseBranch(f.Branch); err != nil {
+		return in, err
+	}
+	if f.Upstream != "" {
+		if in.External, err = model.ParseExternalAddress(f.Upstream); err != nil {
+			return in, model.InputError{Field: "upstream", Code: "upstream"}
 		}
 	}
-	if f.Domain != "" && !dnscheck.Valid(f.Domain) {
-		return "err.domain"
+	if in.BuildPath, err = model.ParseFolderPath(f.BuildPath); err != nil {
+		return in, err
 	}
-	return ""
+	if in.Folder, err = model.ParseFolderPath(f.Folder); err != nil {
+		return in, err
+	}
+	if in.Port, err = model.ParsePort(f.Port); err != nil {
+		return in, err
+	}
+	if in.Env, err = model.ParseEnvVars(f.Env); err != nil {
+		return in, err
+	}
+	if in.Volumes, err = model.ParseVolumes(f.Volumes); err != nil {
+		return in, err
+	}
+	if in.Domain, err = model.ParseOptionalDomainName(f.Domain); err != nil {
+		return in, err
+	}
+	return in, nil
 }
 
-// normalizeUpstream은 "192.168.0.20:5000", "https://router.lan:443", "localhost:9000" 같은 값을 받는다.
-// 이 서버 자신(localhost)은 웹서버 컨테이너 안에서 host.docker.internal이다.
-func normalizeUpstream(raw string) (string, bool) {
-	scheme := ""
-	if rest, ok := strings.CutPrefix(raw, "https://"); ok {
-		scheme, raw = "https://", rest
-	} else {
-		raw = strings.TrimPrefix(raw, "http://")
+// errKeyOf는 실패를 화면 문구 키로 바꾼다. 모르는 실패는 "처리하지 못했어요".
+func errKeyOf(err error) string {
+	if ie, ok := model.AsInputError(err); ok {
+		return "err." + ie.Code
 	}
-	raw = strings.TrimSuffix(raw, "/")
-	host, portStr, err := net.SplitHostPort(raw)
-	if err != nil {
-		return "", false
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil || port < 1 || port > 65535 {
-		return "", false
-	}
-	if host == "localhost" || host == "127.0.0.1" || host == "::1" {
-		host = "host.docker.internal"
-	}
-	if net.ParseIP(host) == nil && !hostPattern.MatchString(host) {
-		return "", false
-	}
-	return scheme + net.JoinHostPort(host, portStr), true
-}
-
-// suggestName은 이름을 비워 두면 주소·저장소·이미지에서 이름을 지어 준다.
-func suggestName(f serviceForm) string {
-	var base string
-	switch {
-	case f.Domain != "":
-		base, _, _ = strings.Cut(f.Domain, ".")
-	case f.Source != "":
-		s := strings.TrimSuffix(strings.TrimSuffix(f.Source, "/"), ".git")
-		s, _, _ = strings.Cut(s, "@")
-		base = path.Base(s)
-		if i := strings.LastIndex(base, ":"); i > 0 && f.Kind == string(service.KindImage) {
-			base = base[:i]
-		}
-	case f.Upstream != "":
-		host, _, _ := net.SplitHostPort(strings.TrimPrefix(f.Upstream, "https://"))
-		base, _, _ = strings.Cut(host, ".")
-	}
-	name := strings.Trim(nonName.ReplaceAllString(strings.ToLower(base), "-"), "-")
-	if len(name) > 31 {
-		name = strings.Trim(name[:31], "-")
-	}
-	if name == "" {
-		name = "service"
-	}
-	return name
+	return "err.internal"
 }

@@ -1,11 +1,11 @@
-// Package store는 Naru의 상태를 담는 SQLite 파일 하나를 연다.
+// Package store는 Naru의 상태를 SQLite 파일 하나에 둔다. SQL은 이 패키지에만 있다.
 // 마이그레이션은 바이너리에 들어 있고, 열 때마다 아직 적용하지 않은 것만 순서대로 적용한다.
 package store
 
 import (
+	"context"
 	"database/sql"
 	"embed"
-	"errors"
 	"fmt"
 	"io/fs"
 	"net/url"
@@ -17,22 +17,11 @@ import (
 //go:embed migrations/*.sql
 var migrations embed.FS
 
-// 설정 키. 값은 모두 문자열로 저장한다.
-const (
-	KeyAdminDomain = "admin_domain" // 관리 화면 주소
-	KeyACMEEmail   = "acme_email"   // HTTPS 인증서 연락처
-	KeySetupDone   = "setup_done"   // 첫 실행 마법사를 끝냈는가
-	KeyV1Imported  = "v1_imported"  // v1 계정·관리 도메인을 옮겼는가 (한 번만)
-	// v1 앱·프록시 호스트를 서비스로 옮겼는가. M1에서 계정만 옮긴 설치도 다시 볼 수 있게 따로 둔다.
-	KeyV1ImportedServices = "v1_imported_services"
-)
-
-type Store struct {
-	DB *sql.DB
-}
+// DB는 열린 Naru DB다. 저장 객체들은 이것을 나눠 쓴다.
+type DB struct{ sql *sql.DB }
 
 // Open은 path의 DB를 열고 마이그레이션을 적용한다.
-func Open(path string) (*Store, error) {
+func Open(path string) (*DB, error) {
 	db, err := sql.Open("sqlite", dsn(path, false))
 	if err != nil {
 		return nil, err
@@ -43,16 +32,18 @@ func Open(path string) (*Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
-	s := &Store{DB: db}
-	if err := s.migrate(); err != nil {
+	d := &DB{sql: db}
+	if err := d.migrate(); err != nil {
 		db.Close()
 		return nil, err
 	}
-	return s, nil
+	return d, nil
 }
 
-// OpenReadOnly는 다른 프로그램(v1)의 DB를 건드리지 않고 읽기만 한다.
-func OpenReadOnly(path string) (*sql.DB, error) {
+func (d *DB) Close() error { return d.sql.Close() }
+
+// openReadOnly는 다른 프로그램(v1)의 DB를 건드리지 않고 읽기만 한다.
+func openReadOnly(path string) (*sql.DB, error) {
 	db, err := sql.Open("sqlite", dsn(path, true))
 	if err != nil {
 		return nil, err
@@ -77,10 +68,8 @@ func dsn(path string, readOnly bool) string {
 	return "file:" + path + "?" + q.Encode()
 }
 
-func (s *Store) Close() error { return s.DB.Close() }
-
-func (s *Store) migrate() error {
-	if _, err := s.DB.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+func (d *DB) migrate() error {
+	if _, err := d.sql.Exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
 		version TEXT PRIMARY KEY,
 		applied_at INTEGER NOT NULL DEFAULT (unixepoch())
 	)`); err != nil {
@@ -93,7 +82,7 @@ func (s *Store) migrate() error {
 	sort.Strings(names)
 	for _, name := range names {
 		var done int
-		if err := s.DB.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version = ?`, name).Scan(&done); err != nil {
+		if err := d.sql.QueryRow(`SELECT count(*) FROM schema_migrations WHERE version = ?`, name).Scan(&done); err != nil {
 			return err
 		}
 		if done > 0 {
@@ -103,7 +92,7 @@ func (s *Store) migrate() error {
 		if err != nil {
 			return err
 		}
-		tx, err := s.DB.Begin()
+		tx, err := d.sql.Begin()
 		if err != nil {
 			return err
 		}
@@ -122,22 +111,28 @@ func (s *Store) migrate() error {
 	return nil
 }
 
-// Setting은 설정 값 하나를 읽는다. 없으면 ok가 false다.
-func (s *Store) Setting(key string) (value string, ok bool) {
-	err := s.DB.QueryRow(`SELECT value FROM settings WHERE key = ?`, key).Scan(&value)
-	if errors.Is(err, sql.ErrNoRows) || err != nil {
+// ── 서버 설정 ─────────────────────────────
+
+// Settings는 서버 설정 값을 저장한다 (SettingStore).
+type Settings struct{ db *DB }
+
+func NewSettings(db *DB) Settings { return Settings{db} }
+
+func (s Settings) Get(ctx context.Context, key string) (string, bool) {
+	var v string
+	if err := s.db.sql.QueryRowContext(ctx, `SELECT value FROM settings WHERE key = ?`, key).Scan(&v); err != nil {
 		return "", false
 	}
-	return value, true
+	return v, true
 }
 
-func (s *Store) SetSetting(key, value string) error {
-	_, err := s.DB.Exec(`INSERT INTO settings (key, value) VALUES (?, ?)
+func (s Settings) Set(ctx context.Context, key, value string) error {
+	_, err := s.db.sql.ExecContext(ctx, `INSERT INTO settings (key, value) VALUES (?, ?)
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
 	return err
 }
 
-func (s *Store) DeleteSetting(key string) error {
-	_, err := s.DB.Exec(`DELETE FROM settings WHERE key = ?`, key)
+func (s Settings) Delete(ctx context.Context, key string) error {
+	_, err := s.db.sql.ExecContext(ctx, `DELETE FROM settings WHERE key = ?`, key)
 	return err
 }

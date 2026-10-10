@@ -12,29 +12,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/KangminNa/naru/internal/auth"
-	"github.com/KangminNa/naru/internal/deploy"
-	"github.com/KangminNa/naru/internal/dnscheck"
-	"github.com/KangminNa/naru/internal/docker"
-	"github.com/KangminNa/naru/internal/engine"
-	"github.com/KangminNa/naru/internal/hostinfo"
-	"github.com/KangminNa/naru/internal/service"
-	"github.com/KangminNa/naru/internal/store"
+	"github.com/KangminNa/naru/internal/contract"
+	"github.com/KangminNa/naru/internal/model"
 )
-
-// ContainerLister는 컨테이너 상태를 읽는다 (Docker). 테스트에서 바꿔 끼운다.
-type ContainerLister interface {
-	Containers(ctx context.Context) (map[string]docker.Container, error)
-}
-
-// EngineView는 웹서버 엔진의 상태를 보여주고, 설정이 바뀌었음을 알린다.
-type EngineView interface {
-	Status() engine.Status
-	Kick()
-}
 
 //go:embed templates/*.html
 var templateFS embed.FS
@@ -46,26 +30,31 @@ const (
 	sessionCookie = "naru_session"
 	langCookie    = "naru_lang"
 	defaultLang   = "en"
+	sessionMaxAge = 7 * 24 * time.Hour
 )
 
 var pageNames = []string{"setup_token", "setup_account", "setup_domain", "setup_https", "setup_done", "login", "home", "service", "new_service", "deploy", "settings", "notfound"}
 
+// Deps는 화면이 쓰는 것들이다. 모두 인터페이스다 — 화면은 저장소도, Docker도, 웹서버도 직접 모른다.
 type Deps struct {
-	Store       *store.Store
-	Auth        *auth.Service
-	Services    *service.Repo
-	Containers  ContainerLister
-	Engine      EngineView
-	Deployer    Deployer
-	Deployments *deploy.Store
-	Host        *hostinfo.Sampler
-	Lookup      dnscheck.Resolver
+	Login       contract.LoginManager
+	Accounts    contract.AccountManager
+	SetupKey    contract.SetupKey
+	AdminDomain contract.AdminDomainSetting
+	CertEmail   contract.CertEmailSetting
+	Setup       contract.SetupProgress
+	Launcher    contract.ServiceLauncher
+	Editor      contract.ServiceEditor
+	Viewer      contract.ServiceViewer
+	Deployer    contract.Deployer
+	Control     contract.ServiceControl
+	Hooks       contract.HookReceiver
+	Stats       contract.ServerStats
+	WebServer   contract.WebServerSync
+	DNS         contract.DNSChecker
 	Log         *slog.Logger
 	DataDir     string
 	Version     string
-	// 환경 변수로 정해진 값은 화면보다 우선한다 (파일로 설정하고 싶은 사람을 위해).
-	EnvAdminDomain string
-	EnvACMEEmail   string
 }
 
 type Server struct {
@@ -140,16 +129,11 @@ func (s *Server) routes() {
 
 type view struct {
 	Lang, Path, Nav, Version string
-	User                     *auth.User
+	User                     *model.Account
 	Err, OK                  string // 문구 키
 	Refresh                  int    // 0이 아니면 그 초마다 다시 그린다 (진행 중인 배포)
 	Data                     any
 }
-
-type authUser = auth.User
-
-func normalizeDomain(d string) string { return dnscheck.Normalize(d) }
-func validDomain(d string) bool       { return dnscheck.Valid(d) }
 
 func (s *Server) render(w http.ResponseWriter, r *http.Request, status int, page string, v view) {
 	v.Lang = langOf(r)
@@ -266,50 +250,43 @@ func hostIP(r *http.Request) string {
 	return ""
 }
 
-func (s *Server) currentUser(r *http.Request) (auth.User, string, bool) {
+func (s *Server) currentUser(r *http.Request) (model.Account, model.SessionToken, bool) {
 	c, err := r.Cookie(sessionCookie)
-	if err != nil {
-		return auth.User{}, "", false
+	if err != nil || c.Value == "" {
+		return model.Account{}, "", false
 	}
-	u, ok := s.d.Auth.UserFor(c.Value)
-	return u, c.Value, ok
+	t := model.SessionToken(c.Value)
+	u, ok := s.d.Login.WhoIs(r.Context(), t)
+	return u, t, ok
 }
 
-func (s *Server) setupDone() bool {
-	_, ok := s.d.Store.Setting(store.KeySetupDone)
-	return ok
+// needsSetup은 아직 계정이 하나도 없는가. 읽지 못하면 열어주지 않는다.
+func (s *Server) needsSetup(ctx context.Context) bool {
+	names, err := s.d.Accounts.Names(ctx)
+	return err == nil && len(names) == 0
 }
 
-func (s *Server) adminDomain() string {
-	if s.d.EnvAdminDomain != "" {
-		return s.d.EnvAdminDomain
-	}
-	v, _ := s.d.Store.Setting(store.KeyAdminDomain)
-	return v
-}
+func (s *Server) setupDone(ctx context.Context) bool { return s.d.Setup.Done(ctx) }
 
-func (s *Server) acmeEmail() string {
-	if s.d.EnvACMEEmail != "" {
-		return s.d.EnvACMEEmail
-	}
-	v, _ := s.d.Store.Setting(store.KeyACMEEmail)
-	return v
+func (s *Server) adminDomain(ctx context.Context) string {
+	d, _ := s.d.AdminDomain.Get(ctx)
+	return d.String()
 }
 
 // gate는 관리 화면에 들어올 자격을 본다. 안 되면 갈 곳으로 보내고 false를 돌려준다.
-func (s *Server) gate(w http.ResponseWriter, r *http.Request) (auth.User, string, bool) {
-	if s.d.Auth.NeedsSetup() {
+func (s *Server) gate(w http.ResponseWriter, r *http.Request) (model.Account, model.SessionToken, bool) {
+	if s.needsSetup(r.Context()) {
 		redirect(w, r, "/setup")
-		return auth.User{}, "", false
+		return model.Account{}, "", false
 	}
 	u, token, ok := s.currentUser(r)
 	if !ok {
 		redirect(w, r, "/login")
-		return auth.User{}, "", false
+		return model.Account{}, "", false
 	}
-	if !s.setupDone() {
+	if !s.setupDone(r.Context()) {
 		redirect(w, r, "/setup/domain")
-		return auth.User{}, "", false
+		return model.Account{}, "", false
 	}
 	return u, token, true
 }
@@ -318,16 +295,17 @@ func redirect(w http.ResponseWriter, r *http.Request, to string) {
 	http.Redirect(w, r, to, http.StatusSeeOther)
 }
 
-func (s *Server) startSession(w http.ResponseWriter, r *http.Request, userID int64) error {
-	token, err := s.d.Auth.NewSession(userID)
-	if err != nil {
-		return err
-	}
+func (s *Server) setSessionCookie(w http.ResponseWriter, r *http.Request, t model.SessionToken) {
 	http.SetCookie(w, &http.Cookie{
-		Name: sessionCookie, Value: token, Path: "/",
-		MaxAge: int(auth.SessionTTL / time.Second), HttpOnly: true, Secure: isHTTPS(r), SameSite: http.SameSiteLaxMode,
+		Name: sessionCookie, Value: string(t), Path: "/",
+		MaxAge: int(sessionMaxAge / time.Second), HttpOnly: true, Secure: isHTTPS(r), SameSite: http.SameSiteLaxMode,
 	})
-	return nil
+}
+
+// pathID는 경로의 {name} 숫자다.
+func pathID(r *http.Request, name string) int64 {
+	n, _ := strconv.ParseInt(r.PathValue(name), 10, 64)
+	return n
 }
 
 func (s *Server) setLang(w http.ResponseWriter, r *http.Request) {
