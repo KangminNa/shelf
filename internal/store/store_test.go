@@ -367,6 +367,55 @@ func TestAppsAndHostsBecomeServices(t *testing.T) {
 	}
 }
 
+// 실서버 그림자 실행에서 찾은 두 가지 (2026-10-10):
+//   - 초기 v1이 만든 앱은 포트가 예전 칸(port)에만 있고 container_port는 비어 있다.
+//   - v1은 호스트의 "인증서 사용"과 상관없이, 그 주소를 덮는 인증서가 있으면 HTTPS로 서빙했다 (SNI).
+func TestImportMatchesWhatV1ActuallyServed(t *testing.T) {
+	dir := t.TempDir()
+	writeV1(t, dir, "deploy.db", v1Projects,
+		`INSERT INTO projects (id, name, repo_url, webhook_secret, source_type, image, port, auto_deploy) VALUES (3, 'potainer', '', 's', 'image', 'portainer/portainer-ce:latest', 9000, 1)`,
+		`INSERT INTO projects (id, name, repo_url, webhook_secret, source_type, image, auto_deploy) VALUES (4, 'noport', '', 's', 'image', 'me/app', 1)`,
+		`INSERT INTO projects (id, name, repo_url, webhook_secret, container_port) VALUES (6, 'site', 'https://github.com/me/site', 's', 4023)`,
+	)
+	writeV1(t, dir, "proxy.db", v1Hosts,
+		`INSERT INTO proxy_hosts (domain, target_host, target_port, ssl_enabled) VALUES ('potainer.example.com', 'shelf-potainer', 9000, 1)`,
+		`INSERT INTO proxy_hosts (domain, target_host, target_port, ssl_enabled) VALUES ('site.example.com', 'shelf-site', 4023, 0)`,
+		`INSERT INTO proxy_hosts (domain, target_host, target_port, ssl_enabled) VALUES ('app.apps.example.com', 'shelf-noport', 8080, 0)`,
+		`INSERT INTO proxy_hosts (domain, target_host, target_port, ssl_enabled) VALUES ('plain.example.com', '10.0.0.7', 80, 0)`,
+		`CREATE TABLE ssl_certs (id INTEGER PRIMARY KEY AUTOINCREMENT, domain TEXT NOT NULL UNIQUE, cert_path TEXT, key_path TEXT, provider TEXT DEFAULT 'manual',
+			expires_at INTEGER, auto_renew INTEGER NOT NULL DEFAULT 0, domains TEXT DEFAULT '', dns_provider TEXT DEFAULT '', dns_token TEXT DEFAULT '')`,
+		`INSERT INTO ssl_certs (domain, provider) VALUES ('site.example.com', 'letsencrypt')`,
+		`INSERT INTO ssl_certs (domain, provider, domains) VALUES ('apps.example.com', 'letsencrypt', 'apps.example.com
+*.apps.example.com')`,
+	)
+	db := open(t, dir)
+	if _, err := ImportV1(ctx, db, dir); err != nil {
+		t.Fatal(err)
+	}
+	repo := NewServices(db)
+	if p, _ := repo.Get(ctx, 3); p.Port != 9000 {
+		t.Fatalf("the old port column is used when container_port is empty: %d", p.Port)
+	}
+	if p, _ := repo.Get(ctx, 4); p.Port != 8080 {
+		t.Fatalf("with no port at all, the port v1 proxied to is used: %d", p.Port)
+	}
+	if p, _ := repo.Get(ctx, 6); p.Port != 4023 {
+		t.Fatalf("%d", p.Port)
+	}
+	https := map[string]bool{}
+	all, _ := repo.List(ctx)
+	for _, s := range all {
+		for _, d := range s.Domains {
+			https[d.Domain.String()] = d.HTTPS
+		}
+	}
+	for d, want := range map[string]bool{"potainer.example.com": true, "site.example.com": true, "app.apps.example.com": true, "plain.example.com": false} {
+		if https[d] != want {
+			t.Errorf("%s: HTTPS %v, want %v (v1 served HTTPS wherever a certificate covered the name)", d, https[d], want)
+		}
+	}
+}
+
 // 옮기지 못한 것은 조용히 버리지 않고 이유와 함께 알린다 — 실서버를 넘길 때 무엇이 빠졌는지 보여야 한다.
 func TestImportSaysWhatItLeftBehind(t *testing.T) {
 	dir := t.TempDir()

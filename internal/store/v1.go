@@ -237,6 +237,7 @@ func copyUsers(ctx context.Context, v1 *sql.DB, db *DB, r *V1Report) (int, error
 
 func importServices(ctx context.Context, db *DB, dataDir string, r *V1Report) error {
 	byContainer := map[string]model.ServiceID{}
+	appPort := map[model.ServiceID]int{}
 
 	if v1, ok, err := openV1(dataDir, "deploy.db"); err != nil {
 		return err
@@ -253,6 +254,7 @@ func importServices(ctx context.Context, db *DB, dataDir string, r *V1Report) er
 				return fmt.Errorf("app %s: %w", a.name, err)
 			}
 			byContainer[a.alias] = a.id
+			appPort[a.id] = a.port
 			r.Apps++
 		}
 		n, lost, err := copyHistory(ctx, v1, db)
@@ -271,8 +273,9 @@ func importServices(ctx context.Context, db *DB, dataDir string, r *V1Report) er
 	} else if ok {
 		r.Found = true
 		hosts, err := readHosts(ctx, v1, r)
+		var covered certNames
 		if err == nil {
-			err = noteCertificates(ctx, v1, r)
+			covered, err = readCertificates(ctx, v1, r)
 		}
 		v1.Close()
 		if err != nil {
@@ -285,6 +288,13 @@ func importServices(ctx context.Context, db *DB, dataDir string, r *V1Report) er
 				continue
 			}
 			sid, isApp := byContainer[h.targetHost]
+			if isApp && appPort[sid] == 0 && h.targetPort > 0 {
+				// 포트가 비어 있던 앱 — v1이 실제로 보내던 포트를 쓴다
+				if _, err := db.sql.ExecContext(ctx, `UPDATE services SET port = ? WHERE id = ?`, h.targetPort, int64(sid)); err != nil {
+					return fmt.Errorf("app port %s: %w", h.domain, err)
+				}
+				appPort[sid] = h.targetPort
+			}
 			if !isApp {
 				ext, err := model.ParseExternalAddress(h.address())
 				if err != nil {
@@ -303,8 +313,10 @@ func importServices(ctx context.Context, db *DB, dataDir string, r *V1Report) er
 				sid = id
 				r.External++
 			}
+			// v1은 호스트의 "인증서 사용"과 상관없이 그 주소를 덮는 인증서가 있으면 HTTPS로 서빙했다 (SNI) — 그 모습 그대로
+			https := h.ssl || covered.cover(h.domain.String())
 			if _, err := db.sql.ExecContext(ctx, `INSERT INTO domains (service_id, domain, https, hsts) VALUES (?, ?, ?, ?)`,
-				int64(sid), h.domain.String(), h.ssl, h.hsts); err != nil {
+				int64(sid), h.domain.String(), https, h.hsts); err != nil {
 				return fmt.Errorf("domain %s: %w", h.domain, err)
 			}
 			r.Domains++
@@ -342,9 +354,14 @@ func readApps(ctx context.Context, v1 *sql.DB, r *V1Report) ([]v1App, error) {
 		}
 		return fallback
 	}
+	// 초기 v1이 만든 앱은 포트가 예전 칸(port)에만 있다 — container_port가 비면 port
+	port := "port"
+	if cols["container_port"] {
+		port = "coalesce(container_port, port)"
+	}
 	q := fmt.Sprintf(`SELECT id, name, %s, repo_url, %s, branch, %s, %s, auto_deploy, %s, %s, %s, webhook_secret FROM projects ORDER BY id`,
 		pick("source_type", "'git'"), pick("image", "''"), pick("build_path", "''"),
-		pick("container_port", "port"), pick("env", "''"), pick("volumes", "''"), pick("git_token", "''"))
+		port, pick("env", "''"), pick("volumes", "''"), pick("git_token", "''"))
 	rows, err := v1.QueryContext(ctx, q)
 	if err != nil {
 		return nil, err
@@ -484,12 +501,26 @@ func readHosts(ctx context.Context, v1 *sql.DB, r *V1Report) ([]v1Host, error) {
 	return out, rows.Err()
 }
 
-// noteCertificates는 v2가 그대로 이어받지 못하는 v1 인증서를 알린다. 인증서는 옮기지 않는다 — Caddy가 새로 받는다.
-// 보통의 Let's Encrypt 인증서(HTTP 확인)는 새로 받으면 되니 말하지 않는다. DNS 토큰은 읽지 않는다.
-func noteCertificates(ctx context.Context, v1 *sql.DB, r *V1Report) error {
+// certNames는 v1 인증서가 덮던 이름이다 ("*.example.com" 포함, 소문자).
+type certNames map[string]bool
+
+// cover는 그 주소를 덮는 인증서가 있었는가 — 같은 이름, 또는 한 단계 와일드카드.
+func (c certNames) cover(domain string) bool {
+	if c[domain] {
+		return true
+	}
+	_, parent, ok := strings.Cut(domain, ".")
+	return ok && c["*."+parent]
+}
+
+// readCertificates는 v1 인증서가 덮던 이름을 모으고, v2가 그대로 이어받지 못하는 것을 알린다.
+// 인증서 자체는 옮기지 않는다 — Caddy가 새로 받는다. 보통의 Let's Encrypt 인증서(HTTP 확인)는 새로 받으면 되니 말하지 않는다.
+// DNS 토큰은 읽지 않는다.
+func readCertificates(ctx context.Context, v1 *sql.DB, r *V1Report) (certNames, error) {
+	names := certNames{}
 	cols, err := columnsOf(ctx, v1, "ssl_certs")
 	if err != nil || !cols["domain"] {
-		return err
+		return names, err
 	}
 	pick := func(name string) string {
 		if cols[name] {
@@ -499,28 +530,32 @@ func noteCertificates(ctx context.Context, v1 *sql.DB, r *V1Report) error {
 	}
 	rows, err := v1.QueryContext(ctx, fmt.Sprintf(`SELECT domain, coalesce(provider, ''), %s, %s FROM ssl_certs ORDER BY id`, pick("domains"), pick("dns_provider")))
 	if err != nil {
-		return err
+		return names, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var domain, provider, domains, dns string
 		if err := rows.Scan(&domain, &provider, &domains, &dns); err != nil {
-			return err
+			return names, err
 		}
-		names := domain
-		if list := strings.Fields(domains); len(list) > 0 {
-			names = strings.Join(list, ", ")
+		list := strings.Fields(domains)
+		if len(list) == 0 {
+			list = []string{domain}
 		}
+		for _, n := range list {
+			names[strings.ToLower(n)] = true
+		}
+		label := strings.Join(list, ", ")
 		switch {
 		case dns != "":
-			r.skip("인증서 %s: DNS-01(%s) — v2는 HTTP 확인으로만 받는다. 와일드카드는 받지 못하고, 이름마다 이 서버 80으로 닿아야 한다", names, dns)
+			r.skip("인증서 %s: DNS-01(%s) — v2는 HTTP 확인으로만 받는다. 와일드카드는 받지 못하고, 이름마다 이 서버 80으로 닿아야 한다", label, dns)
 		case provider == "manual":
-			r.skip("인증서 %s: 직접 올린 인증서 — 옮기지 않는다. 이 서버 80으로 닿으면 Caddy가 새로 받는다", names)
+			r.skip("인증서 %s: 직접 올린 인증서 — 옮기지 않는다. 이 서버 80으로 닿으면 Caddy가 새로 받는다", label)
 		case provider == "selfsigned":
-			r.skip("인증서 %s: 자체 서명 — 옮기지 않는다. 이 서버 80으로 닿으면 Caddy가 새로 받는다", names)
+			r.skip("인증서 %s: 자체 서명 — 옮기지 않는다. 이 서버 80으로 닿으면 Caddy가 새로 받는다", label)
 		}
 	}
-	return rows.Err()
+	return names, rows.Err()
 }
 
 func columnsOf(ctx context.Context, db *sql.DB, table string) (map[string]bool, error) {
